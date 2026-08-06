@@ -1,0 +1,7 @@
+parameters:
+    level: 5
+    paths:
+        - modules/php
+    bootstrapFiles:
+        - tests/stubs/BgaFrameworkStubs.php
+        - modules/php/constants.inc.php

@@ -1,0 +1,8 @@
+.DS_Store
+.vscode/*
+!.vscode/sftp.json.example
+.yarn
+node_modules
+vendor/
+_ide_helper.php
+.phpunit.cache
