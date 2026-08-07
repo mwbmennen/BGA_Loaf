@@ -5,7 +5,7 @@
          colors="true"
          cacheDirectory=".phpunit.cache">
   <testsuites>
-    <testsuite name="YourGameName">
+    <testsuite name="loaf">
       <directory>tests</directory>
     </testsuite>
   </testsuites>

@@ -79,7 +79,7 @@
     "bdd002",
     "7b7b7b",
     "000000",
-    "ffffff",
+    "ffffff"
   ],
 
   // Favorite colors support : if set to "true", support attribution of favorite colors based on player's preferences (see reattributeColorsBasedOnPreferences PHP method)
@@ -97,9 +97,9 @@
     //  default: 740
     //  maximum possible value: 740 (ie: your game interface should fit with a 740px width (correspond to a 1024px screen)
     //  minimum possible value: 320 (the lowest value you specify, the better the display is on mobile)
-    "min": 740,
+    "min": 740
   },
 
   // Trigger an exception when PHP detect warnings.
-  "exception_on_warning": true,
+  "exception_on_warning": true
 }
