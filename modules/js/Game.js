@@ -46,7 +46,7 @@ class PlayerTurn {
     /**
      * This method is called each time we are leaving the game state. You can use this method to perform some user interface changes at this moment.
      */
-    onLeavingState(args, isCurrentPlayerActive) {
+    onLeavingState(_args, _isCurrentPlayerActive) {
     }
 
     /**
@@ -54,7 +54,7 @@ class PlayerTurn {
      * on MULTIPLE_ACTIVE_PLAYER states, you may want to call this function in onEnteringState using `this.onPlayerActivationChange(args, isCurrentPlayerActive)` at the end of onEnteringState.
      * If your state is not a MULTIPLE_ACTIVE_PLAYER one, you can delete this function.
      */
-    onPlayerActivationChange(args, isCurrentPlayerActive) {
+    onPlayerActivationChange(_args, _isCurrentPlayerActive) {
     }
 
     
