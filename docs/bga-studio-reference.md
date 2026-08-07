@@ -697,6 +697,23 @@ In the new style, every state method that causes a transition simply returns the
 
 ---
 
+## Wrap every user-facing string in BGA's translation functions, from day one
+
+BGA Studio's translator platform can only pick up strings that are wrapped in its translation
+helpers — `clienttranslate(...)` for strings notified/sent to the client, `self::_(...)` (or
+the bare `_(...)` helper, framework-version-dependent) for strings resolved server-side, and
+the JS-side equivalent for client-only text. A hardcoded English string anywhere in
+`modules/php/` or `modules/js/` is invisible to that system — it will never appear in the
+translator's queue no matter how many languages get added later, and retrofitting it means
+hunting down every literal string after the fact instead of catching it at write-time.
+
+**Standing rule**: never write a bare user-facing English string in game code. Wrap it in the
+appropriate translation helper the moment it's written, even if only English is planned for
+launch — this is what keeps the game open to every language BGA supports without an
+engineering pass later, and costs nothing extra to do upfront.
+
+---
+
 ## Key Principles to Internalize
 
 1. **BGA uses the project name as the source of truth** — namespace, CSS filename, and routing all derive from it. Inconsistency = silent failure.
