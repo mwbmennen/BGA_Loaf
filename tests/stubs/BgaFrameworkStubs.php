@@ -10,7 +10,29 @@ namespace {
     }
 }
 
+namespace Bga\GameFramework\Components\Counters {
+
+    class PlayerCounter
+    {
+        public function initDb(array $_playerIds, int $initialValue = 0): void {}
+
+        public function inc(int $_playerId, int $_increment): void {}
+
+        public function fillResult(array &$_result): void {}
+    }
+}
+
 namespace Bga\GameFramework\Helpers {
+
+    use Bga\GameFramework\Components\Counters\PlayerCounter;
+
+    class CounterFactory
+    {
+        public function createPlayerCounter(string $_name): PlayerCounter
+        {
+            return new PlayerCounter();
+        }
+    }
 
     class Gamestate
     {
@@ -70,6 +92,7 @@ namespace Bga\GameFramework\Helpers {
         public TableOptions $tableOptions;
         public DebugHelper $debug;
         public Notify $notify;
+        public CounterFactory $counterFactory;
 
         public function __construct()
         {
@@ -78,7 +101,8 @@ namespace Bga\GameFramework\Helpers {
             $this->playerScoreAux = new PlayerScore();
             $this->tableOptions   = new TableOptions();
             $this->debug          = new DebugHelper();
-            $this->notify       = new Notify();
+            $this->notify         = new Notify();
+            $this->counterFactory = new CounterFactory();
         }
     }
 }
@@ -242,7 +266,10 @@ namespace Bga\GameFramework\States {
             $this->playerStats = new \Bga\GameFramework\Helpers\PlayerStats();
         }
 
-        public function getRandomZombieChoice(array $_choices): array { return $_choices[0] ?? []; }
+        public function getRandomZombieChoice(array $_choices): mixed
+        {
+            return empty($_choices) ? null : $_choices[array_rand($_choices)];
+        }
     }
 }
 

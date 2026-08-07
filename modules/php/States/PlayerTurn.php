@@ -81,7 +81,7 @@ class PlayerTurn extends GameState
     public function actPass(int $activePlayerId)
     {
         // Notify all players about the choice to pass.
-        $this->notify->all("pass", clienttranslate('${player_name} passes'), [
+        $this->bga->notify->all("pass", clienttranslate('${player_name} passes'), [
             "player_id" => $activePlayerId,
             "player_name" => $this->game->getPlayerNameById($activePlayerId), // remove this line if you uncomment notification decorator
         ]);
