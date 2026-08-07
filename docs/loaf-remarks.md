@@ -90,3 +90,33 @@ All 11 questions in `docs/loaf-open-questions.md` are now answered except Q1:
 
 Remaining blocker: **Q1**, the full 24-card data set, still needs transcription into
 `docs/loaf-card-data.json` before Phase 2+ of the implementation plan can start.
+
+## `RoundResolver` / `ReputationTrack` (Core layer) — judgment calls (2026-08-07)
+
+`modules/php/Core/RoundResolver.php` and `ReputationTrack.php` are the first Core classes
+built per the plan's §2 architecture. Two decisions here weren't spelled out by the rulebook
+and are worth flagging in case a rules FAQ or playtesting says otherwise:
+
+- **Tied extreme card: each tied player gets the full delta, not a split.** The rulebook's
+  only worked example (3 players, single highest card) has no tie, so there's no printed
+  ruling to follow. `RoundResolver` currently gives *every* player who shares the
+  highest-on-success (or lowest-on-failure) value the full `(card_value − per_player_average)`
+  delta independently, rather than dividing one delta among them. This matches how similar
+  reputation-track games usually resolve simultaneous ties, but it's an assumption, not a
+  transcribed rule — confirm against the physical rules' tie-handling section (if any) or the
+  publisher FAQ before shipping.
+- **Success and failure deltas are unified into one signed value.** Rather than
+  `RoundResult` exposing separate "gain" and "loss" magnitudes that callers branch on,
+  `reputationDelta` is always `extreme_card − per_player_average` — positive on success
+  (added), negative on failure (also just added). Callers do a single
+  `ReputationTrack::adjust($current, $result->reputationDelta)` with no success/fail branch.
+  This is an implementation simplification, not a rules judgment call, but it constrains how
+  `ReviewEffectResolver` and any future round-resolution UI should consume `RoundResult`.
+
+**Proven invariant, not a judgment call, but non-obvious enough to record**: a failing
+round's `reputationDelta` can never be exactly zero. If the lowest played card equalled the
+per-player average, every card would have to be ≥ average, forcing the total ≥ target — which
+contradicts failure by definition. So a zero-delta round is only possible on success (when
+every player happens to play exactly the average). `RoundResolverTest` encodes this as
+`testDeltaIsAlwaysStrictlyNegativeOnFailure`; don't add a "zero delta on failure" test case
+back in, it describes an unreachable game state.
