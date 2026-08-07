@@ -3,7 +3,11 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/stubs/BgaFrameworkStubs.php';
-require_once __DIR__ . '/../modules/php/constants.inc.php';
+
+$constants = __DIR__ . '/../modules/php/constants.inc.php';
+if (file_exists($constants)) {
+    require_once $constants;
+}
 
 $autoload = __DIR__ . '/../vendor/autoload.php';
 if (file_exists($autoload)) {
@@ -11,10 +15,7 @@ if (file_exists($autoload)) {
 }
 
 spl_autoload_register(static function (string $class): void {
-    // TODO (SETUP.md step 7): replace YourGameName with your project's real PHP namespace
-    // segment -- verify the exact casing Studio's scaffold generated with
-    // `grep -rn "^namespace" modules/php/` before assuming it matches your lowercase slug.
-    $prefix = 'Bga\\Games\\YourGameName\\';
+    $prefix = 'Bga\\Games\\loaf\\';
 
     if (!str_starts_with($class, $prefix)) {
         return;

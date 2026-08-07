@@ -1,6 +1,6 @@
 {
-    "name": "yourname/yourgame",
-    "description": "YourGame — BGA Studio implementation",
+    "name": "mwbmennen/loaf",
+    "description": "L'Oaf — BGA Studio implementation",
     "type": "project",
     "license": "proprietary",
     "require": {
@@ -12,7 +12,7 @@
     },
     "autoload": {
         "psr-4": {
-            "Bga\\Games\\YourGameName\\": "modules/php/"
+            "Bga\\Games\\loaf\\": "modules/php/"
         }
     }
 }

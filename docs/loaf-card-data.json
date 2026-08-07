@@ -1,0 +1,555 @@
+{
+  "_comment": "Transcription source for the 24 physical round cards (see docs/loaf-open-questions.md Q1). Fill in one entry per card from photos/physical inspection. Order.totals values must satisfy Q2 (average-per-player is a whole number at every listed player count). Once complete, port into Game::$ROUND_CARD_TYPES per docs/loaf-implementation-plan.md.",
+
+  "_schema": {
+    "id": "string, unique, e.g. basic_01 / advanced_01",
+    "advanced": "bool - has the croissant icon on its review side",
+    "order": {
+      "per_player_average": "int - printed average-per-player value",
+      "totals": "map of player count (2-6) to printed total for that count"
+    },
+    "review": {
+      "success": "effect object, resolves on Happy Boss (total >= order) - see _effect_schema",
+      "fail": "effect object, resolves on Angry Boss (total < order) - see _effect_schema"
+    }
+  },
+
+  "_effect_schema": {
+    "target": "highest_reputation | lowest_reputation | reputation_positive | reputation_negative | reputation_zero | all | null (basic cards target one of the first four; advanced 'reputation_zero'/'all' per the advanced target/effect tables)",
+    "effect": "reputation | discard_choice | discard_recycle_lowest | swap_discard_lower_by_at_most | swap_discard_higher_by_at_least | end_game_bonus | end_game_malus | double_end_game_bonus | double_end_game_malus | none",
+    "amount": "int or null - magnitude (reputation delta, X for swap/end-game effects); null for effects with no magnitude",
+    "counts_as_two": "bool - this side counts as 2 successes/fails toward the 5-card end trigger (advanced-only 'empty effect' cards)"
+  },
+
+  "cards": [
+    {
+      "id": "basic_01",
+      "advanced": false,
+      "order": {
+        "per_player_average": 3,
+        "totals": { "2": 6, "3": 9, "4": 12, "5": 15, "6": 18 }
+      },
+      "review": {
+        "success": {
+          "target": "lowest_reputation",
+          "effect": "reputation",
+          "amount": 1,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "lowest_reputation",
+          "effect": "reputation",
+          "amount": -1,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "basic_02",
+      "advanced": false,
+      "order": {
+        "per_player_average": 4,
+        "totals": { "2": 8, "3": 12, "4": 16, "5": 20, "6": 24 }
+      },
+      "review": {
+        "success": {
+          "target": "lowest_reputation",
+          "effect": "reputation",
+          "amount": 2,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "lowest_reputation",
+          "effect": "reputation",
+          "amount": -2,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "basic_03",
+      "advanced": false,
+      "order": {
+        "per_player_average": 5,
+        "totals": { "2": 10, "3": 15, "4": 20, "5": 25, "6": 30 }
+      },
+      "review": {
+        "success": {
+          "target": "lowest_reputation",
+          "effect": "reputation",
+          "amount": 3,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "lowest_reputation",
+          "effect": "reputation",
+          "amount": -3,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "basic_04",
+      "advanced": false,
+      "order": {
+        "per_player_average": 6,
+        "totals": { "2": 12, "3": 18, "4": 24, "5": 30, "6": 36 }
+      },
+      "review": {
+        "success": {
+          "target": "reputation_negative",
+          "effect": "reputation",
+          "amount": 2,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "reputation_negative",
+          "effect": "reputation",
+          "amount": -2,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "basic_05",
+      "advanced": false,
+      "order": {
+        "per_player_average": 7,
+        "totals": { "2": 14, "3": 21, "4": 28, "5": 35, "6": 42 }
+      },
+      "review": {
+        "success": {
+          "target": "reputation_negative",
+          "effect": "reputation",
+          "amount": 3,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "reputation_negative",
+          "effect": "reputation",
+          "amount": -3,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "basic_06",
+      "advanced": false,
+      "order": {
+        "per_player_average": 8,
+        "totals": { "2": 16, "3": 24, "4": 32, "5": 40, "6": 48 }
+      },
+      "review": {
+        "success": {
+          "target": "reputation_negative",
+          "effect": "reputation",
+          "amount": 4,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "reputation_negative",
+          "effect": "reputation",
+          "amount": -4,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "basic_07",
+      "advanced": false,
+      "order": {
+        "per_player_average": 4,
+        "totals": { "2": 8, "3": 12, "4": 16, "5": 20, "6": 24 }
+      },
+      "review": {
+        "success": {
+          "target": "highest_reputation",
+          "effect": "reputation",
+          "amount": 1,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "highest_reputation",
+          "effect": "reputation",
+          "amount": -1,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "basic_08",
+      "advanced": false,
+      "order": {
+        "per_player_average": 5,
+        "totals": { "2": 10, "3": 15, "4": 20, "5": 25, "6": 30 }
+      },
+      "review": {
+        "success": {
+          "target": "highest_reputation",
+          "effect": "reputation",
+          "amount": 2,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "highest_reputation",
+          "effect": "reputation",
+          "amount": -2,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "basic_09",
+      "advanced": false,
+      "order": {
+        "per_player_average": 6,
+        "totals": { "2": 12, "3": 18, "4": 24, "5": 30, "6": 36 }
+      },
+      "review": {
+        "success": {
+          "target": "highest_reputation",
+          "effect": "reputation",
+          "amount": 3,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "highest_reputation",
+          "effect": "reputation",
+          "amount": -3,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "basic_10",
+      "advanced": false,
+      "order": {
+        "per_player_average": 7,
+        "totals": { "2": 14, "3": 21, "4": 28, "5": 35, "6": 42 }
+      },
+      "review": {
+        "success": {
+          "target": "reputation_positive",
+          "effect": "reputation",
+          "amount": 2,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "reputation_positive",
+          "effect": "reputation",
+          "amount": -2,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "basic_11",
+      "advanced": false,
+      "order": {
+        "per_player_average": 5,
+        "totals": { "2": 10, "3": 15, "4": 20, "5": 25, "6": 30 }
+      },
+      "review": {
+        "success": {
+          "target": "reputation_positive",
+          "effect": "reputation",
+          "amount": 3,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "reputation_positive",
+          "effect": "reputation",
+          "amount": -3,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "basic_12",
+      "advanced": false,
+      "order": {
+        "per_player_average": 6,
+        "totals": { "2": 12, "3": 18, "4": 24, "5": 30, "6": 36 }
+      },
+      "review": {
+        "success": {
+          "target": "reputation_positive",
+          "effect": "reputation",
+          "amount": 4,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "reputation_positive",
+          "effect": "reputation",
+          "amount": -4,
+          "counts_as_two": false
+        }
+      }
+    },
+
+    {
+      "id": "advanced_01",
+      "advanced": true,
+      "order": {
+        "per_player_average": 7,
+        "totals": { "2": 14, "3": 21, "4": 28, "5": 35, "6": 42 }
+      },
+      "review": {
+        "success": {
+          "target": "reputation_negative",
+          "effect": "discard_recycle_lowest",
+          "amount": null,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "reputation_negative",
+          "effect": "discard_choice",
+          "amount": null,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "advanced_02",
+      "advanced": true,
+      "order": {
+        "per_player_average": 5,
+        "totals": { "2": 10, "3": 15, "4": 20, "5": 25, "6": 30 }
+      },
+      "review": {
+        "success": {
+          "target": "reputation_positive",
+          "effect": "discard_recycle_lowest",
+          "amount": null,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "reputation_positive",
+          "effect": "discard_choice",
+          "amount": null,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "advanced_03",
+      "advanced": true,
+      "order": {
+        "per_player_average": 6,
+        "totals": { "2": 12, "3": 18, "4": 24, "5": 30, "6": 36 }
+      },
+      "review": {
+        "success": {
+          "target": "lowest_reputation",
+          "effect": "swap_discard_lower_by_at_most",
+          "amount": 2,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "lowest_reputation",
+          "effect": "swap_discard_higher_by_at_least",
+          "amount": 2,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "advanced_04",
+      "advanced": true,
+      "order": {
+        "per_player_average": 3,
+        "totals": { "2": 6, "3": 9, "4": 12, "5": 15, "6": 18 }
+      },
+      "review": {
+        "success": {
+          "target": "reputation_negative",
+          "effect": "swap_discard_lower_by_at_most",
+          "amount": 3,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "reputation_negative",
+          "effect": "swap_discard_higher_by_at_least",
+          "amount": 3,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "advanced_05",
+      "advanced": true,
+      "order": {
+        "per_player_average": 4,
+        "totals": { "2": 8, "3": 12, "4": 16, "5": 20, "6": 24 }
+      },
+      "review": {
+        "success": {
+          "target": "highest_reputation",
+          "effect": "swap_discard_lower_by_at_most",
+          "amount": 2,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "highest_reputation",
+          "effect": "swap_discard_higher_by_at_least",
+          "amount": 2,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "advanced_06",
+      "advanced": true,
+      "order": {
+        "per_player_average": 5,
+        "totals": { "2": 10, "3": 15, "4": 20, "5": 25, "6": 30 }
+      },
+      "review": {
+        "success": {
+          "target": "reputation_positive",
+          "effect": "swap_discard_lower_by_at_most",
+          "amount": 3,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "reputation_positive",
+          "effect": "swap_discard_higher_by_at_least",
+          "amount": 3,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "advanced_07",
+      "advanced": true,
+      "order": {
+        "per_player_average": 6,
+        "totals": { "2": 12, "3": 18, "4": 24, "5": 30, "6": 36 }
+      },
+      "review": {
+        "success": {
+          "target": null,
+          "effect": "none",
+          "amount": null,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": null,
+          "effect": "none",
+          "amount": null,
+          "counts_as_two": true
+        }
+      }
+    },
+    {
+      "id": "advanced_08",
+      "advanced": true,
+      "order": {
+        "per_player_average": 7,
+        "totals": { "2": 14, "3": 21, "4": 28, "5": 35, "6": 42 }
+      },
+      "review": {
+        "success": {
+          "target": null,
+          "effect": "none",
+          "amount": null,
+          "counts_as_two": true
+        },
+        "fail": {
+          "target": null,
+          "effect": "none",
+          "amount": null,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "advanced_09",
+      "advanced": true,
+      "order": {
+        "per_player_average": 8,
+        "totals": { "2": 16, "3": 24, "4": 32, "5": 40, "6": 48 }
+      },
+      "review": {
+        "success": {
+          "target": "highest_reputation",
+          "effect": "end_game_bonus",
+          "amount": 4,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "lowest_reputation",
+          "effect": "end_game_malus",
+          "amount": 4,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "advanced_10",
+      "advanced": true,
+      "order": {
+        "per_player_average": 4,
+        "totals": { "2": 8, "3": 12, "4": 16, "5": 20, "6": 24 }
+      },
+      "review": {
+        "success": {
+          "target": "reputation_positive",
+          "effect": "end_game_bonus",
+          "amount": 3,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "reputation_negative",
+          "effect": "end_game_malus",
+          "amount": 3,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "advanced_11",
+      "advanced": true,
+      "order": {
+        "per_player_average": 5,
+        "totals": { "2": 10, "3": 15, "4": 20, "5": 25, "6": 30 }
+      },
+      "review": {
+        "success": {
+          "target": null,
+          "effect": "double_end_game_bonus",
+          "amount": null,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": null,
+          "effect": "double_end_game_malus",
+          "amount": null,
+          "counts_as_two": false
+        }
+      }
+    },
+    {
+      "id": "advanced_12",
+      "advanced": true,
+      "order": {
+        "per_player_average": 6,
+        "totals": { "2": 12, "3": 18, "4": 24, "5": 30, "6": 36 }
+      },
+      "review": {
+        "success": {
+          "target": "reputation_zero",
+          "effect": "end_game_bonus",
+          "amount": 5,
+          "counts_as_two": false
+        },
+        "fail": {
+          "target": "reputation_zero",
+          "effect": "end_game_malus",
+          "amount": 5,
+          "counts_as_two": false
+        }
+      }
+    }
+  ]
+}

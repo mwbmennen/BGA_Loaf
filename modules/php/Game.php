@@ -152,6 +152,7 @@ class Game extends \Bga\GameFramework\Table
         $gameinfos = $this->getGameinfos();
         $default_colors = $gameinfos['player_colors'];
 
+        $query_values = [];
         foreach ($players as $player_id => $player) {
             // Now you can access both $player_id and $player array
             $query_values[] = vsprintf("(%s, '%s', '%s')", [

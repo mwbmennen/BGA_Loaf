@@ -6,3 +6,4 @@ node_modules
 vendor/
 _ide_helper.php
 .phpunit.cache
+docs/card-scans/
