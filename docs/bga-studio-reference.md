@@ -70,9 +70,11 @@ Don't assume the namespace segment is a lowercase copy of the project slug — v
 │   └── *.mp3                 ← Sound effects
 ├── modules/
 │   ├── php/
-│   │   ├── Game.php          ← Main game class. Namespace: Bga\Games\{gamename}
+│   │   ├── Game.php          ← Main game class. Namespace: Bga\Games\{gamename}. MUST
+│   │   │                       require_once('constants.inc.php') near the top -- it's a
+│   │   │                       plain file, not autoloaded like a class (see §5).
 │   │   ├── BoardManager.php  ← Game logic helpers. Same namespace.
-│   │   ├── constants.inc.php ← State machine constants (ST_xxx values)
+│   │   ├── constants.inc.php ← State machine constants (ST_xxx values), globals keys, etc.
 │   │   └── States/
 │   │       ├── PlayDisc.php  ← Namespace: Bga\Games\{gamename}\States
 │   │       ├── NextPlayer.php
@@ -297,6 +299,101 @@ grep -rn "namespace\|use Bga" modules/php/
 
 ---
 
+### Error: "Declaration of Game::setupNewGame(...) must be compatible with Table::setupNewGame(...)"
+
+```
+Fatal error: Declaration of Bga\Games\{gamename}\Game::setupNewGame(array $players, array $options = [])
+must be compatible with Bga\GameFramework\Table::setupNewGame($players, $options = [])
+```
+
+**Cause:** `setupNewGame()` (or any other framework hook method you override —
+`upgradeTableDb()`, `zombieTurn()`, etc.) was declared with type hints that the parent
+`Table` method doesn't have. PHP's override-compatibility rule treats an untyped parent
+parameter as implicitly `mixed`; a child method that narrows it to `array` (or any concrete
+type) is an *incompatible* override, not a safe addition — this is a hard fatal, not a
+warning, and it happens at class-load time, before any of your code runs. Easy to write by
+habit (typing your own parameters is normally good practice) and impossible to catch locally,
+since there's no vendored copy of `Bga\GameFramework\Table` to type-check against — only a
+live Studio deploy surfaces it.
+
+**Fix:** Match the parent signature exactly — no type hints, even though `$players`/`$options`
+are always arrays in practice. Do any type-narrowing/casting *inside* the method body instead:
+
+```php
+// Wrong — narrows an untyped parent parameter:
+protected function setupNewGame(array $players, array $options = [])
+
+// Correct — matches Table::setupNewGame($players, $options = []):
+protected function setupNewGame($players, $options = [])
+```
+
+---
+
+### Error: "Undefined constant \"...\ST_XXX\"" / "...\GLOBAL_XXX\"" from a state class
+
+```
+Fatal error: Uncaught Error: Undefined constant "Bga\Games\{gamename}\States\ST_RESOLVE_ROUND"
+in modules/php/States/ResolveRound.php
+```
+
+**Cause:** A plain script file of `const` declarations (e.g. `constants.inc.php`) with no
+`namespace` of its own is only visible if something explicitly `require`s it — unlike a class
+file, which PHP's autoloader pulls in on demand the first time it's referenced. If nothing
+`require`s the constants file, the constants simply don't exist at runtime, and PHP throws
+"undefined constant" the first time a namespaced file references one unqualified (PHP falls
+back to the *global* namespace for unqualified constants, but only if the constant was
+actually defined somewhere by the time the lookup happens).
+
+**Fix:** `require_once` the constants file from `Game.php`, since `Game.php` is always loaded
+before any state class is instantiated — this is a one-time, file-scope `require`, so it only
+needs to happen once, at the top of `Game.php`, not per-state:
+
+```php
+namespace Bga\Games\{gamename};
+
+use Bga\Games\{gamename}\Core\SomeClass;
+// ...other use imports...
+
+require_once __DIR__ . '/constants.inc.php';
+
+class Game extends \Bga\GameFramework\Table
+{ /* ... */ }
+```
+
+This pattern (centralized `constants.inc.php`, required once from `Game.php`, right after the
+`use` imports) is confirmed working in production on a sibling project (Gelati) — the bug
+isn't in centralizing state-id constants, it's specifically in forgetting the `require`. If
+you're chasing this error, check for exactly that: `grep -rn "constants.inc.php"
+modules/php/` and confirm a `require`/`require_once` shows up, not just the file itself.
+
+---
+
+### Error: "Error when incrementing a global variable: {key} is not a numeric value"
+
+**Cause:** `$this->bga->globals->inc($key, $delta)` was called on a global that
+`setupNewGame()` never initialized. `globals->get($key, $default)` gracefully falls back to
+`$default` when the key doesn't exist yet, but `inc()` has no equivalent fallback — it expects
+the value to already be a number.
+
+**Fix:** `->set($key, 0)` (or whatever the correct starting value is) in `setupNewGame()` for
+every global that any state later calls `->inc()` on:
+
+```php
+protected function setupNewGame($players, $options = [])
+{
+    // ...
+    $this->bga->globals->set(GLOBAL_CURRENT_ROUND, 0);
+    // ...
+}
+```
+
+```php
+// Later, in a state's onEnteringState():
+$currentRound = (int) $this->game->bga->globals->inc(GLOBAL_CURRENT_ROUND, 1);
+```
+
+---
+
 ### Error: Game loads but shows only text / no graphics
 
 **Symptom:** You see the board coordinate labels (letters and numbers) but no colored squares, no discs, no background.
@@ -342,6 +439,40 @@ public function getArgs(): array {
 ```
 
 Check the Studio log after triggering the state.
+
+---
+
+### Error: "Fatal error during {game} setup: Not logged"
+
+**Cause:** `getCurrentPlayerId()` (no-args form) throws when there's no requesting player
+session — it reads who sent the current HTTP request, and there isn't one during
+`setupNewGame()` or when a state's `getArgs()`/`onEnteringState()` runs as part of the
+system-driven chain right after table creation (`createGame` → `setupNewGameTable()` →
+initial state transitions), before any browser has loaded the page. The same applies to a
+state's `zombie()` handler — also system-driven, no logged-in session.
+
+**Fix:** Use the nullable variant, `getCurrentPlayerId(true)`, which returns `null` instead of
+throwing, and handle the null case (e.g. an empty/default args array — real connected players
+get their own `getArgs()` call once they load the page):
+
+```php
+public function getArgs(): array {
+    $currentPlayerId = $this->game->getCurrentPlayerId(true);
+
+    return [
+        'handValues' => $currentPlayerId === null ? [] : $this->getHandValues((int) $currentPlayerId),
+    ];
+}
+```
+
+For a `MULTIPLE_ACTIVE_PLAYER` state's `zombie(int $playerId)` handler, don't reuse `getArgs()`
+at all — it depends on a session that doesn't exist there either, and even the nullable variant
+would silently return the wrong player's data (or none). Pull data for `$playerId` directly via
+a shared private helper instead.
+
+General rule: never use bare `getCurrentPlayerId()` in `setupNewGame()` or any state's
+`getArgs()`/`zombie()` — use the nullable form there, or `getActivePlayerId()` for
+single-active-player states.
 
 ---
 

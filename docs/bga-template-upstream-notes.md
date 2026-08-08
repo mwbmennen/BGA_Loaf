@@ -41,47 +41,77 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   strings it never saw wrapped. Where: `bga-studio-reference.md`, "Wrap every user-facing
   string in BGA's translation functions, from day one".
 - [ ] **Never add a type hint to an override of an untyped BGA framework hook method.**
-  Confirmed live: fatal on first table creation (`setupNewGame(array $players, ...)` vs.
-  the framework's untyped `setupNewGame($players, ...)`) — PHP's contravariance rule treats
-  an untyped parent parameter as implicitly `mixed`, and a narrower child type is an
-  incompatible override, not a safe addition. Nothing local (no vendored framework, only a
-  hand-maintained stub) can catch this before a live deploy. Applies to any framework hook
-  override (`setupNewGame`, `upgradeTableDb`, `zombieTurn`, etc.), not just this one method.
-  Where: `bga-studio-reference.md`, "Never add type hints to a framework hook override whose
-  parent parameter is untyped — PHP fatals".
-- [ ] **Never centralize state-id (`ST_xxx`) constants in `constants.inc.php`.** Confirmed
-  live twice, on two different code paths, ruling out a sync-gap explanation: first
-  `Undefined constant "...\States\ST_PLAY_CARDS"` from a state's `__construct()` (while
-  `GamestateMachine::addGameStateClasses()` is still loading the state machine inside
-  `Table::setTable()`); then, after fixing that, `Undefined constant
-  "...\States\GLOBAL_CURRENT_ROUND"` from `onEnteringState()` — which disproved the first
-  fix's working theory that only *construction-time* references were at risk.
-  **Real root cause**: `constants.inc.php` is a plain script file, not a class — it only
-  becomes available if the framework explicitly `require`s it, and on this deploy that
-  doesn't reliably happen before the entire initial `createGame` → `setupNewGameTable()` →
-  `jumpToState()` chain runs, which covers both construction *and* first-`onEnteringState()`.
-  Class files never have this problem, at any point, because PHP's autoloader loads them on
-  demand — no separate `require` step. Fix: don't put anything in `constants.inc.php` at all.
-  Declare state ids as same-file `const`s in each state's own file (matching the BGA tutorial
-  scaffold's `EndScore.php`/`EndGame.php` convention, which never centralized its id and
-  never had this bug); declare anything shared across multiple files (e.g. globals key names)
-  as `public const` on the main `Game` class instead, since every state already holds a
-  `Game $game` and so `Game` is guaranteed loaded. **This one is worth flagging
-  prominently**: the file-structure diagram already in `bga-studio-reference.md` §2
-  currently *recommends* the exact broken pattern (`constants.inc.php ← State machine
-  constants (ST_xxx values)`) — that line needs correcting when this ports over, not just
-  appending a caveat elsewhere. Where: `bga-studio-reference.md`, "Never rely on
-  `constants.inc.php` for anything — it's a plain file, not a class, and its `require` isn't
-  reliable" (includes the corrected diagram line and full code examples for both fix
-  patterns).
+  Confirmed live: fatal on first table creation —
+  ```
+  Fatal error: Declaration of Bga\Games\{gamename}\Game::setupNewGame(array $players, array $options = [])
+  must be compatible with Bga\GameFramework\Table::setupNewGame($players, $options = [])
+  ```
+  PHP's contravariance rule treats an untyped parent parameter as implicitly `mixed`, and a
+  narrower child type is an incompatible override, not a safe addition. Nothing local (no
+  vendored framework, only a hand-maintained stub) can catch this before a live deploy.
+  Applies to any framework hook override (`setupNewGame`, `upgradeTableDb`, `zombieTurn`,
+  etc.), not just this one method. Fix — match the parent signature exactly, no type hints,
+  and cast/narrow inside the method body instead:
+  ```php
+  // Wrong — narrows an untyped parent parameter:
+  protected function setupNewGame(array $players, array $options = [])
+
+  // Correct — matches Table::setupNewGame($players, $options = []):
+  protected function setupNewGame($players, $options = [])
+  ```
+  Where: `bga-studio-reference.md` §5, `Error: "Declaration of Game::setupNewGame(...) must be
+  compatible with Table::setupNewGame(...)"`.
 - [ ] **`globals->inc()` needs the variable pre-initialized; `globals->get()` doesn't.**
   Confirmed live: `Error when incrementing a global variable: current_round is not a numeric
   value` during `createGame`, from a state calling `->inc()` on a global that
   `setupNewGame()` never `->set()` first. `get($key, $default)` gracefully falls back to
-  `$default` when unset; `inc()` has no equivalent. Fix: `->set($key, 0)` in `setupNewGame()`
-  for every global any state ever `->inc()`s. Where: `bga-studio-reference.md`,
-  "`$this->bga->globals->inc()` requires the variable to already be numeric — initialize it
-  in `setupNewGame()`".
+  `$default` when unset; `inc()` has no equivalent. Fix:
+  ```php
+  protected function setupNewGame($players, $options = [])
+  {
+      // ...
+      $this->bga->globals->set(GLOBAL_CURRENT_ROUND, 0);
+      // ...
+  }
+  ```
+  ```php
+  // Later, in a state's onEnteringState():
+  $currentRound = (int) $this->game->bga->globals->inc(GLOBAL_CURRENT_ROUND, 1);
+  ```
+  Do this for every global any state ever `->inc()`s. Where: `bga-studio-reference.md` §5,
+  `Error: "Error when incrementing a global variable: {key} is not a numeric value"`.
+- [ ] **`getCurrentPlayerId()` throws "Not logged" in `setupNewGame()`, `getArgs()`, and
+  `zombie()` — use the nullable form.** Confirmed live: `Fatal error during loaf setup: Not
+  logged`, thrown from `PlayCards::getArgs()`'s bare `getCurrentPlayerId()` call, triggered by
+  `setupNewGame()` auto-transitioning straight into a `MULTIPLE_ACTIVE_PLAYER` state during
+  table creation — no browser has loaded the page yet, so there's no requesting-player session
+  for `getCurrentPlayerId()` to read. Same root cause would hit a state's `zombie()` handler
+  (also system-driven, no session) if it reused `getArgs()`'s result — which this repo's
+  `PlayCards::zombie()` was already doing incorrectly (used the *current session's* hand
+  instead of the zombied player's hand; only masked because it had never been exercised live).
+  Fix: `getCurrentPlayerId(true)` (nullable variant, returns `null` instead of throwing) in
+  `getArgs()`, with a null-safe fallback (empty/default args — real players get their own
+  `getArgs()` call once connected):
+  ```php
+  public function getArgs(): array {
+      $currentPlayerId = $this->game->getCurrentPlayerId(true);
+
+      return [
+          'handValues' => $currentPlayerId === null ? [] : $this->getHandValues((int) $currentPlayerId),
+      ];
+  }
+  ```
+  For `zombie(int $playerId)`, don't call `getArgs()` at all — pull the given `$playerId`'s
+  data directly via a shared private helper instead of relying on a session that doesn't
+  exist there either:
+  ```php
+  function zombie(int $playerId) {
+      $args = ['handValues' => $this->getHandValues($playerId)];
+      $zombieChoice = $this->getRandomZombieChoice($args['handValues']);
+      return $this->actCommitCard($zombieChoice, $playerId, $args);
+  }
+  ```
+  Where: `bga-studio-reference.md` §5, `Error: "Fatal error during {game} setup: Not logged"`.
 - [ ] **A hung "Creating the game table..." / client-side timeout means a DB lock, not slow
   code — `Wipe database`, don't debug the code first.** Confirmed live: table creation hung
   indefinitely (eventually a client-side `Timeout exceeded`, not a PHP error) specifically

@@ -24,16 +24,25 @@ class PlayCards extends GameState
     /**
      * Every player commits one work card from hand, face down. No turn order -- this is
      * fully simultaneous (docs/Loaf-English-rules.md, "Structure of a round").
+     *
+     * getCurrentPlayerId() throws "Not logged" when there's no requesting player session --
+     * e.g. right after setupNewGame() auto-transitions into this state during table creation,
+     * before any browser has loaded the page. Use the nullable variant and fall back to an
+     * empty hand in that case; real players get their own getArgs() call once they connect.
      */
     public function getArgs(): array {
-        $currentPlayerId = $this->game->getCurrentPlayerId();
+        $currentPlayerId = $this->game->getCurrentPlayerId(true);
 
         return [
-            'handValues' => $this->game->getObjectListFromDb(
-                "SELECT `value` FROM `work_card` WHERE `player_id` = $currentPlayerId AND `location` = 'hand' ORDER BY `value`",
-                true
-            ),
+            'handValues' => $currentPlayerId === null ? [] : $this->getHandValues((int) $currentPlayerId),
         ];
+    }
+
+    private function getHandValues(int $playerId): array {
+        return $this->game->getObjectListFromDb(
+            "SELECT `value` FROM `work_card` WHERE `player_id` = $playerId AND `location` = 'hand' ORDER BY `value`",
+            true
+        );
     }
 
     /**
@@ -66,7 +75,7 @@ class PlayCards extends GameState
     }
 
     function zombie(int $playerId) {
-        $args = $this->getArgs();
+        $args = ['handValues' => $this->getHandValues($playerId)];
         $zombieChoice = $this->getRandomZombieChoice($args['handValues']);
         return $this->actCommitCard($zombieChoice, $playerId, $args);
     }
