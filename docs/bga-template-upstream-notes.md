@@ -80,38 +80,121 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   ```
   Do this for every global any state ever `->inc()`s. Where: `bga-studio-reference.md` §5,
   `Error: "Error when incrementing a global variable: {key} is not a numeric value"`.
-- [ ] **`getCurrentPlayerId()` throws "Not logged" in `setupNewGame()`, `getArgs()`, and
-  `zombie()` — use the nullable form.** Confirmed live: `Fatal error during loaf setup: Not
-  logged`, thrown from `PlayCards::getArgs()`'s bare `getCurrentPlayerId()` call, triggered by
-  `setupNewGame()` auto-transitioning straight into a `MULTIPLE_ACTIVE_PLAYER` state during
-  table creation — no browser has loaded the page yet, so there's no requesting-player session
-  for `getCurrentPlayerId()` to read. Same root cause would hit a state's `zombie()` handler
-  (also system-driven, no session) if it reused `getArgs()`'s result — which this repo's
-  `PlayCards::zombie()` was already doing incorrectly (used the *current session's* hand
-  instead of the zombied player's hand; only masked because it had never been exercised live).
-  Fix: `getCurrentPlayerId(true)` (nullable variant, returns `null` instead of throwing) in
-  `getArgs()`, with a null-safe fallback (empty/default args — real players get their own
-  `getArgs()` call once connected):
+- [ ] **`getCurrentPlayerId()` throws "Not logged" in `setupNewGame()` — avoid it there, and
+  never use it in `getArgs()` at all (see the next entry, which corrects/replaces this one's
+  original `getArgs()` guidance).** Confirmed live: `Fatal error during loaf setup: Not
+  logged`, thrown from a bare `getCurrentPlayerId()` call reached during the system-driven
+  chain right after table creation — no browser has loaded the page yet, so there's no
+  requesting-player session for `getCurrentPlayerId()` to read. Fix for `setupNewGame()`
+  specifically: avoid `getCurrentPlayerId()` there entirely — you already have the full
+  player list via `$players`/`array_keys($players)`; use `getCurrentPlayerId(true)` (nullable
+  variant) only if you genuinely need to detect "is there a request context." **This entry
+  originally also recommended `getCurrentPlayerId(true)` with a null fallback inside
+  `getArgs()` — that was wrong** (see next entry): it stops the crash but silently breaks
+  real gameplay, since `getArgs()` never has a resolvable "current player" even outside
+  setup. Separately confirmed: `PlayCards::zombie()` was reusing `getArgs()`'s result and
+  reading the *current session's* hand instead of the zombied player's — for
+  `zombie(int $playerId)`, always pull that player's data directly via a shared private
+  helper, never through `getArgs()`. Where: `bga-studio-reference.md` §5, `Error: "Fatal
+  error during {game} setup: Not logged"`.
+- [ ] **`MULTIPLE_ACTIVE_PLAYER` state: nobody gets action buttons / everyone stuck on
+  "Waiting for other players..." — two separate required fixes.** Confirmed live
+  (2026-08-08), reproduced with a real 2-player table: only one player showed as active at
+  all, and even they got zero action buttons. **Cause 1**: `type:
+  StateType::MULTIPLE_ACTIVE_PLAYER` in the constructor only *permits* multiple active
+  players — it doesn't activate anyone. Missing an explicit `onEnteringState()` calling
+  `$this->game->gamestate->setAllPlayersMultiactive();` means nobody is marked active on
+  entry.
+  ```php
+  public function onEnteringState() {
+      $this->game->gamestate->setAllPlayersMultiactive();
+  }
+  ```
+  **Cause 2** (this is the correction to the previous entry's original `getArgs()` advice):
+  `getArgs()` runs once per state entry, server-side, broadcast to everyone — there's no
+  "requesting player" inside it, ever, not just during setup. Using `getCurrentPlayerId()`
+  (throwing or nullable form) there to fetch "my own hand" always resolves to nothing, for
+  every player, every time. The actual BGA mechanism for private per-player data is the
+  `_private` key (keyed by player id) plus `_merge_private => true` (flattens each
+  recipient's own entry into their top-level args **on the client only** — see the important
+  caveat right below, this does *not* extend to action handlers):
   ```php
   public function getArgs(): array {
-      $currentPlayerId = $this->game->getCurrentPlayerId(true);
+      $playerIds = array_map('intval', $this->game->getObjectListFromDb(
+          'SELECT `player_id` FROM `player`',
+          true
+      ));
+
+      $private = [];
+      foreach ($playerIds as $playerId) {
+          $private[$playerId] = ['handValues' => $this->getHandValues($playerId)];
+      }
 
       return [
-          'handValues' => $currentPlayerId === null ? [] : $this->getHandValues((int) $currentPlayerId),
+          '_private' => $private,
+          '_merge_private' => true,
       ];
   }
   ```
-  For `zombie(int $playerId)`, don't call `getArgs()` at all — pull the given `$playerId`'s
-  data directly via a shared private helper instead of relying on a session that doesn't
-  exist there either:
+  **Cause 3, found immediately after fixing 1+2 and actually clicking a button live**:
+  `_merge_private` does NOT carry through to an `actXxx()` action handler's injected
+  `array $args` — confirmed live via `Undefined array key "handValues"` thrown from inside
+  `actCommitCard()` on first real button click. The framework's injected `$args` there is
+  just the raw `getArgs()` return value (`_private`/`_merge_private` keys, nothing
+  flattened/unwrapped for the specific acting player) — the opposite of what cause 2's fix
+  (and this entry's own first draft) assumed. Fix: don't have an action handler depend on
+  `$args` for anything that came from `_private` at all — drop the `array $args` parameter
+  from the action method and re-derive whatever's needed directly from `$currentPlayerId`
+  instead (**not** `$activePlayerId` — that's cause 4, immediately below, found on the very
+  next live test after this one):
   ```php
-  function zombie(int $playerId) {
-      $args = ['handValues' => $this->getHandValues($playerId)];
-      $zombieChoice = $this->getRandomZombieChoice($args['handValues']);
-      return $this->actCommitCard($zombieChoice, $playerId, $args);
+  #[PossibleAction]
+  public function actCommitCard(int $value, int $currentPlayerId) {
+      if (!in_array($value, $this->getHandValues($currentPlayerId), true)) {
+          throw new UserException('You do not have that work card in hand');
+      }
+      // ...
   }
   ```
-  Where: `bga-studio-reference.md` §5, `Error: "Fatal error during {game} setup: Not logged"`.
+  **Cause 4, found immediately after fixing 1–3, on the very next live click**: this entry's
+  own cause-3 fix originally used `int $activePlayerId` as the "who's acting" parameter (code
+  sample above already corrected). That's wrong for `MULTIPLE_ACTIVE_PLAYER` states — per
+  BGA's own docs, `$activePlayerId` is explicitly "not necessarily the one triggering the
+  action" and is only meaningful on single-`ACTIVE_PLAYER` states, where there's exactly one
+  active player and no ambiguity. On `MULTIPLE_ACTIVE_PLAYER`, it silently resolved to `0` —
+  confirmed live via a stack trace literally showing `actCommitCard(3, 0, ...)`, `0` never
+  being a real BGA player id — so the hand check, the DB update, the notification, and
+  `setPlayerNonMultiactive()` were all silently targeting a nonexistent player the whole
+  time. Use `$currentPlayerId` (documented as "the player who triggered the action")
+  instead — it's what an action handler almost always actually wants, regardless of state
+  type. General rule: never call `getCurrentPlayerId()` inside any state's `getArgs()`; treat
+  `_private`/`_merge_private` as display-only data for the client, never something an action
+  handler can trust arrived via its own `$args`; on a `MULTIPLE_ACTIVE_PLAYER` action handler,
+  always use `$currentPlayerId`, never `$activePlayerId`. Where: `bga-studio-reference.md` §5,
+  `Error: MULTIPLE_ACTIVE_PLAYER state shows "Waiting for other players..." for everyone /
+  nobody gets action buttons` and the entry right after it, `Error: $activePlayerId magic
+  parameter is wrong/0 inside a MULTIPLE_ACTIVE_PLAYER action handler` — **this template-notes
+  entry took four live round-trips to fully correct**, each fix looking complete until the
+  very next live test surfaced the next one; worth flagging prominently when porting so
+  nobody trusts an earlier-numbered cause's code sample in isolation. Also worth porting as
+  its own standalone lesson, independent of this specific bug chain: **`$activePlayerId` vs
+  `$currentPlayerId` is a sharp-edged, easy-to-confuse-by-name API pair, and only one of them
+  is safe to use inside a `MULTIPLE_ACTIVE_PLAYER` action handler.**
+- [ ] **`in_array($value, $dbResults, true)` (strict) silently rejects every valid move,
+  because DB values come back as strings.** Confirmed live (2026-08-08), found immediately
+  after fixing the `MULTIPLE_ACTIVE_PLAYER` entry above — first real button click threw a
+  "you don't have that" `UserException` for a card that was, in fact, in hand.
+  `getObjectListFromDb()`/`getCollectionFromDb()` return raw DB values as strings even for
+  numeric columns; `in_array($intValue, $stringArray, true)` is always false (`3 !== "3"`),
+  so any strict-comparison validation against unfiltered DB output rejects every input,
+  correct or not. Fix: `array_map('intval', ...)` immediately after fetching, before any
+  strict comparison — or drop `true` for loose comparison, though casting is more robust
+  since it keeps everything downstream (sums, notifications) working with real ints instead
+  of numeric strings. Generalizes beyond `in_array`: any strict comparison
+  (`===`, `in_array(..., true)`, `array_search(..., true)`, match arms) against unfiltered
+  DB output has this risk. Where: `bga-studio-reference.md` §5, `Error: UserException
+  ("Invalid move"-style message) thrown on a move that's clearly valid, specifically when
+  validating against in_array(..., true)`.
 - [ ] **A hung "Creating the game table..." / client-side timeout means a DB lock, not slow
   code — `Wipe database`, don't debug the code first.** Confirmed live: table creation hung
   indefinitely (eventually a client-side `Timeout exceeded`, not a PHP error) specifically

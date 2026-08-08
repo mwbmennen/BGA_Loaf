@@ -26,13 +26,17 @@ round-card deck itself running out — a real mechanic, not an arbitrary round c
 **Framework API confidence note**: this repo's local IDE stubs
 (`tests/stubs/BgaFrameworkStubs.php`) are hand-maintained and incomplete — they don't cover
 `MULTIPLE_ACTIVE_PLAYER`, the Deck component, or `$this->bga->globals`. The signatures below
-(`setPlayerNonMultiactive`, `globals->get/set/inc`, `deckFactory->createDeck`) are
+(`setPlayerNonMultiactive`, `setAllPlayersMultiactive`, `globals->get/set/inc`,
+`deckFactory->createDeck`, the `_private`/`_merge_private` `getArgs()` return-array keys) are
 cross-checked against BGA's public docs (`en.doc.boardgamearena.com`), but none of this can
 be exercised locally — there's no vendored BGA framework, and Core classes are the only thing
 PHPUnit can actually run. **The state-machine code can only be verified by deploying to BGA
-Studio and playing a real game** (see Verification below). Treat any first-load PHP fatal as
-a signal that one of these cross-checked signatures is slightly off from what this repo's
-specific framework version expects.
+Studio and playing a real game** (see Verification below). Treat any first-load PHP fatal —
+or a state that loads without error but shows no action buttons — as a signal that one of
+these cross-checked signatures/conventions is slightly off from what this repo's specific
+framework version expects; the `MULTIPLE_ACTIVE_PLAYER` activation and `_private` args
+mechanism were both wrong on the first live attempt (confirmed 2026-08-08, see
+`bga-studio-reference.md` §5) despite compiling cleanly and passing PHPUnit.
 
 ## The flip mechanic (why the end condition is "deck runs out")
 

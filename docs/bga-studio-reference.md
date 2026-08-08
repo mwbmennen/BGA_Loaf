@@ -442,37 +442,163 @@ Check the Studio log after triggering the state.
 
 ---
 
+### Error: `UserException` ("Invalid move"-style message) thrown on a move that's clearly valid, specifically when validating against `in_array(..., true)`
+
+**Cause:** A specific, confirmed-live (2026-08-08) instance of the generic "Invalid move on a
+valid move" symptom above: `getObjectListFromDb()`/`getCollectionFromDb()` return raw
+database values as **strings**, even for numeric columns (`INT`, `TINYINT`, etc.). Validating
+a player's submitted value with `in_array($value, $dbValues, true)` — strict comparison,
+the `true` third argument — silently fails every time, because `3 !== "3"` in PHP's strict
+comparison. The action always gets rejected with whatever "you don't have/can't do that"
+message you wrote, regardless of what's actually true.
+
+**Fix:** Cast DB results to the right type immediately after fetching, before doing any
+strict comparison against them:
+
+```php
+private function getHandValues(int $playerId): array {
+    return array_map('intval', $this->game->getObjectListFromDb(
+        "SELECT `value` FROM `work_card` WHERE `player_id` = $playerId AND `location` = 'hand' ORDER BY `value`",
+        true
+    ));
+}
+```
+
+If you don't actually need strict comparison, dropping the `true` argument from `in_array()`
+(loose comparison) also works, but casting is more robust — it keeps the rest of your code
+(sums, comparisons, notifications) working with real integers instead of numeric strings that
+happen to behave correctly most of the time.
+
+---
+
 ### Error: "Fatal error during {game} setup: Not logged"
 
 **Cause:** `getCurrentPlayerId()` (no-args form) throws when there's no requesting player
 session — it reads who sent the current HTTP request, and there isn't one during
-`setupNewGame()` or when a state's `getArgs()`/`onEnteringState()` runs as part of the
-system-driven chain right after table creation (`createGame` → `setupNewGameTable()` →
-initial state transitions), before any browser has loaded the page. The same applies to a
-state's `zombie()` handler — also system-driven, no logged-in session.
+`setupNewGame()`, since that runs once as a system routine at table creation, never in
+response to a specific player's request.
 
-**Fix:** Use the nullable variant, `getCurrentPlayerId(true)`, which returns `null` instead of
-throwing, and handle the null case (e.g. an empty/default args array — real connected players
-get their own `getArgs()` call once they load the page):
+**Fix:** In `setupNewGame()`, either avoid `getCurrentPlayerId()` entirely (you already have
+`$players`/`array_keys($players)` — the full player list — which is almost always what you
+actually want there), or use the nullable variant `getCurrentPlayerId(true)` (returns `null`
+instead of throwing) if you genuinely need to check for a request context.
+
+**Do not "fix" this the same way inside a state's `getArgs()`** — see the next entry below,
+`getArgs()` has no "requesting player" concept at all, not even during real gameplay, and
+papering over the crash with `getCurrentPlayerId(true)` there just trades a loud crash for a
+silent one (empty data for every player, always — confirmed live, see below).
+
+---
+
+### Error: `MULTIPLE_ACTIVE_PLAYER` state shows "Waiting for other players..." for everyone / nobody gets action buttons
+
+**Symptom:** Every connected player sees a waiting message and zero action buttons in a state
+declared `type: StateType::MULTIPLE_ACTIVE_PLAYER` — confirmed live (2026-08-08), reproduced
+with a 2-player table where only one player showed as active (the other stuck on "Waiting for
+other players...") and even that one active player got no buttons.
+
+**Two independent causes, both required to fully fix this:**
+
+**1. `type: StateType::MULTIPLE_ACTIVE_PLAYER` only declares that the state *permits* several
+simultaneously active players — it doesn't activate anyone.** You must explicitly call
+`$this->game->gamestate->setAllPlayersMultiactive();` in the state's `onEnteringState()`, the
+same way a single-`ACTIVE_PLAYER` state needs an explicit call to select its one active
+player. Nothing about the `type:` constructor argument does this for you:
+
+```php
+public function onEnteringState() {
+    $this->game->gamestate->setAllPlayersMultiactive();
+}
+```
+
+**2. `getArgs()` runs exactly once per state entry, server-side, and its return value is
+broadcast to every connected player — there is no "requesting player" context inside it, ever
+(not a setup-only quirk; this is true during completely normal live gameplay too).** Calling
+`getCurrentPlayerId()` (in either form) inside `getArgs()` to fetch "my own hand" doesn't
+work: it has nothing to resolve to, so every player's hand comes back empty and nobody gets
+buttons. BGA's actual mechanism for private per-player data is the `_private` key, keyed by
+player id, with `_merge_private => true` to flatten each recipient's own entry into their
+top-level args **on the client only**:
 
 ```php
 public function getArgs(): array {
-    $currentPlayerId = $this->game->getCurrentPlayerId(true);
+    $playerIds = array_map('intval', $this->game->getObjectListFromDb(
+        'SELECT `player_id` FROM `player`',
+        true
+    ));
+
+    $private = [];
+    foreach ($playerIds as $playerId) {
+        $private[$playerId] = ['handValues' => $this->getHandValues($playerId)];
+    }
 
     return [
-        'handValues' => $currentPlayerId === null ? [] : $this->getHandValues((int) $currentPlayerId),
+        '_private' => $private,
+        '_merge_private' => true,
     ];
 }
 ```
 
-For a `MULTIPLE_ACTIVE_PLAYER` state's `zombie(int $playerId)` handler, don't reuse `getArgs()`
-at all — it depends on a session that doesn't exist there either, and even the nullable variant
-would silently return the wrong player's data (or none). Pull data for `$playerId` directly via
-a shared private helper instead.
+**Important correction, confirmed live:** `_merge_private` only affects what the *client*
+receives — it does **not** carry through to an `actXxx()` action handler's injected
+`array $args` parameter. Submitting an action (e.g. clicking a button built from this
+`getArgs()` data) threw `Undefined array key "handValues"` from inside the action handler,
+because the framework's injected `$args` there was just the raw `getArgs()` return value
+(`_private`/`_merge_private` keys, nothing flattened/unwrapped for the acting player). Don't
+rely on `$args` inside an action handler to carry your `_private` data through at all — drop
+the `array $args` parameter from the action method entirely and re-fetch whatever
+player-specific data you need directly, keyed by `$currentPlayerId` — **not**
+`$activePlayerId`, see the next entry below for why that specific parameter name matters:
 
-General rule: never use bare `getCurrentPlayerId()` in `setupNewGame()` or any state's
-`getArgs()`/`zombie()` — use the nullable form there, or `getActivePlayerId()` for
-single-active-player states.
+```php
+#[PossibleAction]
+public function actCommitCard(int $value, int $currentPlayerId) {
+    if (!in_array($value, $this->getHandValues($currentPlayerId), true)) {
+        throw new UserException('You do not have that work card in hand');
+    }
+    // ...
+}
+```
+
+General rule: never use `getCurrentPlayerId()` inside any state's `getArgs()`, multiactive or
+not — BGA's own docs warn against it. For a private per-player payload sent to the client, use
+`_private` (+ `_merge_private` for flat client-side access) — but treat that as display-only
+data; re-derive anything an action handler needs to validate against, from `$currentPlayerId`,
+rather than trusting it arrived via `$args`. For a `zombie(int $playerId)` handler, don't
+reuse `getArgs()`'s result either — pull that specific `$playerId`'s data directly via a
+shared private helper, since `zombie()` is also system-driven with no session.
+
+---
+
+### Error: `$activePlayerId` magic parameter is wrong/0 inside a `MULTIPLE_ACTIVE_PLAYER` action handler
+
+**Symptom:** An action handler's validation always fails (e.g. "You do not have that work
+card in hand" on a card that's definitely in hand), and/or the wrong player's data gets
+updated/notified. A stack trace shows the injected id as `0` (`actCommitCard(3, 0, ...)`) —
+`0` is never a real BGA player id, which is the tell.
+
+**Cause:** Confirmed live (2026-08-08), and directly per BGA's own docs: the `$activePlayerId`
+(or `$active_player_id`) magic parameter is documented as "not necessarily the one triggering
+the action" and is only meaningful on single-`ACTIVE_PLAYER` states. On a
+`MULTIPLE_ACTIVE_PLAYER` state, several players can be active at once, so there's no single
+"the" active player for the framework to inject — it silently resolves to `0` instead of
+erroring.
+
+**Fix:** Use `$currentPlayerId` (or `$current_player_id`) instead — documented as "the player
+who triggered the action," which is what an action handler almost always actually wants,
+regardless of state type:
+
+```php
+#[PossibleAction]
+public function actCommitCard(int $value, int $currentPlayerId) {
+    // use $currentPlayerId everywhere here: the hand-ownership check, the DB update,
+    // the notification, and setPlayerNonMultiactive() — NOT $activePlayerId.
+}
+```
+
+General rule: on any `MULTIPLE_ACTIVE_PLAYER` state's action handler, use `$currentPlayerId`
+for "who did this," never `$activePlayerId`. Reserve `$activePlayerId` for genuine
+single-`ACTIVE_PLAYER` states, where there's exactly one active player and it's unambiguous.
 
 ---
 
