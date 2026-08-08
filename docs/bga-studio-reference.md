@@ -668,6 +668,63 @@ this.bga.notifications.setupPromiseNotifications(); // auto-discovers notif_xxx 
 
 ---
 
+### Error: `MULTIPLE_ACTIVE_PLAYER` state's `onEnteringState(args, isCurrentPlayerActive)` gets `isCurrentPlayerActive: false` for a player who's genuinely active
+
+**Symptom:** After a live (pushed) transition into a `MULTIPLE_ACTIVE_PLAYER` state, a
+player who should be active — real hand data proves it — sees no action buttons and gets
+stuck on a "waiting for other players" message. **A page refresh always fixes it.** Confirmed
+live (2026-08-08): browser console logging showed `isCurrentPlayerActive: false` at the exact
+moment `onEnteringState` fired, for a player with a genuine non-empty hand, with zero JS
+errors anywhere in the sequence (ruled out both a third-party browser extension and an
+Incognito/clean-profile retest before concluding this).
+
+**Cause:** This is a documented BGA framework race condition, not specific to any one game
+(cross-checked against `forum.boardgamearena.com/viewtopic.php?t=14059`, including a BGA
+admin's own explanation). In a `MULTIPLE_ACTIVE_PLAYER` state, player activation is set
+**during** the state's own PHP-side `onEnteringState()` (a `setAllPlayersMultiactive()` call)
+— so there's no guarantee the client's notion of "am I active" has settled by the exact
+instant its own JS `onEnteringState(args, isCurrentPlayerActive)` fires from a live
+push. A full page reload doesn't have this problem because it re-derives activation status
+from scratch rather than trusting whatever a live push claimed.
+
+**Fix:** Never gate action-button-adding on `onEnteringState`'s `isCurrentPlayerActive`
+parameter for a `MULTIPLE_ACTIVE_PLAYER` state. Do it in `onPlayerActivationChange` instead —
+a separate lifecycle hook the framework calls once activation has actually settled,
+confirmed live to fire as its own distinct event on every single state entry, not just on
+later activation changes:
+
+```js
+class PlayCards {
+    // Don't add buttons here -- isCurrentPlayerActive can be stale on a live push.
+    onEnteringState(_args, _isCurrentPlayerActive) {
+        this.bga.statusBar.setTitle(_("Bakers are committing a work card"));
+    }
+
+    // This is the reliable signal -- called once activation has settled, both on first
+    // becoming active and on becoming inactive again.
+    onPlayerActivationChange(args, isCurrentPlayerActive) {
+        if (isCurrentPlayerActive) {
+            this.bga.statusBar.setTitle(_("${you} must commit a work card"));
+            args.handValues.forEach((value) =>
+                this.bga.statusBar.addActionButton(
+                    _("Commit ${value}").replace("${value}", value),
+                    () => this.onCardClick(value),
+                ),
+            );
+        } else {
+            this.bga.statusBar.setTitle(_("Waiting for other players to commit a work card"));
+        }
+    }
+}
+```
+
+General rule: for any `MULTIPLE_ACTIVE_PLAYER` state's JS class, treat `onEnteringState`'s
+`isCurrentPlayerActive` as informational only (fine for a generic status message), and put
+all activation-dependent UI (buttons, private-data rendering) in `onPlayerActivationChange`
+instead.
+
+---
+
 ### Error: Database schema out of sync
 
 **Symptom:** PHP throws an error like `Column 'board_x' not found` or `Table 'board' doesn't exist`.
