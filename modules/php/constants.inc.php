@@ -2,5 +2,15 @@
 
 declare(strict_types=1);
 
-// Game state constants (e.g. ST_* ids for the RoundStart/PlayCards/ResolveRound/EndGame
-// state machine from docs/loaf-implementation-plan.md) go here once Phase 1 defines them.
+// Game state ids for the RoundStart -> PlayCards -> ResolveRound loop (see
+// docs/loaf-phase1-plan.md). EndGame keeps its own locally-scoped `ST_END_GAME = 99` constant
+// in States/EndGame.php -- that's the framework's reserved end-of-game pseudo-state id, not a
+// real state class, so it stays where the scaffold originally put it.
+const ST_ROUND_START = 10;
+const ST_PLAY_CARDS = 20;
+const ST_RESOLVE_ROUND = 30;
+
+// $this->bga->globals keys (see Bga\Games\loaf\Game).
+const GLOBAL_CURRENT_ROUND = 'current_round';
+const GLOBAL_CURRENT_REVIEW_CARD_ID = 'current_review_card_id';
+const GLOBAL_CURRENT_ORDER_AVERAGE = 'current_order_average';

@@ -6,7 +6,7 @@
  * This code has been produced on the BGA studio platform for use on http://boardgamearena.com.
  * See http://en.boardgamearena.com/#!doc/Studio for more information.
  * -----
- * 
+ *
  * In this file, you are describing the logic of your user interface, in Javascript language.
  *
  */
@@ -16,170 +16,218 @@
  * onEnteringState, onLeavingState and onPlayerActivationChange are predefined names that will be called by the framework.
  * When executing code in this state, you can access the args using this.args
  */
-class PlayerTurn {
-    constructor(game, bga) {
-        this.game = game;
-        this.bga = bga;
+
+// Automatic states (RoundStart/ResolveRound/EndGame) have nothing for the client to do beyond
+// showing a status message -- the server drives the transition on its own.
+class RoundStart {
+  constructor(game, bga) {
+    this.game = game;
+    this.bga = bga;
+  }
+
+  onEnteringState(_args, _isCurrentPlayerActive) {
+    this.bga.statusBar.setTitle(_("A new round is starting..."));
+  }
+
+  onLeavingState(_args, _isCurrentPlayerActive) {}
+}
+
+class PlayCards {
+  constructor(game, bga) {
+    this.game = game;
+    this.bga = bga;
+  }
+
+  onEnteringState(args, isCurrentPlayerActive) {
+    this.bga.statusBar.setTitle(
+      isCurrentPlayerActive
+        ? _("${you} must commit a work card")
+        : _("Players must commit a work card"),
+    );
+
+    if (isCurrentPlayerActive) {
+      const handValues = args.handValues; // returned by PlayCards::getArgs
+
+      handValues.forEach((value) =>
+        this.bga.statusBar.addActionButton(
+          _("Commit ${value}").replace("${value}", value),
+          () => this.onCardClick(value),
+        ),
+      );
     }
 
-    /**
-     * This method is called each time we are entering the game state. You can use this method to perform some user interface changes at this moment.
-     */
-    onEnteringState(args, isCurrentPlayerActive) {
-        this.bga.statusBar.setTitle(isCurrentPlayerActive ? 
-            _('${you} must play a card or pass') :
-            _('${actplayer} must play a card or pass')
-        );
-      
-        if (isCurrentPlayerActive) {
-            const playableCardsIds = args.playableCardsIds; // returned by the PlayerTurn::getArgs
+    this.onPlayerActivationChange(args, isCurrentPlayerActive);
+  }
 
-            // Add test action buttons in the action status bar, simulating a card click:
-            playableCardsIds.forEach(
-                cardId => this.bga.statusBar.addActionButton(_('Play card with id ${card_id}').replace('${card_id}', cardId), () => this.onCardClick(cardId))
-            ); 
+  onLeavingState(_args, _isCurrentPlayerActive) {}
 
-            this.bga.statusBar.addActionButton(_('Pass'), () => this.bga.actions.performAction("actPass"), { color: 'secondary' }); 
-        }
+  /**
+   * on MULTIPLE_ACTIVE_PLAYER states, this is called each time the current player becomes
+   * active or inactive -- used here to show a "waiting on other players" message once this
+   * player has committed.
+   */
+  onPlayerActivationChange(_args, isCurrentPlayerActive) {
+    if (!isCurrentPlayerActive) {
+      this.bga.statusBar.setTitle(
+        _("Waiting for other players to commit a work card"),
+      );
     }
+  }
 
-    /**
-     * This method is called each time we are leaving the game state. You can use this method to perform some user interface changes at this moment.
-     */
-    onLeavingState(_args, _isCurrentPlayerActive) {
-    }
+  onCardClick(value) {
+    this.bga.actions.performAction("actCommitCard", {
+      value,
+    });
+  }
+}
 
-    /**
-     * This method is called each time the current player becomes active or inactive in a MULTIPLE_ACTIVE_PLAYER state. You can use this method to perform some user interface changes at this moment.
-     * on MULTIPLE_ACTIVE_PLAYER states, you may want to call this function in onEnteringState using `this.onPlayerActivationChange(args, isCurrentPlayerActive)` at the end of onEnteringState.
-     * If your state is not a MULTIPLE_ACTIVE_PLAYER one, you can delete this function.
-     */
-    onPlayerActivationChange(_args, _isCurrentPlayerActive) {
-    }
+class ResolveRound {
+  constructor(game, bga) {
+    this.game = game;
+    this.bga = bga;
+  }
 
-    
-    onCardClick(card_id) {
-        console.log( 'onCardClick', card_id );
+  onEnteringState(_args, _isCurrentPlayerActive) {
+    this.bga.statusBar.setTitle(_("Revealing work cards..."));
+  }
 
-        this.bga.actions.performAction("actPlayCard", { 
-            card_id,
-        }).then(() =>  {                
-            // What to do after the server call if it succeeded
-            // (most of the time, nothing, as the game will react to notifs / change of state instead, so you can delete the `then`)
-        });        
-    }
+  onLeavingState(_args, _isCurrentPlayerActive) {}
+}
+
+class EndGame {
+  constructor(game, bga) {
+    this.game = game;
+    this.bga = bga;
+  }
+
+  onEnteringState(_args, _isCurrentPlayerActive) {
+    this.bga.statusBar.setTitle(_("The game is over"));
+  }
+
+  onLeavingState(_args, _isCurrentPlayerActive) {}
 }
 
 export class Game {
-    constructor(bga) {
-        console.log('loaf constructor');
-        this.bga = bga;
+  constructor(bga) {
+    console.log("loaf constructor");
+    this.bga = bga;
 
-        // Declare the State classes
-        this.playerTurn = new PlayerTurn(this, bga);
-        this.bga.states.register('PlayerTurn', this.playerTurn);
+    // Declare the State classes
+    this.roundStart = new RoundStart(this, bga);
+    this.bga.states.register("RoundStart", this.roundStart);
+    this.playCards = new PlayCards(this, bga);
+    this.bga.states.register("PlayCards", this.playCards);
+    this.resolveRound = new ResolveRound(this, bga);
+    this.bga.states.register("ResolveRound", this.resolveRound);
+    this.endGame = new EndGame(this, bga);
+    this.bga.states.register("EndGame", this.endGame);
 
-        // Uncomment the next line to show debug informations about state changes in the console. Remove before going to production!
-        // this.bga.states.logger = console.log;
-            
-        // Here, you can init the global variables of your user interface
-        // Example:
-        // this.myGlobalValue = 0;
-    }
-    
-    /*
+    // Uncomment the next line to show debug informations about state changes in the console. Remove before going to production!
+    this.bga.states.logger = console.log;
+  }
+
+  /*
         setup:
-        
+
         This method must set up the game user interface according to current game situation specified
         in parameters.
-        
+
         The method is called each time the game interface is displayed to a player, ie:
         _ when the game starts
         _ when a player refreshes the game page (F5)
-        
+
         "gamedatas" argument contains all datas retrieved by your "getAllDatas" PHP method.
     */
-    
-    setup( gamedatas ) {
-        console.log( "Starting game setup" );
-        this.gamedatas = gamedatas;
 
-        // Example to add a div on the game area
-        this.bga.gameArea.getElement().insertAdjacentHTML('beforeend', `
+  setup(gamedatas) {
+    console.log("Starting game setup");
+    this.gamedatas = gamedatas;
+
+    this.bga.gameArea.getElement().insertAdjacentHTML(
+      "beforeend",
+      `
             <div id="player-tables"></div>
-        `);
-        
-        // Setting up player boards
-        Object.values(gamedatas.players).forEach(player => {
-            // example of setting up players boards
-            this.bga.playerPanels.getElement(player.id).insertAdjacentHTML('beforeend', `
-                <span id="energy-player-counter-${player.id}"></span> Energy
-            `);
-            const counter = new ebg.counter();
-            counter.create(`energy-player-counter-${player.id}`, {
-                value: player.energy,
-                playerCounter: 'energy',
-                playerId: player.id
-            });
+        `,
+    );
 
-            // example of adding a div for each player
-            document.getElementById('player-tables').insertAdjacentHTML('beforeend', `
+    // Setting up player boards: reputation + hand/played card counts. Own hand values are
+    // shown as PlayCards action buttons rather than here; opponents only ever get counts
+    // (docs/loaf-open-questions.md Q3 -- hands/discards are private to their owner).
+    Object.values(gamedatas.players).forEach((player) => {
+      const handCount = gamedatas.handCount[player.id] ?? 0;
+      const playedCount = gamedatas.playedCount[player.id] ?? 0;
+
+      document.getElementById("player-tables").insertAdjacentHTML(
+        "beforeend",
+        `
                 <div id="player-table-${player.id}">
                     <strong>${player.name}</strong>
-                    <div>Player zone content goes here</div>
+                    <div>Reputation: <span id="reputation-player-${player.id}">${player.reputation}</span></div>
+                    <div>Hand: <span id="hand-count-player-${player.id}">${handCount}</span> card(s)</div>
+                    <div>Committed: <span id="played-count-player-${player.id}">${playedCount}</span></div>
                 </div>
-            `);
-        });
-        
-        // TODO: Set up your game interface here, according to "gamedatas"
-        
+            `,
+      );
+    });
 
-        // Setup game notifications to handle (see "setupNotifications" method below)
-        this.setupNotifications();
+    // Setup game notifications to handle (see "setupNotifications" method below)
+    this.setupNotifications();
 
-        console.log( "Ending game setup" );
-    }
+    console.log("Ending game setup");
+  }
 
-    ///////////////////////////////////////////////////
-    //// Utility methods
-    
-    /*
-    
+  ///////////////////////////////////////////////////
+  //// Utility methods
+
+  /*
+
         Here, you can defines some utility methods that you can use everywhere in your javascript
         script. Typically, functions that are used in multiple state classes or outside a state class.
-    
+
     */
 
-    
-    ///////////////////////////////////////////////////
-    //// Reaction to cometD notifications
+  ///////////////////////////////////////////////////
+  //// Reaction to cometD notifications
 
-    /*
+  /*
         setupNotifications:
-        
+
         In this method, you associate each of your game notifications with your local method to handle it.
-        
+
         Note: game notification names correspond to "bga->notify->all" calls in your Game.php file.
-    
+
     */
-    setupNotifications() {
-        console.log( 'notifications subscriptions setup' );
-        
-        // automatically listen to the notifications, based on the `notif_xxx` function on this class. 
-        // Uncomment the logger param to see debug information in the console about notifications.
-        this.bga.notifications.setupPromiseNotifications({
-            // logger: console.log
-        });
+  setupNotifications() {
+    console.log("notifications subscriptions setup");
+
+    // automatically listen to the notifications, based on the `notif_xxx` function on this class.
+    // Uncomment the logger param to see debug information in the console about notifications.
+    this.bga.notifications.setupPromiseNotifications({
+      logger: console.log,
+    });
+  }
+
+  // Matches Game.php's `roundStart` notification (RoundStart state).
+  async notif_roundStart(_args) {
+    // TODO: animate the new order/review card reveal once real art is wired in (Phase 5).
+  }
+
+  // Matches Game.php's `playerCommitted` notification (PlayCards::actCommitCard). No card
+  // value is included -- it stays hidden until roundResolved.
+  async notif_playerCommitted(_args) {}
+
+  // Matches Game.php's `reputationChanged` notification (ResolveRound).
+  async notif_reputationChanged(args) {
+    const element = document.getElementById(
+      `reputation-player-${args.player_id}`,
+    );
+    if (element) {
+      element.textContent = args.reputation;
     }
-    
-    // TODO: from this point and below, you can write your game notifications handling methods
-    
-    /*
-    Example:
-    async notif_cardPlayed( args ) {
-        // Note: args contains the arguments specified during you "notifyAllPlayers" / "notifyPlayer" PHP call
-        
-        // TODO: play the card in the user interface.
-    }
-    */
+  }
+
+  // Matches Game.php's `roundResolved` notification (ResolveRound).
+  async notif_roundResolved(_args) {
+    // TODO: reveal animation for all played cards once real art is wired in (Phase 5).
+  }
 }

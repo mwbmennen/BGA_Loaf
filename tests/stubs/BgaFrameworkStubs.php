@@ -40,6 +40,25 @@ namespace Bga\GameFramework\Helpers {
         public function nextState(string $_transition = ''): void {}
         public function changeActivePlayer(int $_playerId): void {}
         public function jumpToState(int $_stateId): void {}
+
+        // Unverified locally (no live BGA framework in this repo -- see
+        // docs/loaf-phase1-plan.md's "Framework API confidence note"): sourced from BGA's
+        // public docs, `$this->gamestate->setPlayerNonMultiactive($playerId, EndRound::class)`.
+        // Deactivates one player in a MULTIPLE_ACTIVE_PLAYER state; when the last active
+        // player goes non-active, the framework auto-transitions to `$nextStateClass`.
+        public function setPlayerNonMultiactive(int $_playerId, string $_nextStateClass): void {}
+    }
+
+    // Unverified locally, same caveat as setPlayerNonMultiactive above. Sourced from BGA's
+    // public docs: `$this->bga->globals->get(string $name, $default = null)`,
+    // `->set(string $name, $value)`, `->inc(string $name, int $inc): int`.
+    class Globals
+    {
+        public function get(string $_name, mixed $_defaultValue = null): mixed { return $_defaultValue; }
+        public function set(string $_name, mixed $_value): void {}
+        public function inc(string $_name, int $_inc): int { return 0; }
+        public function has(string $_name): bool { return false; }
+        public function delete(string $_name): void {}
     }
 
     class PlayerStats
@@ -93,6 +112,7 @@ namespace Bga\GameFramework\Helpers {
         public DebugHelper $debug;
         public Notify $notify;
         public CounterFactory $counterFactory;
+        public Globals $globals;
 
         public function __construct()
         {
@@ -103,6 +123,53 @@ namespace Bga\GameFramework\Helpers {
             $this->debug          = new DebugHelper();
             $this->notify         = new Notify();
             $this->counterFactory = new CounterFactory();
+            $this->globals        = new Globals();
+        }
+    }
+}
+
+namespace Bga\GameFramework\Components {
+
+    // Unverified locally, same caveat as Globals/setPlayerNonMultiactive above: no vendored
+    // BGA framework exists in this repo to check against. Method shapes here mirror the
+    // long-stable legacy Deck component (en.doc.boardgamearena.com/Deck), since BGA's public
+    // docs for the newer typed framework confirm the factory (`$this->deckFactory->createDeck(...)`)
+    // but not a full method list for the returned object.
+    class Deck
+    {
+        /** @param array<int, array{type: string, type_arg?: int, nbr: int}> $_cardTypes */
+        public function createCards(array $_cardTypes, string $_location = 'deck'): void {}
+
+        public function shuffle(string $_location): void {}
+
+        public function moveCard(int $_cardId, string $_location, int $_locationArg = 0): void {}
+
+        public function moveAllCardsInLocation(
+            string $_fromLocation,
+            string $_toLocation,
+            ?int $_fromLocationArg = null,
+            int $_toLocationArg = 0,
+        ): void {}
+
+        /** @return array<int, array{id: int, type: string, type_arg: int, location: string, location_arg: int}> */
+        public function getCardsInLocation(string $_location, ?int $_locationArg = null): array { return []; }
+
+        public function countCardsInLocation(string $_location, ?int $_locationArg = null): int { return 0; }
+
+        /** @return array{id: int, type: string, type_arg: int, location: string, location_arg: int}|null */
+        public function pickCardForLocation(string $_from, string $_to, int $_toLocationArg = 0): ?array { return null; }
+    }
+}
+
+namespace Bga\GameFramework\Helpers {
+
+    use Bga\GameFramework\Components\Deck;
+
+    class DeckFactory
+    {
+        public function createDeck(string $_tableName): Deck
+        {
+            return new Deck();
         }
     }
 }
@@ -110,6 +177,7 @@ namespace Bga\GameFramework\Helpers {
 namespace Bga\GameFramework {
 
     use Bga\GameFramework\Helpers\Bga;
+    use Bga\GameFramework\Helpers\DeckFactory;
     use Bga\GameFramework\Helpers\Gamestate;
 
     enum StateType: string
@@ -125,12 +193,14 @@ namespace Bga\GameFramework {
     {
         public Bga $bga;
         public Gamestate $gamestate;
+        public DeckFactory $deckFactory;
         public array $capturedGameStateLabels = [];
 
         public function __construct()
         {
-            $this->bga       = new Bga();
-            $this->gamestate = new Gamestate();
+            $this->bga         = new Bga();
+            $this->gamestate   = new Gamestate();
+            $this->deckFactory = new DeckFactory();
         }
 
         public function initGameStateLabels(array $_stateLabels): void

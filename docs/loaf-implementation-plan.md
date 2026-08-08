@@ -66,6 +66,24 @@ Proposed Core classes:
 - **`ScoringCalculator`** — hand value + reputation bonus + advanced bonuses/mali, fired-player
   exclusion, tie-break by lowest reputation, shared-victory grouping.
 
+**Why "pure, DB-free" matters beyond PHPUnit**: the intent (2026-08-08) is to eventually run a
+standalone simulation harness — thousands of full games, played by simple bot policies, to get
+balance stats (win rates, average reputation swings, how often the deck runs out vs. a boss
+pile triggers the end) — without touching BGA at all. `RoundResolver`/`ReputationTrack` already
+satisfy this (framework-free, directly callable from a CLI script). Two things still don't:
+- `Game::$ROUND_CARD_TYPES` (the card data) is a static property populated in `Game`'s BGA
+  constructor — not reachable without instantiating a live BGA `Table` subclass.
+- The "flip mechanic" (shuffle, draw review card, peek next card for the round's target) is
+  implemented directly inside `States/RoundStart.php`, coupled to BGA's `Deck` component.
+
+When `ReviewEffectResolver`/`ScoringCalculator` land (Phase 2/3 — a simulation isn't useful
+before those exist, since today there's no scoring or win condition to measure), extract the
+card data and the flip-mechanic logic into their own pure `Core` classes the same way
+`RoundResolver` was done, with `RoundStart.php` reduced to a thin adapter over them. That's the
+point at which a simulation driver becomes buildable; no architectural decision needs to change
+before then, just keep applying the existing pure-Core discipline to these two remaining pieces
+as they're touched.
+
 State machine (replacing the scaffold's turn-based `PlayerTurn`/`NextPlayer` skeleton, which
 doesn't fit a simultaneous game):
 
@@ -159,7 +177,10 @@ Global variables:
 - **Phase 2** — swap in real basic-card data (once available), implement the basic
   `ReviewEffectResolver` effect types (target-group ± reputation), weighted boss-pile
   counting, and the end-of-game trigger.
-- **Phase 3** — `ScoringCalculator`, fired-player handling, end-game UI/standings.
+- **Phase 3** — `ScoringCalculator`, fired-player handling, end-game UI/standings. Once this
+  and Phase 2's `ReviewEffectResolver` land, the pure-Core surface is complete enough that a
+  standalone balance-simulation harness (see §2's "Why pure, DB-free matters beyond PHPUnit")
+  becomes buildable — worth revisiting then, not before.
 - **Phase 4** — advanced round cards: discard-forced/recycle effects, played-card swap
   effects, end-of-game bonus/malus (+ doublers), double-counting cards; `with_advanced_cards`
   table option.
