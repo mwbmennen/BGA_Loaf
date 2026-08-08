@@ -38,36 +38,44 @@ class PlayCards {
     this.bga = bga;
   }
 
-  onEnteringState(args, isCurrentPlayerActive) {
-    this.bga.statusBar.setTitle(
-      isCurrentPlayerActive
-        ? _("${you} must commit a work card")
-        : _("Players must commit a work card"),
-    );
+  /**
+   * isCurrentPlayerActive here can be stale/wrong for a MULTIPLE_ACTIVE_PLAYER state reached
+   * via a live push, not just during setup -- confirmed live 2026-08-08 (a real player with a
+   * genuine 7-card hand still showed isCurrentPlayerActive: false right here), and matches a
+   * documented BGA framework behavior: player activation for a MULTIPLE_ACTIVE_PLAYER state
+   * is set server-side *during* the state's own onEnteringState
+   * (setAllPlayersMultiactive()), so the client's activation status isn't guaranteed to have
+   * settled by the time its own onEnteringState fires
+   * (forum.boardgamearena.com/viewtopic.php?t=14059). A page refresh always "fixed" it
+   * because a fresh load re-derives activation from scratch rather than trusting a live push.
+   * Don't add action buttons here -- onPlayerActivationChange below is the framework's
+   * separately-fired, reliably-timed signal for this (confirmed live: it fires as its own
+   * distinct event on every single state entry, not just on later changes).
+   */
+  onEnteringState(_args, _isCurrentPlayerActive) {
+    this.bga.statusBar.setTitle(_("Bakers are committing a work card"));
+  }
 
+  onLeavingState(_args, _isCurrentPlayerActive) {}
+
+  /**
+   * On MULTIPLE_ACTIVE_PLAYER states, this is called by the framework once this player's
+   * activation status has actually settled -- both on first becoming active and on becoming
+   * inactive again (e.g. after committing) -- unlike onEnteringState's isCurrentPlayerActive,
+   * see the comment there. This is the only place action buttons get added.
+   */
+  onPlayerActivationChange(args, isCurrentPlayerActive) {
     if (isCurrentPlayerActive) {
-      const handValues = args.handValues; // returned by PlayCards::getArgs
+      this.bga.statusBar.setTitle(_("${you} must commit a work card"));
 
+      const handValues = args.handValues; // returned by PlayCards::getArgs
       handValues.forEach((value) =>
         this.bga.statusBar.addActionButton(
           _("Commit ${value}").replace("${value}", value),
           () => this.onCardClick(value),
         ),
       );
-    }
-
-    this.onPlayerActivationChange(args, isCurrentPlayerActive);
-  }
-
-  onLeavingState(_args, _isCurrentPlayerActive) {}
-
-  /**
-   * on MULTIPLE_ACTIVE_PLAYER states, this is called each time the current player becomes
-   * active or inactive -- used here to show a "waiting on other players" message once this
-   * player has committed.
-   */
-  onPlayerActivationChange(_args, isCurrentPlayerActive) {
-    if (!isCurrentPlayerActive) {
+    } else {
       this.bga.statusBar.setTitle(
         _("Waiting for other players to commit a work card"),
       );

@@ -212,6 +212,33 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   below (row ordering) flagged that the Deck component has zero coverage in
   `bga-studio-reference.md` yet — this entry and that one should probably become a single
   proper Deck-component subsection when ported, rather than two scattered error entries.
+- [ ] **`MULTIPLE_ACTIVE_PLAYER`: `onEnteringState`'s `isCurrentPlayerActive` can be stale on
+  a live push — use `onPlayerActivationChange` for anything activation-dependent.** Confirmed
+  live (2026-08-08): after a page-refresh-required "buttons missing" bug report, added
+  temporary `console.log` diagnostics and reproduced it twice (once in a normal tab, once in
+  clean Incognito with zero browser extensions, ruling that out) — both times,
+  `isCurrentPlayerActive: false` was logged inside `onEnteringState` for a player who
+  genuinely had a live, non-empty hand. This is a documented BGA framework race, not a
+  game-specific bug: cross-checked against `forum.boardgamearena.com/viewtopic.php?t=14059`,
+  including a BGA admin's own explanation that player activation for a
+  `MULTIPLE_ACTIVE_PLAYER` state is set server-side *during* the state's own PHP
+  `onEnteringState()` (`setAllPlayersMultiactive()`), so there's no guarantee the client's
+  activation status has settled by the exact instant its own JS `onEnteringState` fires from
+  a live push — only a full page reload reliably re-derives it from scratch. Fix: never gate
+  activation-dependent UI (action buttons, private-data rendering) on `onEnteringState`'s
+  `isCurrentPlayerActive` parameter for a `MULTIPLE_ACTIVE_PLAYER` state — do it in
+  `onPlayerActivationChange` instead, a separate lifecycle hook confirmed live to fire as its
+  own distinct event on every single state entry (not just later changes), which is exactly
+  the framework's own recommended pattern for this (the classic/old framework's docs call the
+  equivalent hook `onUpdateActionButtons` and explicitly recommend it over `onEnteringState`
+  for the same reason). Where: `bga-studio-reference.md` §5, `Error: MULTIPLE_ACTIVE_PLAYER
+  state's onEnteringState(args, isCurrentPlayerActive) gets isCurrentPlayerActive: false for a
+  player who's genuinely active` (full before/after code). Note this is a *different*, later
+  bug than the earlier `MULTIPLE_ACTIVE_PLAYER` entries above (missing
+  `setAllPlayersMultiactive()`, `_private`/`_merge_private`, `$activePlayerId` vs
+  `$currentPlayerId`) — all of those were server-side/PHP; this one is purely client-side JS
+  timing, and only surfaced once real gameplay looped through multiple rounds rather than a
+  single round of manual testing.
 - [ ] **A hung "Creating the game table..." / client-side timeout means a DB lock, not slow
   code — `Wipe database`, don't debug the code first.** Confirmed live: table creation hung
   indefinitely (eventually a client-side `Timeout exceeded`, not a PHP error) specifically
