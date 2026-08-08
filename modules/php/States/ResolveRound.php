@@ -70,6 +70,7 @@ class ResolveRound extends GameState
             [
                 'total' => $result->total,
                 'target' => $result->target,
+                'bossPile' => $result->success ? 'happy' : 'angry',
             ]
         );
 
