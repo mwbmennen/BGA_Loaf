@@ -602,6 +602,35 @@ single-`ACTIVE_PLAYER` states, where there's exactly one active player and it's 
 
 ---
 
+### Error: `TypeError`/`undefined` client-side after reading `.length` on a Deck component's `getCardsInLocation()` result
+
+**Symptom:** JS code doing `gamedatas.someCards.length` (or a notification payload field
+built the same way) reads as `undefined` — confirmed live (2026-08-08) on a page refresh,
+where a boss-pile card counter that had been working via live notification increments showed
+`undefined` after a fresh page load re-sent the initial game data.
+
+**Cause:** `$this->yourDeck->getCardsInLocation($location)` returns a PHP array keyed by
+**card id** (`[12 => [...], 47 => [...], ...]`), not a plain sequential list. A
+non-sequential/associative PHP array serializes to a JS **object** in the JSON payload, not
+an array — and plain objects don't have a `.length` property, only real arrays do. This is
+easy to miss because PHP itself doesn't distinguish the two (`usort()`, `foreach`, `count()`
+all work identically on both), so nothing looks wrong until the *client* tries to treat the
+result as an array.
+
+**Fix:** Use `Object.keys(...).length` client-side instead of `.length` — it works correctly
+on both plain arrays and objects, so it's safe regardless of which shape a given PHP endpoint
+actually returns:
+
+```js
+const bossHappyCount = Object.keys(gamedatas.bossHappy).length; // not gamedatas.bossHappy.length
+```
+
+If you need the actual card data (not just a count) client-side, remember to iterate with
+`Object.values(...)` or `Object.entries(...)`, not array methods like `.map()`/`.forEach()`
+directly on the object.
+
+---
+
 ### What actually delivers a notification: CometD
 
 `notify->all(...)`/`notifyAllPlayers(...)` on the PHP side doesn't push to the browser directly —

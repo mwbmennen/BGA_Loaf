@@ -143,9 +143,23 @@ export class Game {
     console.log("Starting game setup");
     this.gamedatas = gamedatas;
 
+    // Minimal, functional-not-pretty per docs/loaf-phase1-plan.md's Client section -- just
+    // enough to see the 5-card end trigger approaching while playtesting. Real boss-pile
+    // visuals (filed cards, fraction-to-5 indicator) are Phase 5 polish
+    // (docs/loaf-implementation-plan.md §4), not this.
+    // getCardsInLocation() returns a PHP associative array keyed by card id, which serializes
+    // to a JS object rather than an array -- Object.keys(...).length works for both shapes,
+    // plain .length only works on arrays (confirmed live: .length came back undefined here).
+    const bossHappyCount = Object.keys(gamedatas.bossHappy).length;
+    const bossAngryCount = Object.keys(gamedatas.bossAngry).length;
+
     this.bga.gameArea.getElement().insertAdjacentHTML(
       "beforeend",
       `
+            <div id="boss-piles">
+                <div>Happy boss: <span id="boss-happy-count">${bossHappyCount}</span> / 5</div>
+                <div>Angry boss: <span id="boss-angry-count">${bossAngryCount}</span> / 5</div>
+            </div>
             <div id="player-tables"></div>
         `,
     );
@@ -227,7 +241,13 @@ export class Game {
   }
 
   // Matches Game.php's `roundResolved` notification (ResolveRound).
-  async notif_roundResolved(_args) {
+  async notif_roundResolved(args) {
     // TODO: reveal animation for all played cards once real art is wired in (Phase 5).
+    const element = document.getElementById(
+      args.bossPile === "happy" ? "boss-happy-count" : "boss-angry-count",
+    );
+    if (element) {
+      element.textContent = Number(element.textContent) + 1;
+    }
   }
 }

@@ -164,3 +164,42 @@ calls made so a Studio failure can be traced back to the right assumption fast:
   its schema default (0 for everyone) this phase. Real `ScoringCalculator` (hand value +
   reputation bonus + fired-player exclusion + tie-break) is Phase 3 — this phase only needed to
   prove the round loop starts, plays, resolves, and terminates correctly.
+
+## Phase 1 live verification (2026-08-08)
+
+**Status: core loop confirmed working end-to-end on Studio, at both ends of the player
+range.** A full 2-player game was played to completion — deck exhaustion correctly routed to
+`EndGame`, both players ended negative reputation, game ended in a tie, zero PHP errors from
+`RoundStart` or `ResolveRound` at any point across multiple rounds. A 6-player game was also
+played through successfully (using Studio's `dev0`–`dev9` test accounts, switching between
+seats via the player panel's red-arrow-opens-a-new-tab mechanism —
+`en.doc.boardgamearena.com/Testing_by_developer` — one tab per seat, no repeated login
+needed). A hand-computed reputation-math cross-check against a real round's actual numbers
+(target, committed cards, resulting delta) also matched `RoundResolver`'s output. This closes
+out every item in `loaf-phase1-plan.md`'s Verification checklist: full loop ✓, auto-advance
+on last commit ✓, deck exhaustion → `EndGame` ✓, both ends of the 2–6 player range ✓,
+reputation math cross-checked against a real game ✓. **Phase 1 is complete.**
+
+**Revisiting "three framework APIs used here have zero local verification history" above**:
+`$this->deckFactory->createDeck(...)`/the `Deck` component's method shapes, and
+`$this->bga->globals->get/set/inc`, turned out fine as originally stubbed. The real surprises
+were all concentrated in `PlayCards` (`RoundStart`/`ResolveRound`/`EndGame`'s own logic had
+no live surprises at all, despite equally little prior verification) — four separate bugs,
+each masking the next until fixed: `StateType::MULTIPLE_ACTIVE_PLAYER` needing an explicit
+`setAllPlayersMultiactive()` call; `getArgs()` having no per-player request context at all
+(not even outside setup), requiring BGA's `_private`/`_merge_private` mechanism instead of
+`getCurrentPlayerId()`; that private data not carrying through to an action handler's
+injected `$args`; and `$activePlayerId` silently resolving to a nonexistent player on
+`MULTIPLE_ACTIVE_PLAYER` states, needing `$currentPlayerId` instead. None of this was
+specific to L'Oaf's rules — full generic write-ups are in `docs/bga-studio-reference.md` §5
+and `docs/bga-template-upstream-notes.md`, per this file's own stated scope. Worth noting
+here only because it means **`setPlayerNonMultiactive` itself** — the one piece of this that
+*was* originally flagged as unverified — turned out to work exactly as documented; the actual
+gotchas were all in code adjacent to it, not in it.
+
+**Boss-pile counts aren't visible client-side, and that's expected, not a bug.**
+`loaf-phase1-plan.md`'s Client section scopes Phase 1's JS as "minimal,
+functional-not-pretty" — hand buttons, a waiting indicator, notification wiring. The Happy/
+Angry boss-pile display with its fraction-to-5 indicator is explicit Phase 5 polish work
+(`loaf-implementation-plan.md` §4), not something that regressed. Right now the only
+externally-visible signal that the deck ran out is the game actually ending.

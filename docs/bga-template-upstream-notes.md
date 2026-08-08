@@ -195,6 +195,23 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   DB output has this risk. Where: `bga-studio-reference.md` §5, `Error: UserException
   ("Invalid move"-style message) thrown on a move that's clearly valid, specifically when
   validating against in_array(..., true)`.
+- [ ] **Deck component: `getCardsInLocation()` results are keyed-by-card-id PHP arrays, which
+  become JS objects, not arrays — `.length` reads `undefined` client-side.** Confirmed live
+  (2026-08-08): a boss-pile card counter, seeded from `getCardsInLocation('review_happy')` in
+  the initial game-data payload, read `undefined` on page refresh. PHP doesn't distinguish
+  sequential vs. associative arrays (`count()`/`foreach`/`usort()` all work identically on
+  both — this is also why the existing "don't trust `getCardsInLocation`'s row order" entry
+  above never caught this), but JSON serialization does: a non-sequential PHP array becomes a
+  JS object, and only real JS arrays have `.length`. Fix: use `Object.keys(...).length`
+  client-side instead of `.length` — works on both shapes, so it's safe without needing to
+  know which one a given PHP endpoint actually returns; use `Object.values(...)`/
+  `Object.entries(...)` instead of array methods (`.map()`/`.forEach()`) if you need the
+  actual card data, not just a count. Where: `bga-studio-reference.md` §5, `Error:
+  TypeError/undefined client-side after reading .length on a Deck component's
+  getCardsInLocation() result`. Note: the existing "needs generalizing" Deck-component entry
+  below (row ordering) flagged that the Deck component has zero coverage in
+  `bga-studio-reference.md` yet — this entry and that one should probably become a single
+  proper Deck-component subsection when ported, rather than two scattered error entries.
 - [ ] **A hung "Creating the game table..." / client-side timeout means a DB lock, not slow
   code — `Wipe database`, don't debug the code first.** Confirmed live: table creation hung
   indefinitely (eventually a client-side `Timeout exceeded`, not a PHP error) specifically
