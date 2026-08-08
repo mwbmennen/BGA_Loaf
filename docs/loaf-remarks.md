@@ -120,3 +120,47 @@ contradicts failure by definition. So a zero-delta round is only possible on suc
 every player happens to play exactly the average). `RoundResolverTest` encodes this as
 `testDeltaIsAlwaysStrictlyNegativeOnFailure`; don't add a "zero delta on failure" test case
 back in, it describes an unreachable game state.
+
+## Phase 1 state machine: judgment calls (2026-08-07)
+
+Built `RoundStart`/`PlayCards`/`ResolveRound`/`EndGame` (see `docs/loaf-phase1-plan.md` for
+the full design). None of this is exercisable locally — no vendored BGA framework, so
+everything below is either sourced from BGA's public docs or a best-effort guess, and can
+only really be confirmed by deploying to Studio and playing a game. Recording the specific
+calls made so a Studio failure can be traced back to the right assumption fast:
+
+- **`work_card.location` gained a third value, `'played'`**, beyond the original plan's
+  `hand`/`discard` pair (`docs/loaf-implementation-plan.md` §3). Needed to represent "committed
+  this round, hidden from other players until reveal" without a separate table — a card in
+  `hand` is visible only to its owner, `played` is *also* visible only to its owner (until
+  `ResolveRound` moves it to `discard`), and both states share the same visibility rule, so a
+  third enum value was simpler than a second table with duplicated `player_id`/`value` columns.
+- **Deck row ordering is not trusted** — `RoundStart` fetches all cards in `location = 'deck'`
+  and sorts by `location_arg` ascending itself (lowest = next to draw) rather than assuming
+  `getCardsInLocation`'s row order reflects deck order. This is the standard Deck component
+  convention, but since the exact ordering behavior isn't confirmed locally, sorting explicitly
+  in PHP means correctness doesn't depend on an unverified default.
+- **End condition is deck exhaustion, not a round-count guess.** Traced the actual flip
+  mechanic (draw a review card, read the target from whatever's newly exposed on top) through
+  a concrete example to show it needs ≥2 cards in the deck to start a round — see
+  `docs/loaf-phase1-plan.md`'s "flip mechanic" section for the full derivation. This was a
+  late change from the top-level plan doc's original suggestion of throwaway placeholder
+  totals; since the real card data was already available, it seemed wasteful to build and then
+  discard flat placeholder content, so Phase 1 ported the real `order.per_player_average` data
+  now and let the *real* deck-exhaustion mechanic drive the loop's end, rather than picking an
+  arbitrary round cap. Decided with the user before implementation (see the plan doc's Context
+  section).
+- **Three framework APIs used here have zero local verification history** (unlike, say,
+  `playerScoreAux`, which this codebase already fought through to a confirmed signature — see
+  the stub file's comments): `$this->bga->globals->get/set/inc`,
+  `$this->gamestate->setPlayerNonMultiactive($playerId, NextState::class)`, and
+  `$this->deckFactory->createDeck(...)` plus the `Deck` component's method shapes
+  (`createCards`/`moveCard`/`getCardsInLocation`/`countCardsInLocation`). All three are
+  cross-checked against BGA's public docs and stubbed accordingly in
+  `tests/stubs/BgaFrameworkStubs.php` with comments flagging them as unverified — treat any
+  first-Studio-load fatal as a signal one of these is slightly off, the same way
+  `playerScoreAux`'s two earlier wrong guesses were caught.
+- **`EndGame`'s scoring is a deliberate stub**, not a placeholder bug: `player_score` stays at
+  its schema default (0 for everyone) this phase. Real `ScoringCalculator` (hand value +
+  reputation bonus + fired-player exclusion + tie-break) is Phase 3 — this phase only needed to
+  prove the round loop starts, plays, resolves, and terminates correctly.

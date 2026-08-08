@@ -519,6 +519,11 @@ setup(gamedatas) {
 }
 ```
 
+**Standing rule**: `console.log` calls are convenient during development but ship straight to
+every player's browser console in production — comment them out (don't delete outright, so
+they're easy to re-enable) before considering a feature/implementation phase done. Easiest to
+catch with `grep -rn "console\.log" modules/js/` as a final pass before wrapping up.
+
 ### Inspecting the Game State
 
 In BGA Studio while a game is running, you can view the current state machine state:
@@ -566,6 +571,7 @@ Run through this before clicking "Create table" in Studio to avoid confusing err
 - [ ] `Game.js` default export is the `Game` class
 - [ ] All state names in JS (`bga.states.register(...)`) match PHP state machine names exactly
 - [ ] All notification types in PHP (`notifyAllPlayers('type', ...)`) have matching `notif_type()` handlers in JS
+- [ ] All debug `console.log` calls in `modules/js/` are commented out, not left active (see §6)
 
 ---
 

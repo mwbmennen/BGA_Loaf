@@ -18,14 +18,20 @@ declare(strict_types=1);
 
 namespace Bga\Games\loaf;
 
-use Bga\Games\loaf\States\PlayerTurn;
-use Bga\GameFramework\Components\Counters\PlayerCounter;
+use Bga\Games\loaf\Core\RoundCardData;
+use Bga\Games\loaf\States\RoundStart;
+use Bga\GameFramework\Components\Deck;
 
 class Game extends \Bga\GameFramework\Table
 {
-    public static array $CARD_TYPES;
+    /**
+     * Static content for the 24 physical round cards -- see `Core\RoundCardData::TYPES` for
+     * the shape/contents. Only the 12 `basic_*` entries are shuffled into the deck at setup;
+     * `advanced_*` entries wait for the Phase 4 opt-in table option.
+     */
+    public static array $ROUND_CARD_TYPES;
 
-    public PlayerCounter $playerEnergy;
+    public Deck $roundCards;
 
     /**
      * Your global variables labels:
@@ -40,32 +46,9 @@ class Game extends \Bga\GameFramework\Table
     {
         parent::__construct();
 
-        $this->playerEnergy = $this->bga->counterFactory->createPlayerCounter('energy');
+        $this->roundCards = $this->deckFactory->createDeck('round_card');
 
-        self::$CARD_TYPES = [
-            1 => [
-                "card_name" => clienttranslate('Troll'), // ...
-            ],
-            2 => [
-                "card_name" => clienttranslate('Goblin'), // ...
-            ],
-            // ...
-        ];
-
-        /* example of notification decorator.
-        // automatically complete notification args when needed
-        $this->bga->notify->addDecorator(function(string $message, array $args) {
-            if (isset($args['player_id']) && !isset($args['player_name']) && str_contains($message, '${player_name}')) {
-                $args['player_name'] = $this->getPlayerNameById($args['player_id']);
-            }
-        
-            if (isset($args['card_id']) && !isset($args['card_name']) && str_contains($message, '${card_name}')) {
-                $args['card_name'] = self::$CARD_TYPES[$args['card_id']]['card_name'];
-                $args['i18n'][] = ['card_name'];
-            }
-            
-            return $args;
-        });*/
+        self::$ROUND_CARD_TYPES = RoundCardData::TYPES;
     }
 
     /**
@@ -79,9 +62,10 @@ class Game extends \Bga\GameFramework\Table
      */
     public function getGameProgression()
     {
-        // TODO: compute and return the game progression
+        // 11 rounds is the most the 12-card basic deck can support (see docs/loaf-phase1-plan.md).
+        $currentRound = (int) $this->bga->globals->get(GLOBAL_CURRENT_ROUND, 0);
 
-        return 0;
+        return (int) min(100, round(($currentRound / 11) * 100));
     }
 
     /**
@@ -127,14 +111,33 @@ class Game extends \Bga\GameFramework\Table
         $result = [];
         // WARNING: We must only return information visible by the current player (using $currentPlayerId).
 
-        // Get information about players.
-        // NOTE: you can retrieve some extra field you added for "player" table in `dbmodel.sql` if you need it.
-        $result["players"] = $this->getCollectionFromDb(
-            "SELECT `player_id` AS `id`, `player_score` AS `score` FROM `player`"
+        $result['players'] = $this->getCollectionFromDb(
+            'SELECT `player_id` AS `id`, `player_score` AS `score`, `player_reputation` AS `reputation`, ' .
+                '`player_fired` AS `fired` FROM `player`'
         );
-        $this->playerEnergy->fillResult($result);
 
-        // TODO: Gather all information about current game situation (visible by player $currentPlayerId).
+        // Own hand values in full; other players only get a hand/played count (never values),
+        // per the "discard/hand visible only to owner" rule (docs/loaf-open-questions.md Q3).
+        $result['handCount'] = $this->getCollectionFromDb(
+            "SELECT `player_id` AS `id`, COUNT(*) AS `count` FROM `work_card` WHERE `location` = 'hand' GROUP BY `player_id`",
+            true
+        );
+        $result['playedCount'] = $this->getCollectionFromDb(
+            "SELECT `player_id` AS `id`, COUNT(*) AS `count` FROM `work_card` WHERE `location` = 'played' GROUP BY `player_id`",
+            true
+        );
+        $result['myHand'] = $this->getObjectListFromDb(
+            "SELECT `value` FROM `work_card` WHERE `player_id` = $currentPlayerId AND `location` = 'hand' ORDER BY `value`",
+            true
+        );
+
+        $result['currentRound'] = (int) $this->bga->globals->get(GLOBAL_CURRENT_ROUND, 0);
+        $result['currentOrderAverage'] = (int) $this->bga->globals->get(GLOBAL_CURRENT_ORDER_AVERAGE, 0);
+
+        // Boss piles: filed review cards are public once revealed, per the physical rules
+        // ("slide it under the boss card so that only the effect part is visible").
+        $result['bossHappy'] = $this->roundCards->getCardsInLocation('review_happy');
+        $result['bossAngry'] = $this->roundCards->getCardsInLocation('review_angry');
 
         return $result;
     }
@@ -143,10 +146,8 @@ class Game extends \Bga\GameFramework\Table
      * This method is called only once, when a new game is launched. In this method, you must setup the game
      *  according to the game rules, so that the game is ready to be played.
      */
-    protected function setupNewGame($players, $options = [])
+    protected function setupNewGame(array $players, array $options = [])
     {
-        $this->playerEnergy->initDb(array_keys($players), initialValue: 2);
-
         // Set the colors of the players with HTML color code. The default below is red/green/blue/orange/brown. The
         // number of colors defined here must correspond to the maximum number of players allowed for the gams.
         $gameinfos = $this->getGameinfos();
@@ -172,11 +173,33 @@ class Game extends \Bga\GameFramework\Table
                 implode(",", $query_values)
             )
         );
+        // player_reputation/player_fired default to 0 via the schema (dbmodel.sql), no explicit init needed.
 
         $this->reattributeColorsBasedOnPreferences($players, $gameinfos["player_colors"]);
         $this->reloadPlayersBasicInfos();
 
-        // Init global values with their initial values.
+        // Deal each player their fixed personal hand: one work card per value 0-11.
+        $work_card_values = [];
+        foreach (array_keys($players) as $player_id) {
+            for ($value = 0; $value <= 11; $value++) {
+                $work_card_values[] = "($player_id, $value, 'hand')";
+            }
+        }
+        static::DbQuery(
+            sprintf(
+                'INSERT INTO `work_card` (`player_id`, `value`, `location`) VALUES %s',
+                implode(',', $work_card_values)
+            )
+        );
+
+        // Shuffle the 12 basic round cards into the deck. Advanced cards are a Phase 4
+        // opt-in table option, not shuffled in yet.
+        $basic_card_types = array_filter(self::$ROUND_CARD_TYPES, fn(array $card) => !$card['advanced']);
+        $this->roundCards->createCards(
+            array_map(fn(string $card_type) => ['type' => $card_type, 'type_arg' => 0, 'nbr' => 1], array_keys($basic_card_types)),
+            'deck'
+        );
+        $this->roundCards->shuffle('deck');
 
         // Init game statistics.
         //
@@ -186,12 +209,7 @@ class Game extends \Bga\GameFramework\Table
         // $this->tableStats->init('table_teststat1', 0);
         // $this->playerStats->init('player_teststat1', 0);
 
-        // TODO: Setup the initial game situation here.
-
-        // Activate first player once everything has been initialized and ready.
-        $this->activeNextPlayer();
-
-        return PlayerTurn::class;
+        return RoundStart::class;
     }
 
     /**
