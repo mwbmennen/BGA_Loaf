@@ -47,6 +47,11 @@ namespace Bga\GameFramework\Helpers {
         // Deactivates one player in a MULTIPLE_ACTIVE_PLAYER state; when the last active
         // player goes non-active, the framework auto-transitions to `$nextStateClass`.
         public function setPlayerNonMultiactive(int $_playerId, string $_nextStateClass): void {}
+
+        // Unverified locally, same caveat as setPlayerNonMultiactive above. Sourced from
+        // BGA's public docs: marks every player active on entering a MULTIPLE_ACTIVE_PLAYER
+        // state -- required explicitly, the state `type` alone doesn't activate anyone.
+        public function setAllPlayersMultiactive(): void {}
     }
 
     // Unverified locally, same caveat as setPlayerNonMultiactive above. Sourced from BGA's
