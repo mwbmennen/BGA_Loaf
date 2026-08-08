@@ -22,6 +22,8 @@ use Bga\Games\loaf\Core\RoundCardData;
 use Bga\Games\loaf\States\RoundStart;
 use Bga\GameFramework\Components\Deck;
 
+require_once __DIR__ . '/constants.inc.php';
+
 class Game extends \Bga\GameFramework\Table
 {
     /**
@@ -146,7 +148,7 @@ class Game extends \Bga\GameFramework\Table
      * This method is called only once, when a new game is launched. In this method, you must setup the game
      *  according to the game rules, so that the game is ready to be played.
      */
-    protected function setupNewGame(array $players, array $options = [])
+    protected function setupNewGame($players, $options = [])
     {
         // Set the colors of the players with HTML color code. The default below is red/green/blue/orange/brown. The
         // number of colors defined here must correspond to the maximum number of players allowed for the gams.
@@ -200,6 +202,8 @@ class Game extends \Bga\GameFramework\Table
             'deck'
         );
         $this->roundCards->shuffle('deck');
+
+        $this->bga->globals->set(GLOBAL_CURRENT_ROUND, 0);
 
         // Init game statistics.
         //

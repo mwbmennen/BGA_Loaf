@@ -269,7 +269,7 @@ namespace Bga\GameFramework {
         // it actually is.
         public function getBgaEnvironment(): string { return 'studio'; }
 
-        public function getCurrentPlayerId(): int { return 0; }
+        public function getCurrentPlayerId(bool $_bReturnNullIfNotLogged = false): ?int { return 0; }
 
         public function getPlayerNameById(int $_playerId): string { return ''; }
 
