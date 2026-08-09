@@ -873,6 +873,19 @@ In BGA Studio while a game is running, you can view the current state machine st
 
 - Studio tools → **Game state** → shows current state name and active player
 
+### Surfacing hidden server-side state before the UI exists
+
+If game logic resolves something server-side that has no on-screen representation yet (no card
+art, no board widget for it), testers have no way to check the outcome against what should have
+happened — a functionally-correct effect and a silently-wrong one look identical on screen.
+Don't wait for the real UI to make this testable: add a plain-text `notify->all()` describing
+the hidden state in words, using `clienttranslate()` on each translatable piece (including enum
+labels passed as substitution args, not just the message template — BGA's client matches
+translated arg strings the same way it matches the template). It shows up for free in BGA's
+standard game log panel, no new JS/template work needed, and is easy to delete once real UI
+lands. Cheaper than building the real UI early just to unblock testing, and cheaper than testing
+blind.
+
 ### Forcing a State Transition (Studio Only)
 
 During testing you can manually trigger state transitions from the Studio admin panel without going through normal gameplay. Useful for testing end-game scoring without playing a full game.

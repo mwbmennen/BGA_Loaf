@@ -43,6 +43,18 @@ class RoundStart extends GameState
         $this->game->roundCards->moveCard($reviewCard['id'], 'revealed_review');
         $this->game->bga->globals->set(GLOBAL_CURRENT_REVIEW_CARD_ID, $reviewCard['id']);
 
+        $review = Game::$ROUND_CARD_TYPES[$reviewCard['type']]['review'];
+        $this->game->bga->notify->all(
+            'reviewCardRevealed',
+            clienttranslate('Review card revealed: on success, ${successTarget} ${successAmount} reputation; on fail, ${failTarget} ${failAmount} reputation'),
+            [
+                'successTarget' => $this->describeReviewTarget($review['success']),
+                'successAmount' => $this->describeReviewAmount($review['success']),
+                'failTarget' => $this->describeReviewTarget($review['fail']),
+                'failAmount' => $this->describeReviewAmount($review['fail']),
+            ]
+        );
+
         $orderCard = $deckCards[0];
         $orderAverage = Game::$ROUND_CARD_TYPES[$orderCard['type']]['order']['per_player_average'];
         $this->game->bga->globals->set(GLOBAL_CURRENT_ORDER_AVERAGE, $orderAverage);
@@ -59,5 +71,35 @@ class RoundStart extends GameState
         );
 
         return PlayCards::class;
+    }
+
+    /**
+     * Plain-text label for a review effect's `target`, for the log-only 'reviewCardRevealed'
+     * notification -- Phase 2 has no card art yet (see modules/js/Game.js's Phase 5 TODO), so
+     * this is the only place a tester can currently see what a review card does. Only the
+     * basic `reputation` effect is wired up (advanced effects are Phase 4 no-ops in
+     * ReviewEffectResolver), but every `target` value from docs/loaf-card-data.json's effect
+     * schema is covered so this doesn't go blank if an advanced card is ever drawn early.
+     */
+    private function describeReviewTarget(array $effect): string
+    {
+        return match ($effect['target']) {
+            'lowest_reputation' => clienttranslate('the lowest-reputation player(s)'),
+            'highest_reputation' => clienttranslate('the highest-reputation player(s)'),
+            'reputation_positive' => clienttranslate('every player with positive reputation'),
+            'reputation_negative' => clienttranslate('every player with negative reputation'),
+            'reputation_zero' => clienttranslate('every player at zero reputation'),
+            'all' => clienttranslate('every player'),
+            default => clienttranslate('no one'),
+        };
+    }
+
+    private function describeReviewAmount(array $effect): string
+    {
+        if ($effect['effect'] !== 'reputation') {
+            return clienttranslate('(advanced effect, not yet implemented)');
+        }
+
+        return sprintf('%+d', $effect['amount']);
     }
 }

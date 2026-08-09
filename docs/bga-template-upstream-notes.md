@@ -32,6 +32,16 @@ For each entry below:
 These are already generically worded (no L'Oaf-specific nouns) and live in this repo's own
 `docs/bga-studio-reference.md` — just copy the section across.
 
+- [ ] **Surface hidden server-side state via the game log before real UI exists.** When game
+  logic resolves something with no on-screen representation yet, testers can't tell a
+  correct outcome from a silently-wrong one. Don't build the real UI early just to unblock
+  testing — add a plain-text `notify->all()` (translating each piece with
+  `clienttranslate()`, including enum-label args, not just the message template) describing
+  the hidden state. It shows up for free in BGA's standard game log panel and is trivial to
+  delete once real UI lands. Where: `bga-studio-reference.md` §6, "Surfacing hidden
+  server-side state before the UI exists" (added after this came up for L'Oaf's
+  review-card effects — see `loaf-remarks.md`'s "Phase 2: review card effect had no visible
+  representation" for the concrete example).
 - [ ] **`console.log` cleanup before shipping.** Comment out (don't delete) debug
   `console.log` calls before considering a feature/phase done, plus a `grep -rn
   "console\.log" modules/js/` catch-all and a checklist item. Where: `bga-studio-reference.md`
