@@ -142,6 +142,19 @@ If you are not fired, add up:
 - Any bonus or minus points from active review cards (only when playing with advanced
   croissant round cards).
 
+> **Reputation bonus table** (not in the original PDF/rules text -- printed directly on the
+> physical reputation board itself, confirmed 2026-08-09 from a photo of the board; see
+> `docs/loaf-remarks.md`'s Phase 3 entry). The bonus is a stepped table, **not** the reputation
+> value itself:
+>
+> | Reputation | Bonus |
+> |---|---|
+> | 1 to 3 | +2 |
+> | 4 to 6 | +3 |
+> | 7 to 9 | +4 |
+> | 10 | +5 |
+> | 0 or lower | +0 |
+
 The player with the highest score is the winner! In case of a tie, the player among them with
 the lowest reputation wins. If there's still a tie, the tied players share the victory.
 

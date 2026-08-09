@@ -268,6 +268,20 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
 Real lessons, but currently written with L'Oaf's specific nouns (round cards, reputation,
 etc.) — rewrite around generic examples before adding to the template.
 
+- [ ] **Every physical component with its own printed values needs a photo, not just the
+  rulebook text.** A scoring rule was implemented wrong (bonus points assumed to equal a
+  tracked number directly) because the only source consulted was the transcribed rules
+  text/PDF, which genuinely had no numbers for it — the actual values were printed on a
+  separate physical board component (a reputation track's own bonus scale) that was never
+  photographed or transcribed, unlike the round cards which *did* get a full photo-driven
+  transcription pass (`docs/loaf-card-data.json`). The general rule: rules text describes
+  *what* a component does qualitatively; boards/tracks/tokens with their own printed
+  numbers/tables need the same "transcribe from a real photo" discipline as any other card
+  data, not just a read-through of the narrative rules. Cheap to avoid up front (photograph
+  every physical component with printed values during setup, not just the cards), expensive
+  to catch later (a full scoring formula silently wrong until a human catches it against the
+  real board). Where: `docs/loaf-remarks.md`, "Phase 3: reputation bonus is a stepped table,
+  not the reputation value itself."
 - [ ] **Deck component: don't trust `getCardsInLocation`'s row order.** `card_location_arg`
   is the position *within* a location (e.g. for `deck`, ascending = draw order, lowest = next
   to draw) — that's the standard Deck component convention, but since it's unverified
