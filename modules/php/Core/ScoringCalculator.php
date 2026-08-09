@@ -15,6 +15,17 @@ use InvalidArgumentException;
 final class ScoringCalculator
 {
     /**
+     * Fixed score for every fired player, per player preference over the originally-derived
+     * `min(activeScores) - 1` sentinel (docs/loaf-phase3-plan.md §4 -- kept there for the
+     * reasoning trail, now superseded). Chosen to sit below the worst realistic Phase 4 malus
+     * stack calculated in docs/loaf-remarks.md's Phase 3 entries (~-18: two stackable
+     * end-game-malus cards plus the x2 malus doubler, all on one player) -- not an arbitrary
+     * round number. Unlike the derived version, this needs revisiting if Phase 4's actual
+     * malus catalogue ever changes enough to threaten that floor.
+     */
+    public const FIRED_SCORE = -20;
+
+    /**
      * @param array<int, int> $handValues player_id => sum of remaining work-card values.
      * @param array<int, int> $reputations player_id => final reputation (-10..+10). Also the
      *     source of truth for which player_ids exist -- every other map must share its keys.
@@ -47,18 +58,11 @@ final class ScoringCalculator
                 + $bonusPoints[$playerId];
         }
 
-        $activeScores = array_diff_key($rawScores, array_flip($firedPlayerIds));
-        // Shared sentinel below every active score, derived rather than a fixed constant so
-        // it stays correct once Phase 4's malus effects can push a real score negative -- see
-        // docs/loaf-phase3-plan.md §4. The empty case (nobody active) is the all-fired edge
-        // case (Q6) falling out for free, not a separate branch.
-        $firedScore = empty($activeScores) ? 0 : min($activeScores) - 1;
-
         $result = [];
         foreach (array_keys($reputations) as $playerId) {
             $fired = in_array($playerId, $firedPlayerIds, true);
             $result[$playerId] = new ScoringResult(
-                score: $fired ? $firedScore : $rawScores[$playerId],
+                score: $fired ? self::FIRED_SCORE : $rawScores[$playerId],
                 // Lower reputation wins ties among active players (rulebook); fired players
                 // are NOT sub-ranked by reputation (Q5), so they all get the same flat aux
                 // too, matching their shared score -- see docs/loaf-phase3-plan.md §4/§5.

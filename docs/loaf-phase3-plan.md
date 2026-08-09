@@ -112,42 +112,38 @@ repeatedly:
    winner," and the rulebook itself says "*In the event that all players are fired, there is no
    winner*" (line 148). Consistent with Q5 — everyone tied, nobody "wins" that tie.
 
-## 4. Judgment call: fired-player score as a dynamic sentinel, not a fixed magic number
+## 4. Judgment call: fired-player score is a fixed constant, `ScoringCalculator::FIRED_SCORE = -20`
 
-The cleanest way to satisfy points 3–5 of §3 simultaneously, using BGA's own native
-score/score_aux ranking (so no custom ranking logic is needed anywhere — see §5): compute every
-player's **raw** score first (as if nobody were fired), then for fired players, discard that raw
-score entirely and replace it with one shared value guaranteed to rank below every non-fired
-player's score:
+**Current design.** Every fired player gets the same fixed score, `ScoringCalculator::FIRED_SCORE`
+(`-20`), and the same flat `aux` (`0`), regardless of their own hand/reputation — using BGA's own
+native score/score_aux ranking (so no custom ranking logic is needed anywhere — see §5), this
+alone satisfies points 3–5 of §3: it's guaranteed below every legitimate non-fired score, every
+fired player ties with every other fired player, and the all-fired edge case (§3 point 5) falls
+out for free (everyone gets `-20`, everyone ties).
 
-```php
-$firedScore = empty($activeScores) ? 0 : min($activeScores) - 1;
-```
+**Why `-20` specifically, not `-1` or some other round number**: not arbitrary — chosen to sit
+below the worst realistic Phase 4 malus stack, calculated in `docs/loaf-remarks.md`'s Phase 3
+entries at roughly `-18` (two stackable `end_game_malus` cards on one player, doubled by the
+`double_end_game_malus` card). Under Phase 3 rules alone every legitimate raw score is
+provably ≥ 0, so almost any negative constant would "work" today — the `-20` choice is
+specifically informed by what Phase 4 could realistically produce, not a guess.
 
-**Why not a fixed constant like `-1` or `-1000`**: under Phase 3 rules, every legitimate raw
-score is provably ≥ 0 (hand values are non-negative; the reputation-bonus term is the stepped
-table from §3 point 2, never negative; `bonusPoints` is always 0 in Phase 3) — so a fixed `-1`
-would work *today*. But it silently stops being safe the moment Phase 4 activates
-`end_game_malus`/`double_end_game_malus`, which can legitimately push an active (non-fired)
-player's real score below `-1`. Deriving the sentinel from `min(activeScores) - 1` at score time
-is correct regardless of what the achievable score range ever becomes — it never needs
-revisiting when Phase 4 lands, same "build it right once" discipline Phase 2 applied to
-`EndConditionChecker`'s `>=` comparison (§4 of that plan).
-
-**The empty-`activeScores` case is exactly the all-fired edge case (§3 point 5)**: if every
-player is fired, `min()` has nothing to operate on, so every fired player instead gets the same
-arbitrary constant (`0` in the sketch above — the actual value is unobservable, since nobody
-is being compared to it). This falls out of the general rule for free, rather than needing a
-separate `if (all fired)` branch — worth calling out in review since it's not obvious from the
-code alone that this *is* the all-fired case.
+**This was originally a *derived* sentinel** (`min(activeScores) - 1`, recomputed every game)
+specifically to avoid ever needing to revisit this number if Phase 4's real malus catalogue
+changed. That reasoning was sound but ultimately traded away deliberately, by choice, in favor
+of a simpler fixed constant — see `docs/loaf-remarks.md` for the full trade-off discussion and
+why `-20` was judged an acceptable trade given the concrete `-18` ceiling already calculated.
+**Consequence worth remembering**: unlike the derived version, `FIRED_SCORE` *does* need
+revisiting if Phase 4's actual malus catalogue ever changes enough to threaten that floor — this
+is no longer a "build it right once, never revisit" property.
 
 **`score_aux` for fired players must also be flat, not reputation-derived** — this is the part
 easy to get wrong by analogy with non-fired players' aux (§5). Since Q5 says fired players are
 *not* sub-ranked by reputation among themselves, giving them `aux = -reputation` (the formula
 used for active players) would silently re-introduce exactly the ranking Q5 says not to have,
-the moment two fired players' `firedScore` ties (which they always do, being the same shared
-value) but their `aux` doesn't. Fired players get one shared `aux` value too (e.g. `0`),
-matching their shared `score`.
+the moment two fired players' `score` ties (which they always do, sharing `FIRED_SCORE`) but
+their `aux` doesn't. Fired players get one shared `aux` value too (`0`), matching their shared
+`score`.
 
 ## 5. Judgment call / framework-API-confidence note: `player_score_aux` tie-break direction
 

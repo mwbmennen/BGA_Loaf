@@ -104,11 +104,14 @@ final class ScoringCalculatorTest extends TestCase
         );
 
         // Players 1 and 2 are both fired despite very different hand values/reputations --
-        // they must end up with an identical score AND aux (Q5: no ordering among themselves).
+        // they must end up with the same fixed FIRED_SCORE and aux (Q5: no ordering among
+        // themselves), not their own would-be raw score.
         $this->assertTrue($result[1]->fired);
         $this->assertTrue($result[2]->fired);
-        $this->assertSame($result[1]->score, $result[2]->score);
-        $this->assertSame($result[1]->aux, $result[2]->aux);
+        $this->assertSame(ScoringCalculator::FIRED_SCORE, $result[1]->score);
+        $this->assertSame(ScoringCalculator::FIRED_SCORE, $result[2]->score);
+        $this->assertSame(0, $result[1]->aux);
+        $this->assertSame(0, $result[2]->aux);
         $this->assertLessThan($result[3]->score, $result[1]->score);
     }
 
@@ -123,8 +126,8 @@ final class ScoringCalculatorTest extends TestCase
 
         $this->assertTrue($result[1]->fired);
         $this->assertTrue($result[2]->fired);
-        $this->assertSame($result[1]->score, $result[2]->score);
-        $this->assertSame($result[1]->aux, $result[2]->aux);
+        $this->assertSame(ScoringCalculator::FIRED_SCORE, $result[1]->score);
+        $this->assertSame(ScoringCalculator::FIRED_SCORE, $result[2]->score);
     }
 
     public function testTieBreakDirectionFavorsLowerReputation(): void
