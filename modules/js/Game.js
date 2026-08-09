@@ -258,4 +258,15 @@ export class Game {
       element.textContent = Number(element.textContent) + 1;
     }
   }
+
+  // Matches Game.php's `playerFired` notification (EndGame). Plain-text marker only --
+  // functional, not pretty, same scope as the rest of Phase 1-3's client (real polish is
+  // Phase 5). The BGA ranking screen itself already shows fired players tied at the bottom
+  // via player_score/player_score_aux; this just makes "why" legible on the board too.
+  async notif_playerFired(args) {
+    const element = document.getElementById(`player-table-${args.player_id}`);
+    if (element) {
+      element.insertAdjacentHTML("beforeend", `<div>${_("FIRED")}</div>`);
+    }
+  }
 }

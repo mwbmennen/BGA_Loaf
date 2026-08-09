@@ -267,3 +267,104 @@ exactly as `ReviewEffectResolverTest` already covered in isolation.
 target types, ties, the empty-group no-op, the boss-triggered end firing well ahead of
 deck-exhaustion, and the `reviewCardRevealed` visibility fix — has been confirmed on a real
 Studio table, not just in PHPUnit. **Phase 2 is complete.**
+
+## Phase 3: reputation bonus is a stepped table, not the reputation value itself (2026-08-09)
+
+While implementing `ScoringCalculator`, the initial code (and `loaf-phase3-plan.md`'s own §3
+rules-quote) assumed the rulebook's "your bonus points if you have a positive reputation
+value" meant the bonus equals the reputation number directly (`max(0, reputation)`) — a
+reasonable-looking reading, since the transcribed rules text (`docs/Loaf-English-rules.md`)
+genuinely has no numbers for this, only the qualitative note about not losing points for
+negative reputation.
+
+**That reading was wrong.** The physical reputation board has its own printed bonus track,
+separate from the -10..+10 reputation spaces themselves: 1-3 → +2, 4-6 → +3, 7-9 → +4, 10 →
++5, 0 or lower → +0. Caught by the user from a photo of the actual board component, not
+inferable from the PDF/text transcription at all — this is exactly the kind of gap the
+project's card-scan-driven data capture (`RoundCardData`, `docs/loaf-card-data.json`) was
+built to avoid for the round cards, but the reputation board itself was never photographed or
+transcribed the same way. Worth flagging as a gap-class, not just a one-off fix: **any
+physical component with its own printed values (boards, tokens, insert artwork) needs the
+same "transcribe from a real photo" discipline the round cards already got, not just the
+narrative rules text** — logged in `docs/bga-template-upstream-notes.md` as a generic lesson.
+
+Fixed in `ScoringCalculator::reputationBonus()` (a small `match` on reputation ranges),
+`ScoringCalculatorTest::testReputationBonusTiers()` (one assertion per tier boundary),
+`docs/loaf-phase3-plan.md` (§3, §4, §6, §9, §10 all referenced the wrong formula), and
+`docs/Loaf-English-rules.md` (added the table under Scoring, sourced from the board photo
+since it was never in the original transcription). `EndGame.php`'s wiring needed no change —
+it just passes reputations through to `ScoringCalculator`, which is exactly why keeping this
+logic in one pure Core class instead of duplicating the formula in the adapter meant the fix
+was one function, not a hunt through multiple files.
+
+## Phase 3: final hand values had no visibility either (2026-08-09, same day)
+
+Same gap-class as Phase 2's review-card-visibility fix, hit while preparing to live-verify
+the reputation-bonus fix above: hand privacy (`docs/loaf-open-questions.md` Q3) is correct
+*during* play, but `getAllDatas()`/the client never stop hiding other players' hands even
+after the game ends, when every player's final score is already public anyway — there was no
+way to check a score's components (which cards, what bonus) against what actually got
+computed, only the final number.
+
+Fixed by adding a `scoreBreakdown` notification in `EndGame.php`, alongside the existing
+`playerFired`/`gameEnded` ones added when Phase 3 was first implemented: one line per player
+in the game log, e.g. `Carl: hand [5, 6, 8, 11] = 30, reputation bonus +5, score 35` (or the
+FIRED variant, which shows their reputation instead of a bonus, since a fired player's score
+is the shared sentinel from `ScoringCalculator`'s §4 design, not `hand + bonus`). The bonus
+value shown is derived from `$scoring->score - $handValues[$playerId] - $bonusPoints[$playerId]`
+rather than duplicating `ScoringCalculator`'s private tier table in the adapter — same
+"adapter stays thin, Core stays the single source of truth" discipline as everywhere else in
+this codebase. Log-text only, same as the review-card fix — `getAllDatas()` itself was
+deliberately left untouched (still hides other players' hands during play, and doesn't
+proactively reveal them post-game either), since the log notification alone was enough to
+unblock live verification without touching hand-privacy semantics more broadly.
+
+## Phase 3 live verification: tie-break polarity confirmed, and one more visibility gap (2026-08-09)
+
+`docs/loaf-phase3-plan.md` §5's flagged framework-API-confidence unknown is now resolved:
+tested a genuine score tie between two non-fired players with different final reputations,
+and BGA's ranking correctly showed the **lower**-reputation player winning the tie —
+confirms `aux = -reputation` (higher aux wins ties, same direction as score) was the right
+polarity as originally written, no sign flip needed. This was the one piece of Phase 3 that
+truly couldn't be checked any other way; it's now closed out.
+
+Live-testing this surfaced the same visibility gap in a new spot: BGA's standard ranking
+screen shows the tie was broken correctly, but nothing explains *why* — no reputation number,
+no indication the tie-break even happened. The `scoreBreakdown` log line already had the
+`reputation` value available in its args (queried for the FIRED-branch message) but the
+non-fired message template never referenced it. Fixed by adding `(reputation ${reputation})`
+and `tie-break value ${aux}` to the non-fired `scoreBreakdown` message in `EndGame.php` — no
+new query needed, the data was already there, just not surfaced. Same "surface hidden
+server-side state via the log" pattern as every other visibility fix this phase
+(`docs/bga-studio-reference.md` §6) — worth noting this is now the third time this exact gap
+has appeared (review-card effects, final hand values, and now tie-break reasoning), so it's
+worth treating as a standing question when adding *any* new end-of-round/end-of-game
+notification going forward: "if a tester can't see this on screen anywhere, can they see it
+in the log?"
+
+Went one step further than the `reputation`/`aux` numbers, though: added a dedicated
+`tieBreak` notification in `EndGame.php` that states the outcome in words (e.g. "Alice wins
+the tie over Bob on lower reputation."), rather than leaving it to a tester to compare two
+`tie-break value` numbers by hand. Groups non-fired players by identical `score`, then by the
+top `aux` within each group: a clean winner gets `"X wins/win the tie over Y..."`; a group
+still tied after `aux` too gets `"X, Y are tied on score and reputation -- they share the
+victory"` instead of incorrectly naming a winner — the rulebook's own "if there's still a
+tie, the tied players share the victory" case. Fired players are excluded from this grouping
+entirely, not just skipped when found tied — they can never legitimately tie with an active
+player (`ScoringCalculator`'s sentinel score is always strictly below every active score by
+construction), so there's no correctness reason to include them, and a tie *among* fired
+players isn't a real contest (Q5: already unranked, tied at the bottom, nothing to explain).
+
+**Correction, same day**: the winners/losers grouping was initially written directly inside
+`EndGame.php` — real rules logic sitting in a BGA adapter class with no local test harness for
+it, same testability gap `EndGame.php`/`ResolveRound.php`/`RoundStart.php` all already have,
+noticed when asked "is there a test for this." Extracted into
+`ScoringCalculator::tieGroups(array $scores): array` (pure, DB-free, takes `score()`'s own
+output as input) — `EndGame.php` now just turns each returned group into player names and
+notification text. Six new tests in `ScoringCalculatorTest` cover it directly: no ties, a
+clean winner, a full shared-victory, a partial win/lose split among three tied players,
+multiple independent tied groups in one game, and — the one most likely to regress silently —
+confirming two fired players who'd otherwise look identically "tied" are excluded from
+grouping altogether. The literal English notification *text* in `EndGame.php` is still
+untested (same boundary as `gameEnded`'s message selection), but the *decision* it reports —
+who actually wins each tie — now has real coverage.

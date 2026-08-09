@@ -80,10 +80,24 @@ repeatedly:
 2. **Scoring formula, exact components** (lines 137–143): for each non-fired player, sum (a)
    "the values of all work cards still in your hand," (b) "your bonus points if you have a
    positive reputation value" with the explicit note "*you do not lose points for a negative
-   reputation value*" (i.e. `max(0, reputation)`, not `reputation` — a player at -7 contributes
-   `0` to their score, not `-7`), and (c) "any bonus or minus points from active review cards
-   (only when playing with advanced croissant round cards)" — component (c) is the `bonusPoints`
-   map from §2, always zero in Phase 3.
+   reputation value*", and (c) "any bonus or minus points from active review cards (only when
+   playing with advanced croissant round cards)" — component (c) is the `bonusPoints` map from
+   §2, always zero in Phase 3.
+
+   **Component (b) is a stepped bonus table, not the reputation value itself** — not stated
+   anywhere in the transcribed rules text (the PDF/`docs/Loaf-English-rules.md` only say "bonus
+   points if you have a positive reputation value," no numbers), but printed directly on the
+   physical reputation board. Confirmed 2026-08-09 from a photo of the board (see
+   `docs/loaf-remarks.md`'s Phase 3 entry) and now recorded in
+   `docs/Loaf-English-rules.md`'s Scoring section:
+
+   | Reputation | Bonus |
+   |---|---|
+   | 1 to 3 | +2 |
+   | 4 to 6 | +3 |
+   | 7 to 9 | +4 |
+   | 10 | +5 |
+   | 0 or lower | +0 |
 3. **Winner determination**: "The player with the highest score is the winner! In case of a
    tie, the player among them with the lowest reputation wins. If there's still a tie, the tied
    players share the victory" (lines 145–146). Two sequential tie-breaks: score, then
@@ -111,8 +125,8 @@ $firedScore = empty($activeScores) ? 0 : min($activeScores) - 1;
 ```
 
 **Why not a fixed constant like `-1` or `-1000`**: under Phase 3 rules, every legitimate raw
-score is provably ≥ 0 (hand values are non-negative; the reputation-bonus term is
-`max(0, reputation)`, never negative; `bonusPoints` is always 0 in Phase 3) — so a fixed `-1`
+score is provably ≥ 0 (hand values are non-negative; the reputation-bonus term is the stepped
+table from §3 point 2, never negative; `bonusPoints` is always 0 in Phase 3) — so a fixed `-1`
 would work *today*. But it silently stops being safe the moment Phase 4 activates
 `end_game_malus`/`double_end_game_malus`, which can legitimately push an active (non-fired)
 player's real score below `-1`. Deriving the sentinel from `min(activeScores) - 1` at score time
@@ -197,7 +211,7 @@ final class ScoringCalculator
         $rawScores = [];
         foreach (array_keys($reputations) as $playerId) {
             $rawScores[$playerId] = $handValues[$playerId]
-                + max(0, $reputations[$playerId])
+                + self::reputationBonus($reputations[$playerId])
                 + $bonusPoints[$playerId];
         }
 
@@ -217,6 +231,21 @@ final class ScoringCalculator
             );
         }
         return $result;
+    }
+
+    /**
+     * The reputation board's printed end-game bonus, a stepped table -- NOT the reputation
+     * value itself. See §3 point 2 above for the full table and where it came from.
+     */
+    private static function reputationBonus(int $reputation): int
+    {
+        return match (true) {
+            $reputation >= 10 => 5,
+            $reputation >= 7 => 4,
+            $reputation >= 4 => 3,
+            $reputation >= 1 => 2,
+            default => 0,
+        };
     }
 }
 ```
@@ -354,9 +383,10 @@ New file: `tests/Core/ScoringCalculatorTest.php`.
 
 - **Hand-value summation**: a player with a specific remaining hand scores exactly that sum
   when reputation is 0 and not fired.
-- **Positive-only reputation bonus**: a player at reputation +4 gets `+4` added to their score;
-  a player at reputation -4 gets `+0` added (not `-4`) — directly exercises the rulebook's
-  explicit "you do not lose points for a negative reputation value" note (§3 point 2).
+- **Reputation bonus table**: one case per tier boundary (1, 3, 4, 6, 7, 9, 10) confirming the
+  stepped table from §3 point 2 (+2/+3/+4/+5), plus a negative-reputation case confirming
+  `+0` (not a negative contribution) — directly exercises the rulebook's explicit "you do not
+  lose points for a negative reputation value" note together with the board's actual values.
 - **Happy-boss ending fires nobody**: a player at reputation -8 is *not* fired when
   `$endingBoss === 'happy'`, even though the same reputation *would* fire them on an angry
   ending — the two-part test that makes §3 point 1 a regression test, not just prose.
@@ -402,7 +432,8 @@ framework, and §5's tie-break polarity specifically **cannot** be confirmed any
    fired and show up "tied at the bottom" per Q5 (not ordered by how negative their reputation
    is); the player at exactly 0 is *not* fired ("lower than 0", not "0 or lower").
 4. Confirm hand-value scoring by hand-computing at least one non-fired player's expected score
-   (remaining hand sum + `max(0, reputation)`) against what BGA's ranking screen actually shows.
+   (remaining hand sum + the §3 point 2 reputation-bonus table, looked up by their exact final
+   reputation) against what BGA's ranking screen actually shows.
 5. **Engineer or wait for a genuine score tie** among two non-fired players with *different*
    final reputations. This is the one item that actually resolves §5's open question — confirm
    whether the *lower*-reputation player is shown winning the tie (validates the `aux =

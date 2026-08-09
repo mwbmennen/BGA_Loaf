@@ -7,3 +7,4 @@ vendor/
 _ide_helper.php
 .phpunit.cache
 docs/card-scans/
+docs/board-scan/
