@@ -368,3 +368,46 @@ confirming two fired players who'd otherwise look identically "tied" are exclude
 grouping altogether. The literal English notification *text* in `EndGame.php` is still
 untested (same boundary as `gameEnded`'s message selection), but the *decision* it reports —
 who actually wins each tie — now has real coverage.
+
+## Phase 3: fired-player score changed from derived sentinel to fixed `-20` (2026-08-09)
+
+While discussing the fired-player sentinel design (why `min(activeScores) - 1` instead of a
+fixed number), calculated a concrete worst-case for Phase 4: at most two `end_game_malus`
+cards can stack on one player (`lowest_reputation` -4 and `reputation_zero` -5, mutually
+exclusive with `reputation_negative` since a player can't be both `<0` and `=0`), doubled by
+`double_end_game_malus` if that card also resolves — roughly `-18` in a deliberately-engineered
+worst case. That number turned a previously-abstract "some future score could be very
+negative" concern into a concrete ceiling.
+
+Given that concrete number, explicitly chose to trade the derived sentinel's "never needs
+revisiting" property for a simpler fixed constant: `ScoringCalculator::FIRED_SCORE = -20`,
+comfortably below the calculated `-18` ceiling. `EndGame.php` needed no changes — same as the
+reputation-bonus fix, this is exactly why the sentinel logic lived in one pure Core method
+rather than being duplicated in the adapter. Tests updated to assert the exact constant
+(`ScoringCalculator::FIRED_SCORE`) rather than a relative "less than every active score"
+comparison, in both the multi-player and all-fired test cases.
+
+**Trade-off, stated plainly**: this is no longer correct-by-construction against every
+possible future Phase 4 malus catalogue the way the derived version was — if new content ever
+pushes a real score below `-20`, this constant needs revisiting by hand. Accepted deliberately,
+not overlooked; `docs/loaf-phase3-plan.md` §4 records the reasoning trail from both the
+original derived design and this change.
+
+**Live-tested and confirmed (2026-08-09, later same day)**: a fired player's score reads
+exactly `-20`; the `FIRED` marker is visible on the board under the correct player's box; all
+four reputation-bonus tiers (1-3 → +2, 4-6 → +3, 7-9 → +4, 10 → +5) now confirmed live,
+completing the set (0/5 confirmed earlier this session); and the all-players-fired edge case
+shows everyone tied at `-20` with no distinct winner.
+
+**Also live-tested and confirmed**: a 2-player game ending with one player fired (the
+minimum-player-count edge case for the sentinel/tie logic) works correctly, and no PHP
+fatals were seen across any of today's scenarios.
+
+**`tieBreak` confirmed live too**: the exact winner/loser text appeared correctly under the
+deployed code, not just reasoned through against pasted numbers.
+
+**Phase 3's live-verification checklist is now fully closed out.** Every item — fired-player
+scoring at the fixed `-20`, the `FIRED` marker, all four reputation-bonus tiers, the
+all-players-fired edge case, the 2-player minimum-player-count ending, the `tieBreak`
+explanation text, and a full sweep with no PHP fatals — has been confirmed on a real Studio
+table, not just in PHPUnit. **Phase 3 is complete.**
