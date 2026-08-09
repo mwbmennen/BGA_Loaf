@@ -244,3 +244,26 @@ The `reviewCardRevealed` log line (deployed and tested separately, same day) als
 correct: on a card whose success side targets `lowest_reputation`, the log text matched and
 the lowest-reputation player was the one who actually moved. Closes out the
 review-card-visibility gap noted above — the fix works as intended, not just theoretically.
+
+**§10 target-type coverage, update (2026-08-09, later same day):** `highest_reputation`,
+`reputation_positive`, and `reputation_negative` review effects all confirmed live as
+correct too, alongside the `lowest_reputation` case above — all four basic target types from
+`loaf-phase2-plan.md` §3.3 now exercised on a real table, not just in
+`ReviewEffectResolverTest`.
+
+A tie case (multiple players sharing the extreme reputation) also confirmed live: the
+effect applied to every tied player, not just one, matching `RoundResolver`'s existing
+tie-handling precedent.
+
+The end-game trigger also confirmed to fire well before round 9-11, matching §5's pigeonhole
+proof — the boss-pile threshold is genuinely the game's primary end condition in practice,
+not deck-exhaustion.
+
+The empty-target-group no-op (e.g. `reputation_negative` firing when nobody's below 0) also
+confirmed live: no reputation change, no notification, no error — behaves as a silent no-op
+exactly as `ReviewEffectResolverTest` already covered in isolation.
+
+**§10's live-verification checklist is now fully closed out.** Every item — all four basic
+target types, ties, the empty-group no-op, the boss-triggered end firing well ahead of
+deck-exhaustion, and the `reviewCardRevealed` visibility fix — has been confirmed on a real
+Studio table, not just in PHPUnit. **Phase 2 is complete.**
