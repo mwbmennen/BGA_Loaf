@@ -203,3 +203,44 @@ functional-not-pretty" — hand buttons, a waiting indicator, notification wirin
 Angry boss-pile display with its fraction-to-5 indicator is explicit Phase 5 polish work
 (`loaf-implementation-plan.md` §4), not something that regressed. Right now the only
 externally-visible signal that the deck ran out is the game actually ending.
+
+## Phase 2: review card effect had no visible representation (2026-08-09)
+
+While starting live verification of `ReviewEffectResolver`'s wiring into `ResolveRound`
+(§3.1/§7 of `loaf-phase2-plan.md`), hit the same "no UI yet" gap as the Phase 1 boss-pile
+note above, but this one actually blocked testing rather than just being a known gap: with
+no card art (Phase 5) and no notification on reveal, a tester has no way to know what a
+review card's effect *should* do before it resolves, so a correct and a silently-wrong
+resolution look identical on screen. Fixed by adding a `reviewCardRevealed` notification in
+`RoundStart.php` (`describeReviewTarget`/`describeReviewAmount`) that spells out both sides'
+target and reputation delta in plain text in the game log — e.g. "on success, the
+lowest-reputation player(s) +2 reputation; on fail, ... −2 reputation" — reusing
+`Game::$ROUND_CARD_TYPES` rather than adding new data. Deliberately log-text-only, not a
+board widget: it's a testing aid, not the real Phase 5 UI, and gets superseded (probably
+deleted) once card art lands. General pattern (not L'Oaf-specific) written up in
+`docs/bga-studio-reference.md`'s new "Surfacing hidden server-side state before the UI
+exists" section and flagged in `docs/bga-template-upstream-notes.md`.
+
+Also note `describeReviewTarget`/`describeReviewAmount` cover every `target` value from the
+effect schema (including `reputation_zero`/`all`, which are advanced-only and can't appear
+yet since only `basic_*` cards are shuffled into the deck in Phase 2) and fall back cleanly
+for non-`reputation` effect types. Not scope creep for its own sake — it's cheap coverage
+that avoids a blank/confusing log line if this code is still in place when Phase 4's
+advanced-card opt-in starts drawing those cards, rather than a hypothetical future case with
+no current trigger.
+
+## Phase 2 live verification (2026-08-09)
+
+**Status: confirmed working on Studio.** Same session as the review-card-visibility fix
+above. The activation-timing fix from `c71967f` held across a live push (action buttons
+appeared for every active player on the following `PlayCards` state, no refresh needed).
+`ReviewEffectResolver`'s wiring moved the reputation track for the correct player(s) by the
+correct amount on a resolved review card. `EndConditionChecker`'s weighted boss-pile count
+correctly triggered `EndGame` once the threshold was reached. This closes out live
+verification for `loaf-phase2-plan.md`'s wiring into `ResolveRound`; no regressions found
+in the Phase 1 loop.
+
+The `reviewCardRevealed` log line (deployed and tested separately, same day) also confirmed
+correct: on a card whose success side targets `lowest_reputation`, the log text matched and
+the lowest-reputation player was the one who actually moved. Closes out the
+review-card-visibility gap noted above — the fix works as intended, not just theoretically.
