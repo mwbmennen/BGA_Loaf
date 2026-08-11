@@ -69,6 +69,16 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   // Correct — matches Table::setupNewGame($players, $options = []):
   protected function setupNewGame($players, $options = [])
   ```
+  If the IDE separately flags "Parameter has no type information available" on the untyped
+  params, silence it with a PHPDoc `@param` block instead of a native hint — documents the type
+  for tooling without recreating the fatal:
+  ```php
+  /**
+   * @param array $players Map of player_id => player info (as supplied by BGA framework).
+   * @param array $options Map of table option id => chosen value.
+   */
+  protected function setupNewGame($players, $options = [])
+  ```
   Where: `bga-studio-reference.md` §5, `Error: "Declaration of Game::setupNewGame(...) must be
   compatible with Table::setupNewGame(...)"`.
 - [ ] **`globals->inc()` needs the variable pre-initialized; `globals->get()` doesn't.**

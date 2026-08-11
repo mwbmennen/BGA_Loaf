@@ -14,3 +14,6 @@ const ST_RESOLVE_ROUND = 30;
 const GLOBAL_CURRENT_ROUND = 'current_round';
 const GLOBAL_CURRENT_REVIEW_CARD_ID = 'current_review_card_id';
 const GLOBAL_CURRENT_ORDER_AVERAGE = 'current_order_average';
+
+// gameoptions.jsonc option id (100-199 range) -- see Game::setupNewGame().
+const OPTION_ADVANCED_CARDS = 100;

@@ -327,6 +327,19 @@ protected function setupNewGame(array $players, array $options = [])
 protected function setupNewGame($players, $options = [])
 ```
 
+If your IDE/linter (Intelephense, PHPStan) separately flags "Parameter has no type information
+available" on the untyped params, don't reach for a native type hint to silence it — that's the
+fatal above. Add a PHPDoc block instead, which documents the type for tooling without touching
+the real signature:
+
+```php
+/**
+ * @param array $players Map of player_id => player info (as supplied by BGA framework).
+ * @param array $options Map of table option id => chosen value.
+ */
+protected function setupNewGame($players, $options = [])
+```
+
 ---
 
 ### Error: "Undefined constant \"...\ST_XXX\"" / "...\GLOBAL_XXX\"" from a state class
