@@ -28,8 +28,9 @@ class Game extends \Bga\GameFramework\Table
 {
     /**
      * Static content for the 24 physical round cards -- see `Core\RoundCardData::TYPES` for
-     * the shape/contents. Only the 12 `basic_*` entries are shuffled into the deck at setup;
-     * `advanced_*` entries wait for the Phase 4 opt-in table option.
+     * the shape/contents. The 12 `basic_*` entries are always shuffled into the deck at
+     * setup; the 12 `advanced_*` entries are added too only when the `with_advanced_cards`
+     * table option (id OPTION_ADVANCED_CARDS) is on -- see setupNewGame().
      */
     public static array $ROUND_CARD_TYPES;
 
@@ -147,6 +148,9 @@ class Game extends \Bga\GameFramework\Table
     /**
      * This method is called only once, when a new game is launched. In this method, you must setup the game
      *  according to the game rules, so that the game is ready to be played.
+     *
+     * @param array $players Map of player_id => player info (as supplied by BGA framework).
+     * @param array $options Map of table option id => chosen value.
      */
     protected function setupNewGame($players, $options = [])
     {
@@ -194,11 +198,24 @@ class Game extends \Bga\GameFramework\Table
             )
         );
 
-        // Shuffle the 12 basic round cards into the deck. Advanced cards are a Phase 4
-        // opt-in table option, not shuffled in yet.
-        $basic_card_types = array_filter(self::$ROUND_CARD_TYPES, fn(array $card) => !$card['advanced']);
+        // Shuffle the round cards into the deck: the 12 basic cards always, plus the 12
+        // advanced (croissant) cards only if the with_advanced_cards table option is on
+        // (default off, matching the rulebook's own "we recommend not using the advanced
+        // effects when playing for the first time" advice -- docs/loaf-phase4-plan.md §0/§6).
+        //
+        // Framework API confidence note (docs/bga-studio-reference.md §5-style caveat): the
+        // exact key type $options uses for an option id isn't verified locally (no vendored
+        // framework) -- checked defensively for both the int and string form rather than
+        // guessing one, so a live surprise here doesn't silently default to "off" instead of
+        // failing loudly. If neither key is ever present at all on Studio, that's the real
+        // signal something about this assumption is wrong; investigate immediately rather
+        // than shrug off a table that always builds with advanced cards off.
+        $advanced_cards_enabled = (int) ($options[OPTION_ADVANCED_CARDS] ?? $options[(string) OPTION_ADVANCED_CARDS] ?? 0) === 1;
+        $card_types = $advanced_cards_enabled
+            ? self::$ROUND_CARD_TYPES
+            : array_filter(self::$ROUND_CARD_TYPES, fn(array $card) => !$card['advanced']);
         $this->roundCards->createCards(
-            array_map(fn(string $card_type) => ['type' => $card_type, 'type_arg' => 0, 'nbr' => 1], array_keys($basic_card_types)),
+            array_map(fn(string $card_type) => ['type' => $card_type, 'type_arg' => 0, 'nbr' => 1], array_keys($card_types)),
             'deck'
         );
         $this->roundCards->shuffle('deck');

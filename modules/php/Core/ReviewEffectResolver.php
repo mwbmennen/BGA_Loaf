@@ -9,8 +9,11 @@ use InvalidArgumentException;
 /**
  * Resolves a review card's basic `effect: 'reputation'` type against the current reputation
  * track -- the only effect type any basic card uses (docs/loaf-phase2-plan.md §2). Every
- * other effect type (all advanced-only: discard/swap/end-game bonus-malus/none) is a
- * deliberate no-op here, left for Phase 4. Pure/DB-free -- see
+ * other effect type is a deliberate no-op *here* -- discard/swap/end-game effects have their
+ * own dedicated resolvers (docs/loaf-phase4-plan.md §9 step 1), since their return shapes
+ * (which card to move, which players get a bonus) don't fit this class's "player_id => new
+ * reputation" contract. Target-group matching (`highest_reputation` etc.) is delegated to
+ * TargetGroupResolver, shared with those other resolvers. Pure/DB-free -- see
  * docs/loaf-implementation-plan.md §2.
  */
 final class ReviewEffectResolver
@@ -42,41 +45,12 @@ final class ReviewEffectResolver
             );
         }
 
-        $targetPlayerIds = self::playersInTarget($effect['target'], $reputations);
+        $targetPlayerIds = TargetGroupResolver::playersInTarget($effect['target'], $reputations);
 
         $result = [];
         foreach ($targetPlayerIds as $playerId) {
             $result[$playerId] = ReputationTrack::adjust($reputations[$playerId], $effect['amount']);
         }
         return $result;
-    }
-
-    /**
-     * @param array<int, int> $reputations
-     * @return int[]
-     */
-    private static function playersInTarget(string $target, array $reputations): array
-    {
-        return match ($target) {
-            // Ties are additive, not split -- every player sharing the extreme value is
-            // affected independently, same precedent RoundResolver already established for
-            // the played-card extreme (docs/loaf-phase2-plan.md §3.2).
-            'highest_reputation' => self::extremePlayerIds($reputations, max($reputations)),
-            'lowest_reputation' => self::extremePlayerIds($reputations, min($reputations)),
-            'reputation_positive' => array_keys(array_filter($reputations, static fn(int $rep): bool => $rep >= 0)),
-            'reputation_negative' => array_keys(array_filter($reputations, static fn(int $rep): bool => $rep < 0)),
-            default => throw new InvalidArgumentException("Unknown target: $target"),
-        };
-    }
-
-    /**
-     * @param array<int, int> $reputations
-     * @return int[]
-     */
-    private static function extremePlayerIds(array $reputations, int $extremeValue): array
-    {
-        return array_keys(
-            array_filter($reputations, static fn(int $rep): bool => $rep === $extremeValue)
-        );
     }
 }

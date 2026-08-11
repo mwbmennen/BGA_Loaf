@@ -1,23 +1,20 @@
 {
   // option ids should be between 100 and 199
   // See https://en.doc.boardgamearena.com/Options_and_preferences:_gameoptions.json,_gamepreferences.json for more details
-  /*
-  EXAMPLE:
 
-  "101": {
-    "name": "Draft variant",
+  "100": {
+    "name": "Advanced round cards",
     "values": {
       "0": {
-        "name": "No draft"
+        "name": "Off (basic cards only)"
       },
       "1": {
-        "name": "Draft",
-        "description": "Add a draft at the beginning of the game"
-        "tmdisplay": "Draft",
+        "name": "On",
+        "description": "Adds the 12 advanced (croissant) round cards, with more elaborate effects. The rulebook recommends leaving this off for your first game.",
+        "tmdisplay": "Advanced cards",
         "nobeginner": true
       }
     },
     "default": 0
   }
-  */
 }
