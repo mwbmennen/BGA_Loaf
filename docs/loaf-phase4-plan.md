@@ -258,7 +258,17 @@ phase adds a genuinely new category of live-only risk (a brand-new interactive s
    `docs/bga-studio-reference.md` §6).
 6. Confirm `counts_as_two` cards (already built in Phase 2, now reachable for the first time
    live) genuinely end the game a round earlier than they would otherwise.
-7. Update `docs/loaf-remarks.md` with a "Phase 4 live verification" entry once done.
+7. **Try swapping `ResolveAdvancedEffect::onEnteringState()`'s `setAllPlayersMultiactive()` +
+   per-player `setPlayerNonMultiactive()` trim for a single
+   `$this->game->gamestate->setPlayersMultiactive($activePlayerIds, '', true)` call.** The
+   current code is the safe fallback (built only from stub-confirmed methods) because
+   `setPlayersMultiactive()` is only documented for BGA's older framework, not confirmed for
+   the typed one this project uses — see `docs/bga-studio-reference.md` §9 and
+   `docs/loaf-remarks.md`'s Phase 4 entry. If it works, swap it in for real (and add it to
+   `tests/stubs/BgaFrameworkStubs.php` with a citation, same as every other confirmed method);
+   if it fatals, the existing fallback stays and this item just confirms the doc's caution was
+   warranted.
+8. Update `docs/loaf-remarks.md` with a "Phase 4 live verification" entry once done.
 
 ## 9. Suggested implementation order
 

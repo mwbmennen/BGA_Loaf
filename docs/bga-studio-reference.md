@@ -1012,6 +1012,43 @@ Open `tests/stubs/BgaFrameworkStubs.php` and add the method to the relevant clas
 protected function myMissingMethod(string $_param): array { return []; }
 ```
 
+### A method being in BGA's public docs doesn't mean it's safe to add to the stubs unverified
+
+BGA's public documentation (`en.doc.boardgamearena.com`) largely predates the newer typed
+`Bga\GameFramework\...` classes this template uses (`Table`, `GameState`, `Gamestate`, etc.) —
+most pages describe the older array/`states.inc.php`-based state machine. The two frameworks
+overlap heavily, but a method documented for the old one is not automatically confirmed to
+exist under the same name/signature on the new typed classes.
+
+Concretely: `$this->gamestate->setPlayersMultiactive($players, $next_state, $bExclusive)` is a
+real, documented method — "activate exactly this list of players in a `MULTIPLE_ACTIVE_PLAYER`
+state, nobody else" — genuinely useful any time a multiactive state's target group is a subset
+of all players (e.g. only players meeting some condition need to act), not everyone. But it's
+documented on the *old*-framework page, and this template's stubs only list
+`setAllPlayersMultiactive()`/`setPlayerNonMultiactive()` on the new typed `Gamestate` class —
+not because it's confirmed absent, but because nobody had confirmed it present either.
+
+**Don't add a method to the stubs on the strength of the old docs alone** — that's exactly how
+this project has previously shipped a live fatal error (see `playerScoreAux`'s incident history
+elsewhere in this doc: two guessed signatures both threw before the third was confirmed).
+Instead, when a subset of players needs to be active and the "obvious" method is unconfirmed:
+
+```php
+// Safe fallback, built only from confirmed methods: activate everyone, then immediately
+// deactivate whoever isn't in the real target group. Same end state as an exclusive
+// setPlayersMultiactive() call, one extra query + loop instead of one call.
+$this->game->gamestate->setAllPlayersMultiactive();
+$allPlayerIds = array_map('intval', $this->game->getObjectListFromDb('SELECT `player_id` FROM `player`', true));
+foreach (array_diff($allPlayerIds, $activePlayerIds) as $playerId) {
+    $this->game->gamestate->setPlayerNonMultiactive($playerId, $nextStateClass);
+}
+```
+
+Add the candidate method to the stubs and swap it in **once** it's actually been exercised live
+on Studio (or found in a typed-framework source/changelog, not just the legacy docs) — until
+then, treat "documented for the old framework" and "confirmed for this template" as two
+different levels of evidence.
+
 ### Visibility mismatches in the stubs
 
 The stubs declare some BGA framework methods as `protected` even though they are `public` in the real framework. For example, `DbQuery` is `protected` in the stubs but `public` on BGA's servers — that's why calling it from a helper class like `BoardManager` works at runtime but produces an "access protected method" error locally.
