@@ -411,3 +411,67 @@ scoring at the fixed `-20`, the `FIRED` marker, all four reputation-bonus tiers,
 all-players-fired edge case, the 2-player minimum-player-count ending, the `tieBreak`
 explanation text, and a full sweep with no PHP fatals — has been confirmed on a real Studio
 table, not just in PHPUnit. **Phase 3 is complete.**
+
+## Phase 4: wiring discard/swap effects — deferred-card marker instead of a new global (2026-08-11)
+
+Wired `discard_recycle_lowest`, `discard_choice`, and the two swap effects into
+`ResolveRound.php` and a new `ResolveAdvancedEffect` multiactive state. (`end_game_bonus`/
+`malus`/doublers were still unwired at the time of this entry — see the follow-up entry below,
+same day, where `EndGame.php` was wired up too.) Two judgment calls worth recording:
+
+- **No new persisted global for "which players still need to act."** Swap effects
+  ("take played card back, then discard one") need the played card to stay individually
+  identifiable across the state transition from `ResolveRound` into `ResolveAdvancedEffect`.
+  Rather than adding a global to carry that, `ResolveRound` simply *excludes* players who have
+  a real eligible discard from the round's normal played->discard bulk move, leaving their
+  card sitting in `location = 'played'`. `ResolveAdvancedEffect` then finds its active players
+  for a swap effect with `SELECT DISTINCT player_id FROM work_card WHERE location = 'played'`
+  — the deferred location *is* the signal, nothing else needed. `discard_choice` doesn't defer
+  anything (no played-card involvement), so its active group is instead re-derived fresh from
+  `TargetGroupResolver` + current reputations, the same recompute-over-redundant-state pattern
+  `EndGame.php` already established for `$endingBoss`.
+- **`setPlayersMultiactive()` avoided, unconfirmed for the new typed framework.** Wanted to
+  activate only the real target subset in `ResolveAdvancedEffect::onEnteringState()`, but the
+  obvious method for that is only documented for BGA's older framework and isn't in this
+  project's stubs. Used the safe fallback instead — `setAllPlayersMultiactive()` then
+  `setPlayerNonMultiactive()` on everyone excluded — built entirely from already-confirmed
+  methods. See `docs/bga-studio-reference.md` §9 for the general write-up (this is a generic
+  BGA Studio lesson, not L'Oaf-specific, and is also logged in
+  `docs/bga-template-upstream-notes.md` for porting to the template).
+
+**Not yet live-verified** (nothing here is testable outside a real BGA table — no DB, no
+gamestate, no notify): the `with_advanced_cards` option's deck composition, all three
+interactive effects' action buttons appearing for exactly the right players, the
+`setAllPlayersMultiactive` + trim workaround's actual behavior on a live push (does the
+briefly-activated-then-deactivated player see any flicker?), and — the specific thing worth
+trying while there — swapping in `setPlayersMultiactive($activePlayerIds, '', true)` as a
+one-line replacement for the workaround, now that it's confirmed to exist in BGA's docs (just
+not yet confirmed for this typed framework). See `docs/loaf-phase4-plan.md` §8.
+
+## Phase 4: end-game bonus/malus wired into `EndGame.php` (2026-08-12)
+
+Closed out the last piece of Phase 4's implementation (`docs/loaf-phase4-plan.md` §9 steps 1-4
+are now all done — only live verification, §8, remains). `EndGame.php` no longer zero-fills
+`bonusPoints`: it now builds the full list of review effects that actually resolved during the
+game (success side for every card filed under the Happy pile, fail side for every card under
+the Angry pile — reusing the `$happyCardTypes`/`$angryCardTypes` lists it already had for the
+boss-pile check, unfiltered, since `EndGameEffectResolver` already ignores anything that isn't
+one of its four effect types) and feeds that straight into
+`EndGameEffectResolver::resolve()`, whose stacking/doubling behavior was already designed and
+unit-tested in an earlier session (see this doc's "Phase 4: wiring discard/swap effects" entry
+above, and the `EndGameEffectResolverTest` coverage for multiple-bonus-cards-stack,
+doubler-only-affects-its-own-polarity, and irrelevant-effect-types-ignored). No new judgment
+calls here — this was mechanical wiring of already-decided, already-tested logic, not a new
+design decision.
+
+One small deliberate addition beyond the minimum: the `scoreBreakdown` log line now shows the
+end-game bonus/malus contribution explicitly (`end-game bonus ${endGameBonus}`), always, even
+at 0 — the same "surface hidden state via the log" and "show every term unconditionally"
+treatment already used for hand value and reputation bonus. This was flagged as needed in
+`docs/loaf-phase4-plan.md` §8 point 5 specifically so a live tester can check the number
+against the log instead of reverse-engineering it from the final score alone.
+
+**Still not live-verified** — same caveat as the entry above, nothing here runs outside a real
+BGA table. Specifically added by this change: whether an end-game bonus, an end-game malus, and
+a doubler each actually show up correctly in a real final score, cross-checked against this new
+log line.

@@ -102,6 +102,53 @@ class ResolveRound {
   onLeavingState(_args, _isCurrentPlayerActive) {}
 }
 
+// Handles discard_choice and the two swap effects (see PHP's ResolveAdvancedEffect). Same
+// onPlayerActivationChange-not-onEnteringState discipline as PlayCards, for the same reason
+// (docs/bga-studio-reference.md §5).
+class ResolveAdvancedEffect {
+  constructor(game, bga) {
+    this.game = game;
+    this.bga = bga;
+  }
+
+  onEnteringState(_args, _isCurrentPlayerActive) {
+    this.bga.statusBar.setTitle(_("An advanced card effect is resolving..."));
+  }
+
+  onLeavingState(_args, _isCurrentPlayerActive) {}
+
+  onPlayerActivationChange(args, isCurrentPlayerActive) {
+    this.isSwap = args.effectType !== "discard_choice";
+
+    if (isCurrentPlayerActive) {
+      this.bga.statusBar.setTitle(
+        this.isSwap
+          ? _("${you} must take your played card back and discard another")
+          : _("${you} must discard a card of your choice from hand"),
+      );
+
+      const eligibleValues = args.eligibleValues ?? [];
+      eligibleValues.forEach((value) =>
+        this.bga.statusBar.addActionButton(
+          _("Discard ${value}").replace("${value}", value),
+          () => this.onCardClick(value),
+        ),
+      );
+    } else {
+      this.bga.statusBar.setTitle(
+        _("Waiting for other players to resolve the advanced effect"),
+      );
+    }
+  }
+
+  onCardClick(value) {
+    this.bga.actions.performAction(
+      this.isSwap ? "actSwapDiscard" : "actDiscardChoice",
+      { value },
+    );
+  }
+}
+
 class EndGame {
   constructor(game, bga) {
     this.game = game;
@@ -127,6 +174,8 @@ export class Game {
     this.bga.states.register("PlayCards", this.playCards);
     this.resolveRound = new ResolveRound(this, bga);
     this.bga.states.register("ResolveRound", this.resolveRound);
+    this.resolveAdvancedEffect = new ResolveAdvancedEffect(this, bga);
+    this.bga.states.register("ResolveAdvancedEffect", this.resolveAdvancedEffect);
     this.endGame = new EndGame(this, bga);
     this.bga.states.register("EndGame", this.endGame);
 
@@ -258,6 +307,19 @@ export class Game {
       element.textContent = Number(element.textContent) + 1;
     }
   }
+
+  // Matches Game.php's `cardRecycled` notification (ResolveRound, discard_recycle_lowest). No
+  // card value is included -- same hand/discard privacy discipline as notif_playerCommitted.
+  async notif_cardRecycled(_args) {}
+
+  // Matches Game.php's `advancedEffectPending` notification (ResolveAdvancedEffect).
+  async notif_advancedEffectPending(_args) {}
+
+  // Matches Game.php's `playerDiscarded` notification (ResolveAdvancedEffect::actDiscardChoice).
+  async notif_playerDiscarded(_args) {}
+
+  // Matches Game.php's `cardSwapped` notification (ResolveAdvancedEffect::actSwapDiscard).
+  async notif_cardSwapped(_args) {}
 
   // Matches Game.php's `playerFired` notification (EndGame). Plain-text marker only --
   // functional, not pretty, same scope as the rest of Phase 1-3's client (real polish is

@@ -6,6 +6,7 @@ namespace Bga\Games\loaf\States;
 
 use Bga\GameFramework\StateType;
 use Bga\Games\loaf\Core\EndConditionChecker;
+use Bga\Games\loaf\Core\EndGameEffectResolver;
 use Bga\Games\loaf\Core\ScoringCalculator;
 use Bga\Games\loaf\Game;
 
@@ -67,9 +68,19 @@ class EndGame extends \Bga\GameFramework\States\GameState
             $handValues[$playerId] ??= 0;
         }
 
-        // Always zero until Phase 4 populates this from resolved end_game_bonus/malus/double_*
-        // effects instead (docs/loaf-phase3-plan.md §2).
-        $bonusPoints = array_fill_keys(array_keys($reputations), 0);
+        // Every review effect that actually resolved during the game: the success side for
+        // every card filed under the Happy pile, the fail side for every card filed under the
+        // Angry pile (docs/loaf-phase2-plan.md §7's "a card's pile fixes which side
+        // resolved" note -- $happyCardTypes/$angryCardTypes above already list literally every
+        // filed card, basic and advanced alike). EndGameEffectResolver only cares about
+        // end_game_bonus/end_game_malus/double_end_game_bonus/double_end_game_malus and
+        // silently ignores everything else (reputation, discard_choice, ...), so there's no
+        // need to filter this list down first -- see docs/loaf-remarks.md's Phase 4 entry.
+        $resolvedEffects = [
+            ...array_map(fn(string $cardType) => Game::$ROUND_CARD_TYPES[$cardType]['review']['success'], $happyCardTypes),
+            ...array_map(fn(string $cardType) => Game::$ROUND_CARD_TYPES[$cardType]['review']['fail'], $angryCardTypes),
+        ];
+        $bonusPoints = EndGameEffectResolver::resolve($resolvedEffects, $reputations);
 
         $scores = ScoringCalculator::score($handValues, $reputations, $bonusPoints, $endingBoss);
 
@@ -110,8 +121,11 @@ class EndGame extends \Bga\GameFramework\States\GameState
                     ? clienttranslate('${player_name}: hand [${hand}] = ${handTotal}, FIRED (reputation ${reputation}), score ${score}')
                     // Reputation is included here (not just the bonus tier it maps to) so a
                     // tied score's aux-based tie-break has something visible to point at --
-                    // see docs/loaf-remarks.md's Phase 3 entry on this gap.
-                    : clienttranslate('${player_name}: hand [${hand}] = ${handTotal}, reputation bonus +${bonus} (reputation ${reputation}), score ${score}, tie-break value ${aux}'),
+                    // see docs/loaf-remarks.md's Phase 3 entry on this gap. endGameBonus is
+                    // shown unconditionally (even at 0) rather than only when advanced cards
+                    // are on, same "always show it, zero is a legitimate value" treatment as
+                    // every other breakdown term here -- docs/loaf-phase4-plan.md §8 point 5.
+                    : clienttranslate('${player_name}: hand [${hand}] = ${handTotal}, reputation bonus +${bonus} (reputation ${reputation}), end-game bonus ${endGameBonus}, score ${score}, tie-break value ${aux}'),
                 [
                     'player_id' => $playerId,
                     'player_name' => $this->game->getPlayerNameById($playerId),
@@ -123,6 +137,11 @@ class EndGame extends \Bga\GameFramework\States\GameState
                     // only computed/shown on the non-fired branch above.
                     'bonus' => $scoring->score - $handValues[$playerId] - $bonusPoints[$playerId],
                     'reputation' => $reputations[$playerId],
+                    // Signed as-is (not forced with a leading '+' like 'bonus' above) since,
+                    // unlike the reputation-bonus tiers, this can legitimately be negative --
+                    // a net malus. See EndGameEffectResolver's own doc for why bonus and malus
+                    // are summed independently before being combined into this one number.
+                    'endGameBonus' => $bonusPoints[$playerId],
                     'score' => $scoring->score,
                     'aux' => $scoring->aux,
                 ]

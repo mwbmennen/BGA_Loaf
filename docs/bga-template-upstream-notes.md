@@ -50,6 +50,18 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   never write a bare English string in game code; BGA's translator platform can't retrofit
   strings it never saw wrapped. Where: `bga-studio-reference.md`, "Wrap every user-facing
   string in BGA's translation functions, from day one".
+- [ ] **A method in BGA's public docs isn't automatically confirmed for the new typed
+  framework.** Most of `en.doc.boardgamearena.com` predates the typed `Bga\GameFramework\...`
+  classes (`Table`, `GameState`, `Gamestate`) this template uses; it describes the older
+  array/`states.inc.php` state machine instead. The two overlap heavily but aren't identical,
+  so a documented old-framework method (e.g. `setPlayersMultiactive()` for activating a
+  *subset* of players in a multiactive state) isn't safe to add to the stubs and call just
+  because it's in the docs — confirm it live (or against typed-framework source) first. Safe
+  fallback in the meantime: `setAllPlayersMultiactive()` then `setPlayerNonMultiactive()` on
+  everyone not in the real target group — same end state, built only from already-confirmed
+  methods. Where: `bga-studio-reference.md` §9, "A method being in BGA's public docs doesn't
+  mean it's safe to add to the stubs unverified" (added after this came up wiring L'Oaf's
+  Phase 4 `ResolveAdvancedEffect` multiactive state — see `loaf-remarks.md`).
 - [ ] **Never add a type hint to an override of an untyped BGA framework hook method.**
   Confirmed live: fatal on first table creation —
   ```

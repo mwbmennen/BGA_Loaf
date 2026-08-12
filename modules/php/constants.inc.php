@@ -9,6 +9,10 @@ declare(strict_types=1);
 const ST_ROUND_START = 10;
 const ST_PLAY_CARDS = 20;
 const ST_RESOLVE_ROUND = 30;
+// Entered from ResolveRound only for the advanced effects that need a player's own choice
+// (discard_choice, the two swap effects) -- see States/ResolveAdvancedEffect.php and
+// docs/loaf-phase4-plan.md §4.
+const ST_RESOLVE_ADVANCED_EFFECT = 35;
 
 // $this->bga->globals keys (see Bga\Games\loaf\Game).
 const GLOBAL_CURRENT_ROUND = 'current_round';

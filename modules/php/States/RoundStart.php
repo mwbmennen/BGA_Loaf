@@ -96,10 +96,23 @@ class RoundStart extends GameState
 
     private function describeReviewAmount(array $effect): string
     {
-        if ($effect['effect'] !== 'reputation') {
-            return clienttranslate('(advanced effect, not yet implemented)');
-        }
-
-        return sprintf('%+d', $effect['amount']);
+        return match ($effect['effect']) {
+            'reputation' => sprintf('%+d', $effect['amount']),
+            'discard_recycle_lowest' => clienttranslate('(recycles their lowest discard-pile card back to hand)'),
+            'discard_choice' => clienttranslate('(discards a card of their choice from hand)'),
+            'swap_discard_lower_by_at_most' => clienttranslate('(takes their played card back, then discards a lower one)'),
+            'swap_discard_higher_by_at_least' => clienttranslate('(takes their played card back, then discards a higher one)'),
+            'end_game_bonus' => clienttranslate('(grants a bonus at game end)'),
+            'end_game_malus' => clienttranslate('(applies a penalty at game end)'),
+            'double_end_game_bonus' => clienttranslate('(doubles every end-game bonus)'),
+            'double_end_game_malus' => clienttranslate('(doubles every end-game penalty)'),
+            'none' => clienttranslate('(no effect)'),
+            // Every real effect type is covered above -- this is structurally required by
+            // `match` (it throws UnhandledMatchError on no match, unlike `switch`), not a real
+            // reachable case. Kept only as a defensive fallback against a future new effect
+            // type or a data typo, same "correctness against future rule changes" discipline
+            // as EndGame.php's own empty-hand fallback.
+            default => clienttranslate('(unknown effect)'),
+        };
     }
 }
