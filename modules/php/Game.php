@@ -18,6 +18,7 @@ declare(strict_types=1);
 
 namespace Bga\Games\loaf;
 
+use Bga\Games\loaf\Core\EndConditionChecker;
 use Bga\Games\loaf\Core\RoundCardData;
 use Bga\Games\loaf\States\RoundStart;
 use Bga\GameFramework\Components\Deck;
@@ -119,14 +120,12 @@ class Game extends \Bga\GameFramework\Table
                 '`player_fired` AS `fired` FROM `player`'
         );
 
-        // Own hand values in full; other players only get a hand/played count (never values),
-        // per the "discard/hand visible only to owner" rule (docs/loaf-open-questions.md Q3).
+        // Own hand values in full; other players only get a hand count (never values), per
+        // the "discard/hand visible only to owner" rule (docs/loaf-open-questions.md Q3). No
+        // played/"committed" count -- not useful information once committed (docs/loaf-remarks.md's
+        // Phase 4 entry).
         $result['handCount'] = $this->getCollectionFromDb(
             "SELECT `player_id` AS `id`, COUNT(*) AS `count` FROM `work_card` WHERE `location` = 'hand' GROUP BY `player_id`",
-            true
-        );
-        $result['playedCount'] = $this->getCollectionFromDb(
-            "SELECT `player_id` AS `id`, COUNT(*) AS `count` FROM `work_card` WHERE `location` = 'played' GROUP BY `player_id`",
             true
         );
         $result['myHand'] = $this->getObjectListFromDb(
@@ -139,8 +138,17 @@ class Game extends \Bga\GameFramework\Table
 
         // Boss piles: filed review cards are public once revealed, per the physical rules
         // ("slide it under the boss card so that only the effect part is visible").
-        $result['bossHappy'] = $this->roundCards->getCardsInLocation('review_happy');
-        $result['bossAngry'] = $this->roundCards->getCardsInLocation('review_angry');
+        $happyCards = $this->roundCards->getCardsInLocation('review_happy');
+        $angryCards = $this->roundCards->getCardsInLocation('review_angry');
+        $result['bossHappy'] = $happyCards;
+        $result['bossAngry'] = $angryCards;
+        // The physical card count (above) and the *weighted* count that actually decides when
+        // the game ends (EndConditionChecker -- a counts_as_two card is worth 2) are two
+        // different numbers. The client's "X / 5" counter must show the weighted one, or a
+        // counts_as_two card makes the game end while the displayed count still reads below 5
+        // -- confirmed live (docs/loaf-remarks.md's Phase 4 entry).
+        $result['bossHappyWeight'] = EndConditionChecker::weightedCount(array_column($happyCards, 'type'), 'success');
+        $result['bossAngryWeight'] = EndConditionChecker::weightedCount(array_column($angryCards, 'type'), 'fail');
 
         return $result;
     }

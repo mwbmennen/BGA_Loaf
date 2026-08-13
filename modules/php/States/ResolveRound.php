@@ -9,6 +9,7 @@ use Bga\GameFramework\States\GameState;
 use Bga\Games\loaf\Core\DiscardRecycleResolver;
 use Bga\Games\loaf\Core\EndConditionChecker;
 use Bga\Games\loaf\Core\ReputationTrack;
+use Bga\Games\loaf\Core\ReviewEffectDescription;
 use Bga\Games\loaf\Core\ReviewEffectResolver;
 use Bga\Games\loaf\Core\RoundResolver;
 use Bga\Games\loaf\Core\SwapEffectResolver;
@@ -36,9 +37,71 @@ class ResolveRound extends GameState
         );
         $playedCards = array_map('intval', $playedCards);
 
+        // Public log visibility for checking round-by-round calculations by hand -- what a
+        // player played this round is open information once the round resolves (confirmed --
+        // this is distinct from ongoing discard-pile *state* staying hidden per
+        // docs/loaf-open-questions.md Q3, which is about getAllDatas()/live state, not a
+        // one-time game-log announcement at resolution time; that rule is untouched). Emitted
+        // before any reputationChanged notification below so the log reads cause-then-effect --
+        // "played 5" precedes "moves +2 on the reputation track" instead of the other way
+        // around. No reputation value here: it isn't final yet (round-result delta and any
+        // review effect both still need to run), and the reputationChanged messages that follow
+        // carry the up-to-date numbers.
+        foreach ($playedCards as $playerId => $value) {
+            $this->game->bga->notify->all(
+                'cardPlayedRevealed',
+                clienttranslate('${player_name} played ${value}'),
+                [
+                    'player_id' => $playerId,
+                    'player_name' => $this->game->getPlayerNameById($playerId),
+                    'value' => $value,
+                ]
+            );
+        }
+
         $orderAverage = (int) $this->game->bga->globals->get(GLOBAL_CURRENT_ORDER_AVERAGE, 0);
         $result = RoundResolver::resolve($orderAverage, $playedCards);
 
+        // Review card outcome (which pile it moves to, and the effect that resolved) is
+        // determined here, ahead of the reputationChanged loop below, purely so 'roundResolved'
+        // can be notified before it -- neither this lookup nor the moveCard() below reads or
+        // writes reputation, so there's no ordering hazard in pulling it earlier. The review
+        // *effect's application* (resolveReputationEffect/discard_recycle/etc., in the switch
+        // below) still runs later, after $currentReputations is queried post-loop, per rulebook
+        // step ordering (docs/loaf-phase2-plan.md §3.1/§7) -- only the notification order moved
+        // up, not the effect's own resolution order. Also still needed ahead of the
+        // played->discard bulk move further down, since the swap-effect branch needs to know
+        // the effect before that move runs (docs/loaf-phase4-plan.md §4).
+        $reviewCardId = (int) $this->game->bga->globals->get(GLOBAL_CURRENT_REVIEW_CARD_ID);
+        $reviewCardType = $this->game->getUniqueValueFromDb(
+            "SELECT `card_type` FROM `round_card` WHERE `card_id` = $reviewCardId"
+        );
+        $bossPile = $result->success ? 'review_happy' : 'review_angry';
+        $this->game->roundCards->moveCard($reviewCardId, $bossPile);
+
+        $side = $result->success ? 'success' : 'fail';
+        $reviewEffect = Game::$ROUND_CARD_TYPES[$reviewCardType]['review'][$side];
+
+        $this->game->bga->notify->all(
+            'roundResolved',
+            $result->success
+                ? clienttranslate('Total ${total} (target ${target}): the bosses are happy!')
+                : clienttranslate('Total ${total} (target ${target}): the bosses are disappointed.'),
+            [
+                'total' => $result->total,
+                'target' => $result->target,
+                'bossPile' => $result->success ? 'happy' : 'angry',
+                // The client's boss-pile counter must increment by this, not always 1 -- a
+                // counts_as_two card is worth 2 toward EndConditionChecker's weighted trigger,
+                // and the displayed count needs to match what actually ends the game
+                // (docs/loaf-remarks.md's Phase 4 entry -- confirmed live the counter under-
+                // reported by exactly 1 when this was still hardcoded).
+                'weight' => $reviewEffect['counts_as_two'] ? 2 : 1,
+            ]
+        );
+
+        // Emitted after 'roundResolved' (swapped from the reverse order per feature request) so
+        // the log reads "here's the round outcome" before "here's how it moved your reputation".
         foreach ($result->affectedPlayerIds as $playerId) {
             $currentReputation = (int) $this->game->getUniqueValueFromDb(
                 "SELECT `player_reputation` FROM `player` WHERE `player_id` = $playerId"
@@ -61,32 +124,19 @@ class ResolveRound extends GameState
             );
         }
 
-        $reviewCardId = (int) $this->game->bga->globals->get(GLOBAL_CURRENT_REVIEW_CARD_ID);
-        $reviewCardType = $this->game->getUniqueValueFromDb(
-            "SELECT `card_type` FROM `round_card` WHERE `card_id` = $reviewCardId"
-        );
-        $bossPile = $result->success ? 'review_happy' : 'review_angry';
-        $this->game->roundCards->moveCard($reviewCardId, $bossPile);
-
+        // Unlike RoundStart's 'reviewCardRevealed' (speculative -- describes both sides before
+        // either has happened), this describes only the side that actually just resolved --
+        // the round's success/fail above already fixed which one. Reuses the exact same
+        // target/amount text as the reveal message (ReviewEffectDescription), so a tester can
+        // compare "what was promised" against "what happened" using identical wording.
         $this->game->bga->notify->all(
-            'roundResolved',
-            $result->success
-                ? clienttranslate('Total ${total} (target ${target}): the bosses are happy!')
-                : clienttranslate('Total ${total} (target ${target}): the bosses are disappointed.'),
+            'reviewEffectApplied',
+            clienttranslate('Review effect: ${target}, ${amount}'),
             [
-                'total' => $result->total,
-                'target' => $result->target,
-                'bossPile' => $result->success ? 'happy' : 'angry',
+                'target' => ReviewEffectDescription::target($reviewEffect),
+                'amount' => ReviewEffectDescription::amount($reviewEffect, $side),
             ]
         );
-
-        // Review effect: resolved after the round-total reputation delta above, using
-        // reputations that already reflect it -- rulebook step ordering, see
-        // docs/loaf-phase2-plan.md §3.1/§7. Moved ahead of the played->discard bulk move
-        // (below) because the swap-effect branch needs to know the effect *before* that move
-        // runs -- see docs/loaf-phase4-plan.md §4.
-        $side = $result->success ? 'success' : 'fail';
-        $reviewEffect = Game::$ROUND_CARD_TYPES[$reviewCardType]['review'][$side];
 
         $currentReputations = array_map('intval', $this->game->getCollectionFromDb(
             'SELECT `player_id` AS `id`, `player_reputation` FROM `player`',

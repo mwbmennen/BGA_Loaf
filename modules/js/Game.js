@@ -204,11 +204,11 @@ export class Game {
     // enough to see the 5-card end trigger approaching while playtesting. Real boss-pile
     // visuals (filed cards, fraction-to-5 indicator) are Phase 5 polish
     // (docs/loaf-implementation-plan.md §4), not this.
-    // getCardsInLocation() returns a PHP associative array keyed by card id, which serializes
-    // to a JS object rather than an array -- Object.keys(...).length works for both shapes,
-    // plain .length only works on arrays (confirmed live: .length came back undefined here).
-    const bossHappyCount = Object.keys(gamedatas.bossHappy).length;
-    const bossAngryCount = Object.keys(gamedatas.bossAngry).length;
+    // The *weighted* count (Game.php's bossHappyWeight/bossAngryWeight), not the physical card
+    // count -- a counts_as_two card is worth 2 toward the actual 5-card end trigger, so the
+    // physical count under-reports how close the game is to ending (confirmed live).
+    const bossHappyCount = gamedatas.bossHappyWeight;
+    const bossAngryCount = gamedatas.bossAngryWeight;
 
     this.bga.gameArea.getElement().insertAdjacentHTML(
       "beforeend",
@@ -221,12 +221,12 @@ export class Game {
         `,
     );
 
-    // Setting up player boards: reputation + hand/played card counts. Own hand values are
-    // shown as PlayCards action buttons rather than here; opponents only ever get counts
-    // (docs/loaf-open-questions.md Q3 -- hands/discards are private to their owner).
+    // Setting up player boards: reputation + hand card count. Own hand values are shown as
+    // PlayCards action buttons rather than here; opponents only ever get a count
+    // (docs/loaf-open-questions.md Q3 -- hands/discards are private to their owner). No
+    // "Committed" count -- not useful information (docs/loaf-remarks.md's Phase 4 entry).
     Object.values(gamedatas.players).forEach((player) => {
       const handCount = gamedatas.handCount[player.id] ?? 0;
-      const playedCount = gamedatas.playedCount[player.id] ?? 0;
 
       document.getElementById("player-tables").insertAdjacentHTML(
         "beforeend",
@@ -235,7 +235,6 @@ export class Game {
                     <strong>${player.name}</strong>
                     <div>Reputation: <span id="reputation-player-${player.id}">${player.reputation}</span></div>
                     <div>Hand: <span id="hand-count-player-${player.id}">${handCount}</span> card(s)</div>
-                    <div>Committed: <span id="played-count-player-${player.id}">${playedCount}</span></div>
                 </div>
             `,
       );
@@ -256,6 +255,16 @@ export class Game {
         script. Typically, functions that are used in multiple state classes or outside a state class.
 
     */
+
+  // Shared by every notification that changes how many cards a player has in hand (committing,
+  // recycling, discarding) -- keeps "Hand: N card(s)" live instead of only refreshing on the
+  // next page load.
+  adjustHandCount(playerId, delta) {
+    const element = document.getElementById(`hand-count-player-${playerId}`);
+    if (element) {
+      element.textContent = Number(element.textContent) + delta;
+    }
+  }
 
   ///////////////////////////////////////////////////
   //// Reaction to cometD notifications
@@ -284,8 +293,13 @@ export class Game {
   }
 
   // Matches Game.php's `playerCommitted` notification (PlayCards::actCommitCard). No card
-  // value is included -- it stays hidden until roundResolved.
-  async notif_playerCommitted(_args) {}
+  // value is included -- it stays hidden until roundResolved. Committing removes one card
+  // from hand -- update the live count here rather than only on the next page load
+  // (previously this handler did nothing at all, so "Hand: N card(s)" silently went stale
+  // the moment the game started -- confirmed live).
+  async notif_playerCommitted(args) {
+    this.adjustHandCount(args.player_id, -1);
+  }
 
   // Matches Game.php's `reputationChanged` notification (ResolveRound).
   async notif_reputationChanged(args) {
@@ -303,23 +317,50 @@ export class Game {
     const element = document.getElementById(
       args.bossPile === "happy" ? "boss-happy-count" : "boss-angry-count",
     );
+    // Increment by args.weight (1, or 2 for a counts_as_two card), not always 1 -- a flat +1
+    // under-reported the pile by 1 whenever a counts_as_two card resolved into it (confirmed
+    // live: game ended with the counter still showing 4/5 instead of the real weighted 5/5).
     if (element) {
-      element.textContent = Number(element.textContent) + 1;
+      element.textContent = Number(element.textContent) + args.weight;
     }
   }
 
+  // Matches Game.php's `cardPlayedRevealed` notification (ResolveRound) -- what each player
+  // played this round, now open information once the round has resolved. Log-text only.
+  async notif_cardPlayedRevealed(_args) {}
+
+  // Matches Game.php's `reviewEffectApplied` notification (ResolveRound) -- describes the
+  // review effect that just actually resolved (as opposed to `reviewCardRevealed`, which
+  // describes both possible sides speculatively before either has happened). Log-text only,
+  // same "surface hidden state via the log" pattern as everything else pre-Phase-5.
+  async notif_reviewEffectApplied(_args) {}
+
   // Matches Game.php's `cardRecycled` notification (ResolveRound, discard_recycle_lowest). No
   // card value is included -- same hand/discard privacy discipline as notif_playerCommitted.
-  async notif_cardRecycled(_args) {}
+  // Recycling moves one card from discard back into hand -- hand count goes up by 1.
+  async notif_cardRecycled(args) {
+    this.adjustHandCount(args.player_id, 1);
+  }
 
   // Matches Game.php's `advancedEffectPending` notification (ResolveAdvancedEffect).
   async notif_advancedEffectPending(_args) {}
 
   // Matches Game.php's `playerDiscarded` notification (ResolveAdvancedEffect::actDiscardChoice).
-  async notif_playerDiscarded(_args) {}
+  // Discarding a card of their choice removes one from hand -- hand count goes down by 1.
+  async notif_playerDiscarded(args) {
+    this.adjustHandCount(args.player_id, -1);
+  }
 
-  // Matches Game.php's `cardSwapped` notification (ResolveAdvancedEffect::actSwapDiscard).
+  // Matches Game.php's `cardSwapped` notification (ResolveAdvancedEffect::actSwapDiscard). No
+  // hand-count update needed -- a swap either returns the played card to hand and discards a
+  // different one (net 0 change in hand *size*, only in which specific card is held) or, in
+  // the deterministic-fallback case, never touches hand at all.
   async notif_cardSwapped(_args) {}
+
+  // Matches Game.php's `endGameBonusApplied` notification (EndGame) -- one per
+  // (contributing effect, affected player), explaining exactly what end-game bonus/malus
+  // they received and why. Log-text only, same "surface hidden state via the log" pattern.
+  async notif_endGameBonusApplied(_args) {}
 
   // Matches Game.php's `playerFired` notification (EndGame). Plain-text marker only --
   // functional, not pretty, same scope as the rest of Phase 1-3's client (real polish is
