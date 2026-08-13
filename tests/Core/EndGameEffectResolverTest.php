@@ -106,6 +106,90 @@ final class EndGameEffectResolverTest extends TestCase
         $this->assertSame([1 => 0, 2 => 0], $result);
     }
 
+    public function testBreakdownEntryShapeForASingleUndoubledBonus(): void
+    {
+        $bonusEffect = RoundCardData::TYPES['advanced_09']['review']['success']; // highest, +4
+
+        $breakdown = EndGameEffectResolver::breakdown([$bonusEffect], [1 => 5, 2 => 2]);
+
+        $this->assertSame(
+            [['playerId' => 1, 'amount' => 4, 'effect' => $bonusEffect, 'doubled' => false]],
+            $breakdown
+        );
+    }
+
+    public function testBreakdownMarksEntriesDoubledAndReflectsItInAmount(): void
+    {
+        $bonusEffect = RoundCardData::TYPES['advanced_09']['review']['success']; // highest, +4
+        $doubler = RoundCardData::TYPES['advanced_11']['review']['success']; // double_end_game_bonus
+
+        $breakdown = EndGameEffectResolver::breakdown([$bonusEffect, $doubler], [1 => 5, 2 => 2]);
+
+        $this->assertSame(
+            [['playerId' => 1, 'amount' => 8, 'effect' => $bonusEffect, 'doubled' => true]],
+            $breakdown
+        );
+    }
+
+    public function testBreakdownGivesOneEntryPerAffectedPlayer(): void
+    {
+        // reputation_positive: both players qualify (0 counts as positive).
+        $bonusEffect = RoundCardData::TYPES['advanced_10']['review']['success']; // positive, +3
+
+        $breakdown = EndGameEffectResolver::breakdown([$bonusEffect], [1 => 5, 2 => 0]);
+
+        $this->assertCount(2, $breakdown);
+        $this->assertSame([1, 2], array_column($breakdown, 'playerId'));
+        $this->assertSame([3, 3], array_column($breakdown, 'amount'));
+    }
+
+    public function testBreakdownGivesOneEntryPerContributingEffectForTheSamePlayer(): void
+    {
+        // Player 1 matches both advanced_09's and advanced_10's success-side bonus targets --
+        // two separate breakdown entries, not one merged entry (mirrors
+        // testMultipleBonusEffectsStackAdditivelyOnTheSamePlayer's resolve()-level assertion).
+        $highestBonus = RoundCardData::TYPES['advanced_09']['review']['success']; // highest, +4
+        $positiveBonus = RoundCardData::TYPES['advanced_10']['review']['success']; // positive, +3
+
+        $breakdown = EndGameEffectResolver::breakdown([$highestBonus, $positiveBonus], [1 => 5, 2 => -2]);
+
+        $this->assertCount(2, $breakdown);
+        $this->assertSame([1, 1], array_column($breakdown, 'playerId'));
+        $this->assertSame([4, 3], array_column($breakdown, 'amount'));
+    }
+
+    public function testBreakdownExcludesDoublersAndIrrelevantEffectsFromTheEntryList(): void
+    {
+        // The doublers themselves have no per-player target to attach an entry to, and
+        // irrelevant effect types are ignored the same as resolve()'s own handling.
+        $reputationEffect = RoundCardData::TYPES['basic_01']['review']['success'];
+        $doubler = RoundCardData::TYPES['advanced_11']['review']['success']; // double_end_game_bonus
+
+        $breakdown = EndGameEffectResolver::breakdown([$reputationEffect, $doubler], [1 => 5, 2 => -2]);
+
+        $this->assertSame([], $breakdown);
+    }
+
+    public function testResolveIsDefinedInTermsOfBreakdown(): void
+    {
+        // Guards the refactor where resolve() delegates to breakdown() -- summing
+        // breakdown()'s amounts per player must equal resolve()'s own totals.
+        $bonusEffect = RoundCardData::TYPES['advanced_09']['review']['success'];
+        $malusEffect = RoundCardData::TYPES['advanced_10']['review']['fail'];
+        $malusDoubler = RoundCardData::TYPES['advanced_11']['review']['fail'];
+        $resolvedEffects = [$bonusEffect, $malusEffect, $malusDoubler];
+        $reputations = [1 => 5, 2 => -2];
+
+        $resolved = EndGameEffectResolver::resolve($resolvedEffects, $reputations);
+
+        $summedFromBreakdown = array_fill_keys(array_keys($reputations), 0);
+        foreach (EndGameEffectResolver::breakdown($resolvedEffects, $reputations) as $entry) {
+            $summedFromBreakdown[$entry['playerId']] += $entry['amount'];
+        }
+
+        $this->assertSame($resolved, $summedFromBreakdown);
+    }
+
     public function testFeedsDirectlyIntoScoringCalculator(): void
     {
         $bonusEffect = RoundCardData::TYPES['advanced_09']['review']['success']; // highest, +4

@@ -35,35 +35,61 @@ final class EndGameEffectResolver
      */
     public static function resolve(array $resolvedEffects, array $reputations): array
     {
-        $playerIds = array_keys($reputations);
-        $bonusTotal = array_fill_keys($playerIds, 0);
-        $malusTotal = array_fill_keys($playerIds, 0);
+        $result = array_fill_keys(array_keys($reputations), 0);
+        foreach (self::breakdown($resolvedEffects, $reputations) as $entry) {
+            $result[$entry['playerId']] += $entry['amount'];
+        }
+        return $result;
+    }
+
+    /**
+     * Per-(effect, affected player) detail, for a "here's exactly what you got and why" game
+     * log -- `resolve()` above only needs the summed total per player for scoring, but a
+     * human reading the log wants to see each individual contribution (docs/loaf-remarks.md's
+     * Phase 4 "end-game bonus/malus breakdown" entry). `resolve()` is defined in terms of this
+     * method (sum `amount` per `playerId`) rather than duplicating the doubling logic, so the
+     * two can never drift out of sync with each other.
+     *
+     * @param list<array{target: ?string, effect: string, amount: ?int, counts_as_two: bool}> $resolvedEffects
+     * @param array<int, int> $reputations player_id => FINAL reputation.
+     * @return list<array{playerId: int, amount: int, effect: array, doubled: bool}>
+     *     One entry per player affected by one contributing end_game_bonus/end_game_malus
+     *     effect. `amount` is already sign-corrected (positive bonus, negative malus) and
+     *     already doubled if the matching doubler also resolved -- `doubled` just says whether
+     *     that happened, for a log line to mention it. `effect` is the original resolved
+     *     effect array (for describing *why*, e.g. via ReviewEffectDescription::target()) --
+     *     never a doubler itself, since doublers have no per-player target of their own.
+     */
+    public static function breakdown(array $resolvedEffects, array $reputations): array
+    {
         $bonusDoubled = false;
         $malusDoubled = false;
-
         foreach ($resolvedEffects as $effect) {
-            if ($effect['effect'] === 'end_game_bonus') {
-                foreach (TargetGroupResolver::playersInTarget($effect['target'], $reputations) as $playerId) {
-                    $bonusTotal[$playerId] += $effect['amount'];
-                }
-            } elseif ($effect['effect'] === 'end_game_malus') {
-                foreach (TargetGroupResolver::playersInTarget($effect['target'], $reputations) as $playerId) {
-                    $malusTotal[$playerId] += $effect['amount'];
-                }
-            } elseif ($effect['effect'] === 'double_end_game_bonus') {
+            if ($effect['effect'] === 'double_end_game_bonus') {
                 $bonusDoubled = true;
             } elseif ($effect['effect'] === 'double_end_game_malus') {
                 $malusDoubled = true;
             }
-            // Every other effect type (reputation, discard_choice, ..., none) is ignored --
-            // already resolved elsewhere, not this class's concern.
         }
 
         $result = [];
-        foreach ($playerIds as $playerId) {
-            $bonus = $bonusTotal[$playerId] * ($bonusDoubled ? 2 : 1);
-            $malus = $malusTotal[$playerId] * ($malusDoubled ? 2 : 1);
-            $result[$playerId] = $bonus - $malus;
+        foreach ($resolvedEffects as $effect) {
+            if ($effect['effect'] === 'end_game_bonus') {
+                $amount = $effect['amount'] * ($bonusDoubled ? 2 : 1);
+                $doubled = $bonusDoubled;
+            } elseif ($effect['effect'] === 'end_game_malus') {
+                $amount = -$effect['amount'] * ($malusDoubled ? 2 : 1);
+                $doubled = $malusDoubled;
+            } else {
+                // Every other effect type (reputation, discard_choice, ..., double_*, none) is
+                // ignored -- already resolved elsewhere, or (for the doublers) has no
+                // per-player target of its own to attach a breakdown entry to.
+                continue;
+            }
+
+            foreach (TargetGroupResolver::playersInTarget($effect['target'], $reputations) as $playerId) {
+                $result[] = ['playerId' => $playerId, 'amount' => $amount, 'effect' => $effect, 'doubled' => $doubled];
+            }
         }
         return $result;
     }

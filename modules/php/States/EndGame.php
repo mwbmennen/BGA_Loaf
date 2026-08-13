@@ -7,6 +7,7 @@ namespace Bga\Games\loaf\States;
 use Bga\GameFramework\StateType;
 use Bga\Games\loaf\Core\EndConditionChecker;
 use Bga\Games\loaf\Core\EndGameEffectResolver;
+use Bga\Games\loaf\Core\ReviewEffectDescription;
 use Bga\Games\loaf\Core\ScoringCalculator;
 use Bga\Games\loaf\Game;
 
@@ -81,8 +82,49 @@ class EndGame extends \Bga\GameFramework\States\GameState
             ...array_map(fn(string $cardType) => Game::$ROUND_CARD_TYPES[$cardType]['review']['fail'], $angryCardTypes),
         ];
         $bonusPoints = EndGameEffectResolver::resolve($resolvedEffects, $reputations);
-
         $scores = ScoringCalculator::score($handValues, $reputations, $bonusPoints, $endingBoss);
+        $allFired = count(array_filter($scores, fn($s) => $s->fired)) === count($scores);
+
+        // Announce *why* the game ended before any of the scoring detail below -- narrating
+        // cause before effect. This used to be the very last notification sent in this method
+        // (after every scoreBreakdown/tieBreak line), which read backwards: players saw their
+        // final scores before being told the game had even ended (confirmed live -- see
+        // docs/loaf-remarks.md's Phase 4 entry). Nothing below this point depends on having
+        // sent a notification first, so moving it here is purely a narrative-order fix, not a
+        // logic change.
+        $this->game->bga->notify->all(
+            'gameEnded',
+            match (true) {
+                $allFired => clienttranslate('Every player was fired -- there is no winner.'),
+                $endingBoss === 'angry' => clienttranslate(
+                    'The Angry Boss pile reached 5 cards -- players with negative reputation are fired!'
+                ),
+                default => clienttranslate(
+                    'The Happy Boss pile reached 5 cards -- everyone proceeds to scoring.'
+                ),
+            },
+            ['endingBoss' => $endingBoss, 'allFired' => $allFired]
+        );
+
+        // One line per (contributing effect, affected player) -- the aggregate 'scoreBreakdown'
+        // line further below only shows each player's *total* end-game bonus, which doesn't
+        // say which card(s) actually caused it or whether a doubler applied. Reuses
+        // ReviewEffectDescription::target() so the "why" here matches the exact wording
+        // already used for 'reviewCardRevealed'/'reviewEffectApplied' earlier in the game.
+        foreach (EndGameEffectResolver::breakdown($resolvedEffects, $reputations) as $entry) {
+            $this->game->bga->notify->all(
+                'endGameBonusApplied',
+                $entry['doubled']
+                    ? clienttranslate('${player_name} receives ${amount} at game end (${target}, doubled)')
+                    : clienttranslate('${player_name} receives ${amount} at game end (${target})'),
+                [
+                    'player_id' => $entry['playerId'],
+                    'player_name' => $this->game->getPlayerNameById($entry['playerId']),
+                    'amount' => sprintf('%+d', $entry['amount']),
+                    'target' => ReviewEffectDescription::target($entry['effect']),
+                ]
+            );
+        }
 
         // Hand privacy protects the simultaneous-play mechanic while the game is running
         // (docs/loaf-open-questions.md Q3) -- it serves no purpose once the game has ended,
@@ -175,22 +217,6 @@ class EndGame extends \Bga\GameFramework\States\GameState
                 ['winnerNames' => $winnerNames, 'loserNames' => $loserNames]
             );
         }
-
-        $allFired = count(array_filter($scores, fn($s) => $s->fired)) === count($scores);
-
-        $this->game->bga->notify->all(
-            'gameEnded',
-            match (true) {
-                $allFired => clienttranslate('Every player was fired -- there is no winner.'),
-                $endingBoss === 'angry' => clienttranslate(
-                    'The Angry Boss pile reached 5 cards -- players with negative reputation are fired!'
-                ),
-                default => clienttranslate(
-                    'The Happy Boss pile reached 5 cards -- everyone proceeds to scoring.'
-                ),
-            },
-            ['endingBoss' => $endingBoss, 'allFired' => $allFired]
-        );
 
         return ST_END_GAME;
     }

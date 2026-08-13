@@ -6,7 +6,7 @@
 > played-card swap effects, end-of-game bonus/malus (+ doublers), double-counting cards;
 > `with_advanced_cards` table option."
 
-## 0. Terminology correction before anything else: this is a *table option*, not a *preference*
+## 0. Terminology correction before anything else: this is a _table option_, not a _preference_
 
 Came up when scoping this phase: the toggle for turning advanced cards on is a **BGA game
 option** (`gameoptions.jsonc`), not a **BGA game preference** (`gamepreferences.jsonc`) —
@@ -61,6 +61,7 @@ phase was requested.
 ## 2. Explicit scope boundary
 
 **In scope for Phase 4:**
+
 - Extending `ReviewEffectResolver` (or a sibling Core class — see §3) to handle every
   advanced-card effect type: `discard_choice`, `discard_recycle_lowest`,
   `swap_discard_lower_by_at_most`, `swap_discard_higher_by_at_least`, `end_game_bonus`,
@@ -74,6 +75,7 @@ phase was requested.
   shuffled into the deck at setup at all.
 
 **Explicitly out of scope:**
+
 - Real client polish for any of this (card art for advanced effects, animations) — Phase 5,
   same "functional, not pretty" discipline as every prior phase.
 - Anything beyond what `RoundCardData` already contains — no new card types, no rules beyond
@@ -91,11 +93,11 @@ phase was requested.
    - `discard_choice`: "discard a card of their choice from their hand." — needs a player
      decision.
    - `discard_recycle_lowest`: "take the lowest value card from their discard pile back into
-     their hand. *If your discard pile is empty, this has no effect.*" — fully deterministic,
+     their hand. _If your discard pile is empty, this has no effect._" — fully deterministic,
      no decision needed.
    - `swap_discard_lower_by_at_most` (amount X): "take their played card back in hand. Then,
-     they discard a card that is at most X lower than the played card. *If they can't, they
-     discard the played card instead.*"
+     they discard a card that is at most X lower than the played card. _If they can't, they
+     discard the played card instead._"
    - `swap_discard_higher_by_at_least` (amount X): same shape, "at least X higher."
 3. **The four end-game effect types, exact wording** (lines 209-210, 216-217): `Ribbon, +X` /
    `Ribbon, -X` ("gain/take X bonus/minus points at the end of the game"), and the two
@@ -119,15 +121,15 @@ everything built in Phases 1–3 (basic reputation effects are always fully comp
 
 - `discard_choice`: which card to discard — pure free choice among their whole hand.
 - `swap_discard_lower_by_at_most X` / `swap_discard_higher_by_at_least X`: the player gets
-  their played card back, then must discard *some* eligible card (one that's ≤X lower / ≥X
+  their played card back, then must discard _some_ eligible card (one that's ≤X lower / ≥X
   higher than the card they just got back) — if there's more than one eligible card, which
   one is also the player's choice. (`discard_recycle_lowest` is the one exception that
-  *sounds* similar but isn't: "the lowest value card" is a deterministic selection, no choice
+  _sounds_ similar but isn't: "the lowest value card" is a deterministic selection, no choice
   involved.)
 
 **Design**: a new `MULTIPLE_ACTIVE_PLAYER` state (tentatively `ResolveAdvancedEffect`),
 entered from `ResolveRound.php` only when that round's review effect is one of these three
-*and* its target group is non-empty. `setAllPlayersMultiactive()` on exactly the targeted
+_and_ its target group is non-empty. `setAllPlayersMultiactive()` on exactly the targeted
 player IDs (from `ReviewEffectResolver`'s existing `playersInTarget()`-style logic, extended
 to cover `reputation_zero`), each player picks a card via an action (mirroring
 `PlayCards::actCommitCard`'s shape), state auto-advances once every targeted player has acted
@@ -168,7 +170,7 @@ can query both piles' card types (a query it already runs, per `docs/loaf-phase3
 filter to whichever ones have an `end_game_bonus`/`end_game_malus`/`double_end_game_bonus`/
 `double_end_game_malus` effect on the side they were filed under, and evaluate every one of
 them together against **final** reputation — because they were never supposed to look at
-reputation-at-filing-time in the first place, this recompute-at-the-end approach is *more*
+reputation-at-filing-time in the first place, this recompute-at-the-end approach is _more_
 correct than trying to snapshot anything mid-game, not just more consistent with the existing
 architecture.
 
@@ -181,12 +183,14 @@ this were designed as a mid-game running total instead.
 
 **Sketch, evaluated once inside `EndGame.php` alongside the ending-boss/reputation/hand
 queries it already gathers**:
+
 ```php
 // For each player: sum end_game_bonus amounts from every filed card whose resolved side
 // targets them (evaluated against final $reputations, same targeting logic
 // ReviewEffectResolver already has), separately for bonus and malus, then double each sum if
 // the corresponding doubler card was also filed on its fail/success side respectively.
 ```
+
 The exact target-matching code should reuse `ReviewEffectResolver`'s existing
 `playersInTarget()` logic rather than duplicating it — worth extracting that into a shared,
 public, pure helper if it isn't already reusable across both call sites.
@@ -232,43 +236,92 @@ New/extended test coverage, same discipline as every prior phase:
   pure/testable even though the choice itself comes from a human; test the validation function
   directly, the same way `ReviewEffectResolver` is tested without any BGA framework involved.
 
-## 8. Live verification plan (Studio)
+## 8. Live verification checklist (Studio)
 
 Same discipline as every prior phase — nothing beyond PHPUnit is exercisable locally, and this
-phase adds a genuinely new category of live-only risk (a brand-new interactive state):
+phase adds a genuinely new category of live-only risk (a brand-new interactive state). Check
+items off in place as they're confirmed; this section _is_ the phase's live-verification
+tracker, not just a plan — `docs/loaf-remarks.md`'s "Phase 4 live verification" entry (last
+item below) is what actually closes the phase out once everything above it is checked.
 
-1. `vendor/bin/phpunit` clean, including all new/extended tests above.
-2. Confirm the `with_advanced_cards` option actually appears at table creation, defaults to
-   off, and — critically — that a table created with it **off** never draws an advanced card
-   at all (the simplest possible regression: Phase 1-3 behavior must be completely unaffected
-   when this option is off).
-3. With it **on**: play through at least one of each of the three interactive effects
-   (`discard_choice`, both swap variants) and confirm action buttons appear reliably for
-   exactly the targeted player(s) on a live push — this is precisely the scenario the Phase 2
-   activation-timing bug hit before, now in a brand-new state class; treat "no buttons until
-   refresh" as a signal history is repeating, not a new mystery to debug from scratch.
-4. Confirm a multi-target interactive effect (e.g. `discard_choice` hitting every
-   `reputation_negative` player at once) correctly waits for *all* targeted players before
-   auto-advancing, not just the first one to act.
-5. Confirm an end-game bonus, an end-game malus, and (hardest to arrange deliberately) a
-   doubler all show up correctly in final scores — cross-check by hand against
-   `docs/loaf-phase3-plan.md`'s existing `scoreBreakdown` log line, extended to include the
-   advanced bonus/malus contribution the same way it already breaks down hand value and
-   reputation bonus (same "surface hidden state via the log" pattern,
-   `docs/bga-studio-reference.md` §6).
-6. Confirm `counts_as_two` cards (already built in Phase 2, now reachable for the first time
-   live) genuinely end the game a round earlier than they would otherwise.
-7. **Try swapping `ResolveAdvancedEffect::onEnteringState()`'s `setAllPlayersMultiactive()` +
-   per-player `setPlayerNonMultiactive()` trim for a single
-   `$this->game->gamestate->setPlayersMultiactive($activePlayerIds, '', true)` call.** The
-   current code is the safe fallback (built only from stub-confirmed methods) because
-   `setPlayersMultiactive()` is only documented for BGA's older framework, not confirmed for
-   the typed one this project uses — see `docs/bga-studio-reference.md` §9 and
-   `docs/loaf-remarks.md`'s Phase 4 entry. If it works, swap it in for real (and add it to
-   `tests/stubs/BgaFrameworkStubs.php` with a citation, same as every other confirmed method);
-   if it fatals, the existing fallback stays and this item just confirms the doc's caution was
-   warranted.
-8. Update `docs/loaf-remarks.md` with a "Phase 4 live verification" entry once done.
+### Before creating a table
+
+- [x] Deploy the merged `main` branch to Studio (SFTP sync — confirm `docs`, `tests`,
+      `.claude`, `.github`, `tools`, `*.md` are still excluded per the SFTP ignore list).
+- [x] Re-upload `dbmodel.sql` and wipe the database if the schema changed (it didn't this
+      phase, but check the Studio log for schema-mismatch errors anyway).
+- [x] Check the Studio server log for PHP syntax/fatal errors immediately after upload, before
+      creating any table. (See `docs/bga-studio-reference.md` §7 for the full generic pre-test
+      checklist this supplements.)
+
+### Baseline regression — option off
+
+- [x] Create a table, confirm the "Advanced round cards" option appears at table creation and
+      defaults to **Off**.
+- [x] Play a full game with it off. Confirm **no advanced card is ever drawn** — the simplest
+      possible regression: Phase 1-3 behavior must be completely unaffected when the option is off.
+
+### Deck composition — option on
+
+- [x] Create a new table with "Advanced round cards" **On**.
+- [x] Confirm advanced cards actually get shuffled into the deck (visible once one gets drawn).
+
+### The three interactive effects (the new risk area)
+
+- [x] Play until a `discard_choice` card resolves. Confirm the targeted player(s) get action
+      buttons **on the live push**, without needing a page refresh — this is precisely the
+      activation-timing bug category that bit Phase 2 before, now in a brand-new state class; treat
+      "no buttons until refresh" as a signal history is repeating, not a new mystery to debug from
+      scratch.
+- [x] Same check for `swap_discard_lower_by_at_most`.
+- [x] Same check for `swap_discard_higher_by_at_least`.
+- [x] For a multi-target case (e.g. `discard_choice` hitting every `reputation_negative` player
+      at once), confirm the state correctly waits for **all** targeted players before advancing,
+      not just the first one to act.
+- [ ] Try disconnecting/going idle as a targeted player and confirm the zombie fallback
+      (`ResolveAdvancedEffect::zombie()`) picks a legal card and doesn't stall the game.
+      **Blocked in Express mode**: quitting a player there just stops the game outright instead
+      of handing control to the zombie AI, so this can't be tested solo -- needs a real
+      multiplayer table (or Studio's dedicated zombie-testing tooling, if any) with an actual
+      second connection to disconnect. Left unchecked until that's available.
+
+### Deterministic effects (lower risk, but unverified live)
+
+- [x] Confirm `discard_recycle_lowest` correctly moves the lowest discard-pile card back to
+      hand with no player interaction needed.
+- [x] Confirm a `counts_as_two` card (advanced_07/advanced_08, already built in Phase 2, now
+      reachable for the first time live) genuinely ends the game a round earlier than it otherwise
+      would.
+
+### End-game scoring
+
+- [x] Get an `end_game_bonus` card filed and confirm it shows up correctly in the final score.
+- [x] Same for `end_game_malus`.
+- [x] Same for a doubler (`double_end_game_bonus`/`double_end_game_malus`) — hardest to arrange
+      deliberately, may take a couple of games.
+- [x] Cross-check each against the `scoreBreakdown` log line's `end-game bonus
+${endGameBonus}` field (same "surface hidden state via the log" pattern,
+      `docs/bga-studio-reference.md` §6) — the number there should match what you'd hand-calculate
+      from which cards resolved.
+
+### The one open API question
+
+- [ ] In `ResolveAdvancedEffect::onEnteringState()`, try swapping the current
+      `setAllPlayersMultiactive()` + per-player `setPlayerNonMultiactive()` trim for a single
+      `$this->game->gamestate->setPlayersMultiactive($activePlayerIds, '', true)` call. The current
+      code is the safe fallback (built only from stub-confirmed methods) because
+      `setPlayersMultiactive()` is only documented for BGA's older framework, not confirmed for the
+      typed one this project uses — see `docs/bga-studio-reference.md` §9 and
+      `docs/loaf-remarks.md`'s Phase 4 entry. If it works, swap it in for real (and add it to
+      `tests/stubs/BgaFrameworkStubs.php` with a citation, same as every other confirmed method);
+      if it fatals, the existing fallback stays and this item just confirms the doc's caution was
+      warranted.
+
+### Close it out
+
+- [ ] Update `docs/loaf-remarks.md` with a "Phase 4 live verification" entry recording what
+      passed, what needed fixing, and the `setPlayersMultiactive` result — that's what actually
+      marks this phase complete in this project's own convention.
 
 ## 9. Suggested implementation order
 

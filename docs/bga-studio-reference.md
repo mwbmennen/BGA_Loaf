@@ -655,6 +655,25 @@ something a game ever touches directly: `$this->notify->all(...)` on the PHP sid
 knowing only so the phrase "cometD notification" (BGA's own scaffold comments use it) doesn't read
 as Gelati-specific — it's just BGA's name for "the transport behind every notification."
 
+### Game-log narrative order is notify() call order, not computation order
+
+**Symptom:** Product/design wants the game log to read cause-then-effect (e.g. "played card 5"
+before "moves +2 on the reputation track"), but the "effect" value needed for the later-seeming
+message is actually computed *first*, and the "cause" message would like to report a value (like
+a running total) that isn't known until after the effect logic runs.
+
+**Cause:** The log shows notifications in the order `notify->all()` was *called*, completely
+independent of when the underlying DB writes/computation happened. It's tempting to assume you
+can freely reorder two `notify->all()` calls without consequence, but any `${...}` value
+interpolated into a message must already be known at the moment you call it — so pulling a
+notification earlier can strand it before the value it wants to report exists yet.
+
+**Fix:** Don't try to reorder while keeping every field. Split the message into what's actually
+knowable at each point: emit a lightweight "this happened" reveal early (no derived/final values),
+and let the later message(s) — which already had to wait for those values to be real — carry them.
+Two accurate messages in the right order beat one message moved to the wrong place with a
+half-true value in it.
+
 ### Error: Notification handler never fires
 
 **Symptom:** PHP sends a notification (`notifyAllPlayers`), but the JS `notif_xxx` method never runs.
@@ -902,6 +921,17 @@ blind.
 ### Forcing a State Transition (Studio Only)
 
 During testing you can manually trigger state transitions from the Studio admin panel without going through normal gameplay. Useful for testing end-game scoring without playing a full game.
+
+### Express mode can't test zombie/disconnect behavior
+
+Express mode (controlling every seat from one browser tab, the fast way to solo-test a
+multiplayer game in Studio) doesn't simulate a real disconnect. Quitting one of the seats there
+stops the whole game outright instead of handing that player over to the zombie AI
+(`zombie($playerId)` on the relevant state class) the way a real player disconnecting/timing out
+would. If a checklist item needs to confirm zombie behavior specifically (e.g. "does an idle
+player in a `MULTIPLE_ACTIVE_PLAYER` state get auto-resolved sensibly instead of stalling the
+table for everyone else"), Express mode alone can't verify it — that needs a real table with
+multiple actual connections, where one genuinely goes idle or disconnects.
 
 ### PHP var_dump Location
 

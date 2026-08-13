@@ -6,6 +6,7 @@ namespace Bga\Games\loaf\States;
 
 use Bga\GameFramework\StateType;
 use Bga\GameFramework\States\GameState;
+use Bga\Games\loaf\Core\ReviewEffectDescription;
 use Bga\Games\loaf\Game;
 
 class RoundStart extends GameState
@@ -46,12 +47,12 @@ class RoundStart extends GameState
         $review = Game::$ROUND_CARD_TYPES[$reviewCard['type']]['review'];
         $this->game->bga->notify->all(
             'reviewCardRevealed',
-            clienttranslate('Review card revealed: on success, ${successTarget} ${successAmount} reputation; on fail, ${failTarget} ${failAmount} reputation'),
+            clienttranslate('Review card revealed: on success, ${successTarget}, ${successAmount}; on fail, ${failTarget}, ${failAmount}'),
             [
-                'successTarget' => $this->describeReviewTarget($review['success']),
-                'successAmount' => $this->describeReviewAmount($review['success']),
-                'failTarget' => $this->describeReviewTarget($review['fail']),
-                'failAmount' => $this->describeReviewAmount($review['fail']),
+                'successTarget' => ReviewEffectDescription::target($review['success']),
+                'successAmount' => ReviewEffectDescription::amount($review['success'], 'success'),
+                'failTarget' => ReviewEffectDescription::target($review['fail']),
+                'failAmount' => ReviewEffectDescription::amount($review['fail'], 'fail'),
             ]
         );
 
@@ -71,48 +72,5 @@ class RoundStart extends GameState
         );
 
         return PlayCards::class;
-    }
-
-    /**
-     * Plain-text label for a review effect's `target`, for the log-only 'reviewCardRevealed'
-     * notification -- Phase 2 has no card art yet (see modules/js/Game.js's Phase 5 TODO), so
-     * this is the only place a tester can currently see what a review card does. Only the
-     * basic `reputation` effect is wired up (advanced effects are Phase 4 no-ops in
-     * ReviewEffectResolver), but every `target` value from docs/loaf-card-data.json's effect
-     * schema is covered so this doesn't go blank if an advanced card is ever drawn early.
-     */
-    private function describeReviewTarget(array $effect): string
-    {
-        return match ($effect['target']) {
-            'lowest_reputation' => clienttranslate('the lowest-reputation player(s)'),
-            'highest_reputation' => clienttranslate('the highest-reputation player(s)'),
-            'reputation_positive' => clienttranslate('every player with positive reputation'),
-            'reputation_negative' => clienttranslate('every player with negative reputation'),
-            'reputation_zero' => clienttranslate('every player at zero reputation'),
-            'all' => clienttranslate('every player'),
-            default => clienttranslate('no one'),
-        };
-    }
-
-    private function describeReviewAmount(array $effect): string
-    {
-        return match ($effect['effect']) {
-            'reputation' => sprintf('%+d', $effect['amount']),
-            'discard_recycle_lowest' => clienttranslate('(recycles their lowest discard-pile card back to hand)'),
-            'discard_choice' => clienttranslate('(discards a card of their choice from hand)'),
-            'swap_discard_lower_by_at_most' => clienttranslate('(takes their played card back, then discards a lower one)'),
-            'swap_discard_higher_by_at_least' => clienttranslate('(takes their played card back, then discards a higher one)'),
-            'end_game_bonus' => clienttranslate('(grants a bonus at game end)'),
-            'end_game_malus' => clienttranslate('(applies a penalty at game end)'),
-            'double_end_game_bonus' => clienttranslate('(doubles every end-game bonus)'),
-            'double_end_game_malus' => clienttranslate('(doubles every end-game penalty)'),
-            'none' => clienttranslate('(no effect)'),
-            // Every real effect type is covered above -- this is structurally required by
-            // `match` (it throws UnhandledMatchError on no match, unlike `switch`), not a real
-            // reachable case. Kept only as a defensive fallback against a future new effect
-            // type or a data typo, same "correctness against future rule changes" discipline
-            // as EndGame.php's own empty-hand fallback.
-            default => clienttranslate('(unknown effect)'),
-        };
     }
 }

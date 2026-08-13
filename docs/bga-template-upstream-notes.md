@@ -42,6 +42,15 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   server-side state before the UI exists" (added after this came up for L'Oaf's
   review-card effects — see `loaf-remarks.md`'s "Phase 2: review card effect had no visible
   representation" for the concrete example).
+- [ ] **Express mode can't test zombie/disconnect behavior.** Quitting a seat in Studio's
+  Express mode (one browser tab controlling every player) stops the whole game outright
+  instead of handing that player to the zombie AI, unlike a real disconnect/timeout. Any
+  checklist item that needs to confirm zombie behavior (e.g. a `MULTIPLE_ACTIVE_PLAYER` state
+  auto-resolving sensibly for an idle player instead of stalling everyone else) needs a real
+  table with multiple actual connections, not Express mode. Where: `bga-studio-reference.md`
+  §6, "Express mode can't test zombie/disconnect behavior" (added after this blocked a Phase 4
+  live-verification checklist item for L'Oaf's `ResolveAdvancedEffect::zombie()` — see
+  `loaf-phase4-plan.md` §8).
 - [ ] **`console.log` cleanup before shipping.** Comment out (don't delete) debug
   `console.log` calls before considering a feature/phase done, plus a `grep -rn
   "console\.log" modules/js/` catch-all and a checklist item. Where: `bga-studio-reference.md`
@@ -50,6 +59,17 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   never write a bare English string in game code; BGA's translator platform can't retrofit
   strings it never saw wrapped. Where: `bga-studio-reference.md`, "Wrap every user-facing
   string in BGA's translation functions, from day one".
+- [ ] **Game-log narrative order is `notify->all()` call order, not computation order.** The
+  log shows notifications in the order they were *called*, independent of when the underlying
+  DB writes happened — but any `${...}` value interpolated into a message must already be known
+  at the moment of that call. Reordering two notifications to read cause-then-effect can strand
+  the earlier one before a value it wants to report (e.g. a running total) actually exists.
+  Fix: don't try to reorder while keeping every field — split into what's knowable at each
+  point (a lightweight early reveal with no derived values, then the later message(s) that
+  carry the now-known values). Where: `bga-studio-reference.md`, "Game-log narrative order is
+  notify() call order, not computation order" (added after reordering L'Oaf's ResolveRound
+  card-played reveal to precede its reputation-change messages, which required dropping a
+  "reputation now" field that wasn't final yet at the earlier call site).
 - [ ] **A method in BGA's public docs isn't automatically confirmed for the new typed
   framework.** Most of `en.doc.boardgamearena.com` predates the typed `Bga\GameFramework\...`
   classes (`Table`, `GameState`, `Gamestate`) this template uses; it describes the older
