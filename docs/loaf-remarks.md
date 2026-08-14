@@ -475,3 +475,37 @@ against the log instead of reverse-engineering it from the final score alone.
 BGA table. Specifically added by this change: whether an end-game bonus, an end-game malus, and
 a doubler each actually show up correctly in a real final score, cross-checked against this new
 log line.
+
+## Phase 4 live verification (2026-08-14)
+
+Worked through `docs/loaf-phase4-plan.md` §8's checklist live on Studio. Everything passed:
+
+- Deploy/schema/log pre-checks, the `with_advanced_cards` option (appears, defaults off, off
+  means no advanced card is ever drawn), and deck composition with it on.
+- All three interactive effects (`discard_choice`, both swap variants) activated the targeted
+  player(s) with action buttons appearing on the live push, no refresh needed — no repeat of
+  the Phase 2 activation-timing bug in this brand-new state class. A multi-target case (several
+  `reputation_negative` players at once) correctly waited for every targeted player, not just
+  the first to act.
+- Both deterministic effects (`discard_recycle_lowest`, a `counts_as_two` card ending the game
+  a round early) worked with no player interaction.
+- End-game scoring: an `end_game_bonus`, an `end_game_malus`, and a doubler all showed up
+  correctly in the final score, matching the `scoreBreakdown` log line's `end-game bonus
+  ${endGameBonus}` field by hand-calculation.
+- The one open API question: swapped `ResolveAdvancedEffect::onEnteringState()`'s
+  activate-all-then-trim two-step (`setAllPlayersMultiactive()` +
+  `setPlayerNonMultiactive()` per non-targeted player) for a single
+  `setPlayersMultiactive($activePlayerIds, '', true)` call — **it works** on the typed
+  framework. Kept as the real implementation; `tests/stubs/BgaFrameworkStubs.php` and
+  `docs/bga-studio-reference.md` §9 updated from "unconfirmed" to "confirmed" accordingly.
+
+**Left unchecked, genuinely blocked, not a gap in this pass**: the zombie/disconnect fallback
+(`ResolveAdvancedEffect::zombie()`) for an idle targeted player. Express mode (one browser tab
+controlling every seat) doesn't simulate a real disconnect — quitting a seat there stops the
+game outright instead of handing control to the zombie AI — so this needs a real multiplayer
+table with an actual second connection, not available this session
+(`docs/bga-studio-reference.md` §6, "Express mode can't test zombie/disconnect behavior").
+Revisit once that's available; nothing else about Phase 4 depends on it.
+
+Phase 4 is otherwise complete: implementation (§9 steps 1-4, see the two entries above),
+tests, and live verification all done.

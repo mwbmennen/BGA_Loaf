@@ -315,7 +315,7 @@ ${endGameBonus}` field (same "surface hidden state via the log" pattern,
 
 ### Close it out
 
-- [ ] Update `docs/loaf-remarks.md` with a "Phase 4 live verification" entry recording what
+- [x] Update `docs/loaf-remarks.md` with a "Phase 4 live verification" entry recording what
       passed, what needed fixing, and the `setPlayersMultiactive` result — that's what actually
       marks this phase complete in this project's own convention.
 
