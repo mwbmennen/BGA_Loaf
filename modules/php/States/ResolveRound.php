@@ -97,6 +97,10 @@ class ResolveRound extends GameState
                 // (docs/loaf-remarks.md's Phase 4 entry -- confirmed live the counter under-
                 // reported by exactly 1 when this was still hardcoded).
                 'weight' => $reviewEffect['counts_as_two'] ? 2 : 1,
+                // So the client can move the actual card (not just bump a counter) from the
+                // pending-review display into the correct boss pile -- docs/loaf-phase5-plan.md §7.
+                'reviewCardId' => $reviewCardId,
+                'reviewCardType' => $reviewCardType,
             ]
         );
 

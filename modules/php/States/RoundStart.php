@@ -49,6 +49,10 @@ class RoundStart extends GameState
             'reviewCardRevealed',
             clienttranslate('Review card revealed: on success, ${successTarget}, ${successAmount}; on fail, ${failTarget}, ${failAmount}'),
             [
+                // card_type (not just descriptive text) so the client can render the card's
+                // real art -- docs/loaf-phase5-plan.md §7's pending-review-card display.
+                'reviewCardId' => $reviewCard['id'],
+                'reviewCardType' => $reviewCard['type'],
                 'successTarget' => ReviewEffectDescription::target($review['success']),
                 'successAmount' => ReviewEffectDescription::amount($review['success'], 'success'),
                 'failTarget' => ReviewEffectDescription::target($review['fail']),
@@ -68,6 +72,10 @@ class RoundStart extends GameState
             [
                 'round' => $currentRound,
                 'target' => $orderAverage,
+                // Same reasoning as reviewCardId/reviewCardType above -- the pending order-card
+                // display needs real art, not just the target number.
+                'orderCardId' => $orderCard['id'],
+                'orderCardType' => $orderCard['type'],
             ]
         );
 

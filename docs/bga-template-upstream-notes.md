@@ -328,8 +328,13 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   divides by `(columns - 1)`/`(rows - 1)`, confirmed live on L'Oaf's 6-column round-card sheet
   where the literal example divisor would have cropped a visibly wrong tile; (4)
   `cardBorderRadius` is a native `CardManagerSettings` option, no custom CSS wrapper needed for
-  rounded card corners. Added while wiring these libraries into L'Oaf's Phase 5 client
-  (`docs/loaf-phase5-plan.md` §4 step 1, `modules/js/Game.js`'s `setupCardsAndZoom()`).
+  rounded card corners; (5) `getCardRotation` returns **quarter-turns (0/1/2/3), not degrees**
+  — undocumented in `bga-cards.d.ts`'s own comment, only found by reading the actual library
+  source (`bga-cards.esm.js`); passing `90` directly (expecting 90°) produces a
+  normalizes-to-near-zero rotation instead, and the library already swaps a rotated card's own
+  effective width/height for you, so don't also hardcode a swapped container size. Added while
+  wiring these libraries into L'Oaf's Phase 5 client (`docs/loaf-phase5-plan.md` §4 step 1 and
+  §7, `modules/js/Game.js`'s `setupCardsAndZoom()`/`roundCardsManager`).
 
 ## Needs generalizing before it's portable
 

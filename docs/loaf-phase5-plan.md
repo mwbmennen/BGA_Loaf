@@ -496,33 +496,72 @@ read against both site themes, not just one.
   documentation suggests always defining a custom function for clarity"), and because order/
   review cards genuinely are always public information in this game (unlike hand cards, §8),
   so there's no ambiguity to leave implicit.
-- **Boss piles**: one `SlotStock`/`LineStock` each for `review_happy`/`review_angry`, seeded at
-  setup from `gamedatas.bossHappy`/`bossAngry` (cast via `Object.values()` per §4 step 12's
-  gotcha), appended to via `addCards()` on `notif_roundResolved` — replacing the
-  `${bossHappyCount} / 5` text counter's card-less display with the actual filed card art. The
-  counter's own weighted-increment logic (shipped in Phase 4's log-ordering fix) is untouched;
-  only what renders alongside it changes.
-- **Pending order/review card display (decided: show both, not just the filed pile).** Matching
-  the physical game — both the current order card (target side) and the current review card
-  (effect side) sit face-up on the table all round, not just once resolved/filed. Two more
-  single-card `SlotStock`s near the piles, updated via `addCards`/`removeCards` on `roundStart`.
-  **Requires a small PHP data-exposure addition, not currently present**: neither
-  `reviewCardRevealed` nor `roundStart` (`modules/php/States/RoundStart.php`) sends the card's
-  `card_type` today, only descriptive text/numbers — add `card_type` to both notifications'
-  args, plus the currently-revealed review/order card types to `getAllDatas()` (for the
-  initial page load / reconnect case, same "setup + notification" dual-exposure pattern already
-  used for `bossHappyWeight`/`bossAngryWeight`). This is a states-adapter data-exposure tweak
-  like that one, not a rules/Core change — still inside §2's scope boundary.
-- **Hover tooltip = the per-card "zoom" decision, concretely.** Every round-card's
-  `setupFrontDiv` calls `this.bga.gameui.addTooltipHtml(div.id, htmlContent)` (confirmed real
-  hook, per `bga-cards`' own usage example) with `htmlContent` being a small element styled with
-  the *zoom-quality* sheet (§4 step 5) at the same computed sprite index — a bigger, crisper
-  version of the same card, on hover, no custom lightbox/modal needed. Fold
-  `notif_reviewEffectApplied`'s effect text (`ReviewEffectDescription`'s string, already sent to
-  the log) into that same tooltip HTML — one tooltip answers both "what does this look like
-  bigger" and "what does it do," rather than two separate half-built mechanisms. (This is
-  independent of §6's `bga-zoom` whole-board control — a player can zoom the whole board out to
-  see everything, or hover one card to see it in detail; the two aren't mutually exclusive.)
+- **Done — boss piles**: a `LineStock` each for `review_happy`/`review_angry`
+  (`this.bossHappyStock`/`this.bossAngryStock`), seeded in `setupRoundCardStocks()` from
+  `gamedatas.bossHappy`/`bossAngry` (`Object.values()` cast applied, per §4 step 12's gotcha),
+  appended to via `addCard(..., { fromStock: this.pendingReviewStock })` in `notif_roundResolved`
+  — replacing the `${bossHappyCount} / 5` text counter's card-less display with the actual filed
+  card art. The counter's own weighted-increment logic (shipped in Phase 4's log-ordering fix)
+  is untouched; only what renders alongside it changed. **Correction from this section's
+  original draft**: `getCardsInLocation()`'s cards carry a `type` field, not `card_type` — the
+  sprite lookup and every card object built for these stocks uses `card.type`, matching the
+  Deck component's actual field name (confirmed by `Game.php`'s own existing
+  `array_column($happyCards, 'type')` call), not the `card_type` this section originally assumed.
+- **Done — pending order/review card display (decided: show both, not just the filed pile).**
+  Matching the physical game — both the current order card (target side) and the current review
+  card (effect side) sit face-up on the table all round, not just once resolved/filed. Two more
+  single-card `SlotStock`s (`this.pendingOrderStock`/`this.pendingReviewStock`, one slot each),
+  updated via `addCard`/`removeAll` on `roundStart`/`roundResolved`. The PHP data-exposure
+  addition this needed is done: `reviewCardId`/`reviewCardType` added to `reviewCardRevealed`
+  (`RoundStart.php`) and `roundResolved` (`ResolveRound.php`); `orderCardId`/`orderCardType`
+  added to `roundStart` (`RoundStart.php`); and `currentReviewCardId`/`currentReviewCardType`/
+  `currentOrderCardId`/`currentOrderCardType` added to `getAllDatas()` (`Game.php`, the order
+  card re-derived from `round_card` — lowest `card_location_arg` still in `'deck'` — rather than
+  a new persisted global). `vendor/bin/phpunit` stayed green throughout (99/99) — these are
+  states-adapter data-exposure tweaks, the `modules/php/Core/` diff for this step is empty, per
+  §2's scope boundary.
+  **Simplification from this section's original draft**: rather than animating the pending
+  order-card sliding into the pending-review slot when the round rolls over (the flip-mechanic
+  card is the same physical card, but a genuinely different visual face, not a front/back
+  flip), `notif_roundStart` just clears both slots and re-adds fresh from the notification's own
+  args — correctness over animation finesse for this pass; `pendingReviewStock` is already
+  empty by then anyway (moved out in `notif_roundResolved` via `fromStock`).
+- **Done — hover tooltip, visual half.** Every round-card's `setupFrontDiv` calls
+  `this.bga.gameui.addTooltipHtml(div.id, htmlContent)` (confirmed real hook) with `htmlContent`
+  a `250×348` div (downscaled from the `500×696` zoom-quality sheet, §4 step 5, at the same
+  computed sprite index) — a bigger, crisper version of the same card, on hover, no custom
+  lightbox/modal. **Not done yet**: folding `notif_reviewEffectApplied`'s effect text into that
+  same tooltip HTML, as this section originally planned — real scope-cutting, not an oversight,
+  since it needs cross-notification data (the tooltip is built once per card at `addCard` time,
+  the effect text arrives in a separate, later notification) that would have meaningfully
+  complicated this pass; tracked as a real follow-up, not silently dropped. (Independent of §6's
+  `bga-zoom` whole-board control either way — a player can zoom the whole board out to see
+  everything, or hover one card to see it in detail; the two aren't mutually exclusive.)
+- **Done — `#pending-cards` row layout, including a deliberate deviation from the physical
+  game**: the pending order and review cards sit side by side (order left, review right,
+  centered as a pair within the row via `justify-content: center`), with the review card
+  rotated 90° — landscape/horizontal, since it starts as a 180×251 portrait card — via
+  `bga-cards`' own `getCardRotation` (a `card.rotation` field set only on the pending-review
+  card object, not `card.side`, since boss-pile cards also have `side: "review"` but must stay
+  unrotated) — a presentation choice, no game-state meaning, distinguishing "the card actively
+  being reviewed this round" from "already-filed" cards at a glance.
+  **Confirmed live, then fixed twice**: the card first showed no rotation at all. `getCardRotation`
+  turned out to be documented ambiguously (its own doc comment just says "the card rotation," no
+  units) — the real convention, found only by reading `bga-cards`' actual source
+  (`bga-cards.esm.js`, not just its `.d.ts`), is **quarter-turns (0/1/2/3), not degrees**; the
+  library itself computes `rotation * 90deg` internally. `rotation: 90` was silently producing a
+  nonsensical multiple-of-360 rotation that visually looked unrotated; the fix is `rotation: 1`.
+  Also removed the container's manually-swapped `251×180` size (an earlier, reasonable-seeming
+  guess) once the source read confirmed `bga-cards` already swaps the rotated card's own
+  effective width/height internally (`--bga-cards_card-effective-width/height`, swapped whenever
+  `rotation % 2 === 1`) — a hardcoded container size was redundant at best, actively fighting the
+  library at worst (the unrotated `.slot`'s own `min-height` could exceed a manually-shrunk
+  container height). `#pending-order-card`/`#pending-review-card` are now unsized, letting
+  `bga-cards` size the card and the flex container follow it.
+- **Still not done**: CSS layout for `#boss-piles` and the rest of the page — only
+  `#pending-cards` got a real layout pass here. `bga-cards` styles the cards themselves (size,
+  border radius) but the boss piles' surrounding layout is still browser block-level defaults.
+  A full `loaf.css` pass remains pending (§2's own scope item).
 - **Async gotcha, worth testing deliberately, not discovering live**: `addCards()`/
   `removeCards()` are documented as async (return Promises). Code that seeds a pile in `setup()`
   and expects it populated synchronously on the very next line — e.g. to compute some derived
@@ -717,19 +756,24 @@ Same format as Phase 4's §8 — check items off in place as they're confirmed.
    together (§4) — the sprite index convention and the library setup turned out to be genuinely
    interdependent (§4 step 1's `AnimationManager` .d.ts collision, the corrected
    `spritePositionPercent()` formula), confirming they needed to happen as one pass rather than
-   sequentially.
-2. Board & reputation track (§5) — doesn't depend on `bga-cards` at all (tokens aren't cards),
-   a good first live-deploy smoke test for the new image assets in isolation.
-3. Whole-board zoom (§6) — layer it on top of §5's now-real board markup while the board is
-   still simple, before §7–§9 add more moving parts to verify zoom against.
-4. Boss piles & pending order/review cards (§7) — first real `bga-cards` integration; simpler
-   than the hand (no player-driven interaction yet), good place to catch the async/PHP-Deck
-   gotchas (§4 step 12) before they compound with §8's action-handling complexity.
-5. Hand/commit/reveal (§8) — the most involved piece (animation timing, privacy-sensitive flip
-   logic, replacing the action-button component); do this after §7 has already proven the
-   library/asset pipeline works end-to-end.
-6. Advanced-effect UI (§9) — a small delta on top of §8's component.
-7. `console.log`/translation audit (§11) — last, sweeping everything Phase 5 itself just added
+   sequentially. Includes `BgaZoom.Manager` itself (§6) — created here since it's cheap and
+   library-level, though the board markup it wraps is still §5's plain-DOM placeholder for now.
+2. **Done** — Boss piles & pending order/review cards (§7), built ahead of §5/§8 in this actual
+   run (not the order originally suggested here) — first real `bga-cards` integration, and where
+   the async/PHP-Deck gotchas (§4 step 12) actually got caught, before they could compound with
+   §8's action-handling complexity. Real card art (2 boss piles, 2 pending-card slots, hover
+   zoom tooltip) is deployable now — the first point in Phase 5 with something worth looking at.
+3. **Next**: Board & reputation track (§5) — still the plain-DOM placeholder from Phase 1-4;
+   doesn't depend on `bga-cards` at all (tokens aren't cards), so it's independent of what §7
+   just built, just not done yet.
+4. Hand/commit/reveal (§8) — the most involved remaining piece (animation timing,
+   privacy-sensitive flip logic, replacing the action-button component); §7 already proved the
+   library/asset pipeline works end-to-end, so this is de-risked relative to the original plan.
+5. Advanced-effect UI (§9) — a small delta on top of §8's component.
+6. `console.log`/translation audit (§11) — last, sweeping everything Phase 5 itself just added
    alongside the pre-existing scaffold debug lines.
-8. Sound only if trivial (§10); otherwise skip without regret.
+7. Sound only if trivial (§10); otherwise skip without regret.
+8. Two explicitly-deferred follow-ups from §7, worth picking up before calling Phase 5 fully
+   done: folding `reviewEffectApplied`'s text into the hover tooltip, and a real `loaf.css`
+   layout pass for the new container divs.
 9. Deploy, live-verify per §13, update `docs/loaf-remarks.md`.

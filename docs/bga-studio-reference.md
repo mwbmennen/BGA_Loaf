@@ -1198,6 +1198,30 @@ Don't build a custom `border-radius` + `overflow: hidden` CSS wrapper for rounde
 — `bga-cards`' `CardManager` constructor already accepts `cardBorderRadius: '8px'` (or any CSS
 length/percentage) directly and handles it internally.
 
+### `getCardRotation` returns quarter-turns (0/1/2/3), not degrees
+
+**Symptom:** setting `getCardRotation: (card) => 90` to rotate a card 90° produces no visible
+rotation at all (or an apparently-random one, depending on the value used).
+
+**Cause:** neither `CardManagerSettings.getCardRotation`'s doc comment nor the rest of
+`bga-cards.d.ts` states the unit — it just says "the card rotation." The actual convention,
+only findable by reading the library's real source (`bga-cards.esm.js`, downloadable from the
+same CDN as the `.d.ts` — see the URL pattern earlier in this section), is quarter-turns:
+`createCardElement` computes `element.style.setProperty('--bga-cards_card-rotation',
+'${rotation * 90}deg')` internally. Passing `90` directly asks for `90 * 90 = 8100deg`, which
+normalizes to a multiple of 360° close to nothing visually different from unrotated.
+
+**Also**: `bga-cards` already swaps the rotated card's own effective width/height for you —
+`lying = rotation % 2 === 1`, and when `lying` is true it sets
+`--bga-cards_card-effective-width/height` swapped from the base `cardWidth`/`cardHeight`. Don't
+also hardcode a swapped size on the stock's *container* element to "make room" for the
+rotation — that fights the library's own sizing instead of cooperating with it (the unrotated
+`.slot` element's own `min-width`/`min-height` can then mismatch a manually-shrunk container
+dimension). Leave the container unsized and let it follow the card.
+
+**Fix:** pass `0`/`1`/`2`/`3` (not `0`/`90`/`180`/`270`) from `getCardRotation`, and don't set
+an explicit size on the container holding a stock with rotated cards.
+
 ---
 
 ## State Transitions: Old vs New Style
