@@ -43,11 +43,12 @@ class ResolveAdvancedEffect extends GameState
      *   current reputations -- the same recompute-over-redundant-state pattern EndGame.php
      *   already uses for `$endingBoss`.
      *
-     * `tests/stubs/BgaFrameworkStubs.php`'s `Gamestate` only confirms `setAllPlayersMultiactive()`
-     * (used by PlayCards.php) and `setPlayerNonMultiactive()` -- no subset-activation method,
-     * so activating only the real target group is done by activating everyone, then
-     * immediately deactivating whoever isn't targeted, rather than guessing at an unconfirmed
-     * `setPlayersMultiactive()`-style call.
+     * Activates exactly the target group in one `setPlayersMultiactive()` call. Confirmed
+     * live on Studio (docs/loaf-phase4-plan.md §8, "the one open API question") -- this
+     * replaced an earlier "activate everyone, then trim" two-step
+     * (`setAllPlayersMultiactive()` + `setPlayerNonMultiactive()` per non-targeted player) that
+     * was only a fallback because `setPlayersMultiactive()` wasn't yet confirmed for the typed
+     * framework this project uses (it's documented only for BGA's older framework).
      */
     public function onEnteringState() {
         $reviewEffect = $this->getReviewEffect();
@@ -60,15 +61,7 @@ class ResolveAdvancedEffect extends GameState
             return $this->nextState();
         }
 
-        $this->game->gamestate->setAllPlayersMultiactive();
-
-        $allPlayerIds = array_map('intval', $this->game->getObjectListFromDb(
-            'SELECT `player_id` FROM `player`',
-            true
-        ));
-        foreach (array_diff($allPlayerIds, $activePlayerIds) as $playerId) {
-            $this->game->gamestate->setPlayerNonMultiactive($playerId, $this->nextState());
-        }
+        $this->game->gamestate->setPlayersMultiactive($activePlayerIds, '', true);
 
         $this->game->bga->notify->all(
             'advancedEffectPending',
