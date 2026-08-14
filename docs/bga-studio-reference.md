@@ -1053,15 +1053,21 @@ exist under the same name/signature on the new typed classes.
 Concretely: `$this->gamestate->setPlayersMultiactive($players, $next_state, $bExclusive)` is a
 real, documented method — "activate exactly this list of players in a `MULTIPLE_ACTIVE_PLAYER`
 state, nobody else" — genuinely useful any time a multiactive state's target group is a subset
-of all players (e.g. only players meeting some condition need to act), not everyone. But it's
-documented on the *old*-framework page, and this template's stubs only list
+of all players (e.g. only players meeting some condition need to act), not everyone. It was
+documented only on the *old*-framework page, and for a while this template's stubs listed only
 `setAllPlayersMultiactive()`/`setPlayerNonMultiactive()` on the new typed `Gamestate` class —
-not because it's confirmed absent, but because nobody had confirmed it present either.
+not because it was confirmed absent, but because nobody had confirmed it present either. **It's
+now confirmed present and working on the typed framework** (exercised live on Studio by L'Oaf's
+`ResolveAdvancedEffect::onEnteringState()`), so it's safe to use directly and belongs in the
+stubs with a citation — no fallback needed for this specific method anymore.
 
-**Don't add a method to the stubs on the strength of the old docs alone** — that's exactly how
-this project has previously shipped a live fatal error (see `playerScoreAux`'s incident history
-elsewhere in this doc: two guessed signatures both threw before the third was confirmed).
-Instead, when a subset of players needs to be active and the "obvious" method is unconfirmed:
+**Don't add a method to the stubs on the strength of the old docs alone**, though — that's
+exactly how this project has previously shipped a live fatal error (see `playerScoreAux`'s
+incident history elsewhere in this doc: two guessed signatures both threw before the third was
+confirmed), and it's what nearly happened here too before it got verified live. For any *other*
+unconfirmed method, treat "documented for the old framework" and "confirmed for this template"
+as two different levels of evidence, and fall back to only confirmed primitives until it's
+actually been exercised live:
 
 ```php
 // Safe fallback, built only from confirmed methods: activate everyone, then immediately
@@ -1075,9 +1081,7 @@ foreach (array_diff($allPlayerIds, $activePlayerIds) as $playerId) {
 ```
 
 Add the candidate method to the stubs and swap it in **once** it's actually been exercised live
-on Studio (or found in a typed-framework source/changelog, not just the legacy docs) — until
-then, treat "documented for the old framework" and "confirmed for this template" as two
-different levels of evidence.
+on Studio (or found in a typed-framework source/changelog, not just the legacy docs).
 
 ### Visibility mismatches in the stubs
 

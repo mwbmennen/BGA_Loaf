@@ -52,6 +52,12 @@ namespace Bga\GameFramework\Helpers {
         // BGA's public docs: marks every player active on entering a MULTIPLE_ACTIVE_PLAYER
         // state -- required explicitly, the state `type` alone doesn't activate anyone.
         public function setAllPlayersMultiactive(): void {}
+
+        // Confirmed live on Studio for the typed framework (docs/loaf-phase4-plan.md §8, "the
+        // one open API question") -- previously only documented for BGA's older framework, so
+        // this was unverified until then. Used by ResolveAdvancedEffect::onEnteringState() to
+        // activate exactly a target subset in one call.
+        public function setPlayersMultiactive(array $_playerIds, string $_nextStateClass = '', bool $_activeOnly = false): void {}
     }
 
     // Unverified locally, same caveat as setPlayerNonMultiactive above. Sourced from BGA's

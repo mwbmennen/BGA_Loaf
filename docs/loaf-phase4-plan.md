@@ -306,16 +306,12 @@ ${endGameBonus}` field (same "surface hidden state via the log" pattern,
 
 ### The one open API question
 
-- [ ] In `ResolveAdvancedEffect::onEnteringState()`, try swapping the current
+- [x] In `ResolveAdvancedEffect::onEnteringState()`, try swapping the current
       `setAllPlayersMultiactive()` + per-player `setPlayerNonMultiactive()` trim for a single
-      `$this->game->gamestate->setPlayersMultiactive($activePlayerIds, '', true)` call. The current
-      code is the safe fallback (built only from stub-confirmed methods) because
-      `setPlayersMultiactive()` is only documented for BGA's older framework, not confirmed for the
-      typed one this project uses — see `docs/bga-studio-reference.md` §9 and
-      `docs/loaf-remarks.md`'s Phase 4 entry. If it works, swap it in for real (and add it to
-      `tests/stubs/BgaFrameworkStubs.php` with a citation, same as every other confirmed method);
-      if it fatals, the existing fallback stays and this item just confirms the doc's caution was
-      warranted.
+      `$this->game->gamestate->setPlayersMultiactive($activePlayerIds, '', true)` call. **Confirmed
+      live: it works** — `setPlayersMultiactive()` is now the real implementation (no longer
+      guarded as experimental), and `tests/stubs/BgaFrameworkStubs.php`'s `Gamestate` stub is
+      updated to a confirmed citation rather than an "unconfirmed" caveat.
 
 ### Close it out
 
