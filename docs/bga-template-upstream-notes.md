@@ -304,6 +304,15 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   table appearing in the lobby list is *not* evidence anything committed, that's separate
   admin bookkeeping outside the transaction. Where: `bga-studio-reference.md`, "Error:
   table creation hangs forever" (§5, includes the `Wipe database` fix).
+- [ ] **`montage` needs `-font` on every call, even ones with no visible label.** Confirmed
+  live building L'Oaf's Phase 5 sprite pipeline: a small 6-tile token sheet with no readable
+  label at that grid size still failed with `montage: unable to read font` from a missing
+  `-font` flag — `montage` attempts the label-rendering font lookup unconditionally,
+  regardless of grid size or whether a label would actually be visible. "This tile is too
+  small for the label to matter" is not a safe reason to omit the flag; pass a real font path
+  (e.g. `/System/Library/Fonts/Helvetica.ttc` on macOS) on every `montage` invocation in a
+  build script. Where: `bga-studio-reference.md` §5, "sprite sheet is way over the 4MB limit"
+  section's third gotcha (`docs/loaf-phase5-plan.md` §4 step 11 has the concrete incident).
 
 ## Needs generalizing before it's portable
 
