@@ -239,26 +239,43 @@ export class Game {
 
     await this.setupCardsAndZoom();
 
-    // Minimal, functional-not-pretty per docs/loaf-phase1-plan.md's Client section -- just
-    // enough to see the 5-card end trigger approaching while playtesting. Real boss-pile
-    // visuals (filed cards, fraction-to-5 indicator) are Phase 5 polish
-    // (docs/loaf-implementation-plan.md §4), not this.
     // The *weighted* count (Game.php's bossHappyWeight/bossAngryWeight), not the physical card
     // count -- a counts_as_two card is worth 2 toward the actual 5-card end trigger, so the
     // physical count under-reports how close the game is to ending (confirmed live).
     const bossHappyCount = gamedatas.bossHappyWeight;
     const bossAngryCount = gamedatas.bossAngryWeight;
 
+    // Real boss-pile/pending-card visuals (docs/loaf-phase5-plan.md §7) -- the fraction-to-5
+    // counter text stays (still the clearest way to show "how close to ending"), real card art
+    // now renders alongside it via the Stocks built in setupRoundCardStocks() below.
     this.bga.gameArea.getElement().insertAdjacentHTML(
       "beforeend",
       `
+            <div id="pending-cards">
+                <div>
+                    <div>Next order card</div>
+                    <div id="pending-order-card"></div>
+                </div>
+                <div>
+                    <div>Current review card</div>
+                    <div id="pending-review-card"></div>
+                </div>
+            </div>
             <div id="boss-piles">
-                <div>Happy boss: <span id="boss-happy-count">${bossHappyCount}</span> / 5</div>
-                <div>Angry boss: <span id="boss-angry-count">${bossAngryCount}</span> / 5</div>
+                <div>
+                    <div>Happy boss: <span id="boss-happy-count">${bossHappyCount}</span> / 5</div>
+                    <div id="boss-happy-pile"></div>
+                </div>
+                <div>
+                    <div>Angry boss: <span id="boss-angry-count">${bossAngryCount}</span> / 5</div>
+                    <div id="boss-angry-pile"></div>
+                </div>
             </div>
             <div id="player-tables"></div>
         `,
     );
+
+    this.setupRoundCardStocks(gamedatas);
 
     // Setting up player boards: reputation + hand card count. Own hand values are shown as
     // PlayCards action buttons rather than here; opponents only ever get a count
@@ -293,6 +310,7 @@ export class Game {
     const BgaAnimations = await importEsmLib("bga-animations", "1.x");
     const BgaCards = await importEsmLib("bga-cards", "1.x");
     const BgaZoom = await importEsmLib("bga-zoom", "1.x");
+    this.BgaCards = BgaCards; // kept for later Stock construction (setupRoundCardStocks, §8)
 
     this.animationManager = new BgaAnimations.Manager({
       animationsActive: () => this.bga.gameui.bgaAnimationsActive(),
@@ -309,6 +327,15 @@ export class Game {
       getId: (card) => card.id,
       isCardVisible: () => true,
       setupFrontDiv: (card, div) => this.setupRoundCardFrontDiv(card, div),
+      // Presentation-only, no game-state meaning: the pending review card is displayed rotated
+      // next to the pending order card (docs/loaf-phase5-plan.md §7) -- set per-card via
+      // `card.rotation` (only the pending-review card object carries it) rather than keying off
+      // `card.side`, since boss-pile cards are also side: "review" but must stay unrotated.
+      // Value is quarter-turns (0/1/2/3), not degrees -- bga-cards' own createCardElement does
+      // `rotation * 90deg` and swaps the card's effective width/height whenever the value is
+      // odd ("lying") -- confirmed by reading the actual library source (bga-cards.esm.js),
+      // not just the .d.ts, after passing 90 directly here produced no visible rotation at all.
+      getCardRotation: (card) => card.rotation ?? 0,
     });
 
     // Hand cards (a player's own numbered work cards): visibility is genuinely conditional --
@@ -341,20 +368,69 @@ export class Game {
     });
   }
 
+  // Builds the two boss-pile Stocks and the two pending-order/pending-review single-card slots
+  // (docs/loaf-phase5-plan.md §7), then seeds all four from the initial gamedatas. Must run
+  // after the containing HTML (setup(), above) exists -- Stock constructors need a real element.
+  setupRoundCardStocks(gamedatas) {
+    this.pendingOrderStock = new this.BgaCards.SlotStock(this.roundCardsManager, document.getElementById("pending-order-card"), {
+      slotsIds: [0],
+      mapCardToSlot: () => 0,
+    });
+    this.pendingReviewStock = new this.BgaCards.SlotStock(this.roundCardsManager, document.getElementById("pending-review-card"), {
+      slotsIds: [0],
+      mapCardToSlot: () => 0,
+    });
+    this.bossHappyStock = new this.BgaCards.LineStock(this.roundCardsManager, document.getElementById("boss-happy-pile"));
+    this.bossAngryStock = new this.BgaCards.LineStock(this.roundCardsManager, document.getElementById("boss-angry-pile"));
+
+    this.pendingOrderStock.addCard({ id: gamedatas.currentOrderCardId, type: gamedatas.currentOrderCardType, side: "order" });
+    this.pendingReviewStock.addCard({
+      id: gamedatas.currentReviewCardId,
+      type: gamedatas.currentReviewCardType,
+      side: "review",
+      rotation: 1, // quarter-turns, not degrees -- bga-cards does rotation * 90deg internally
+    });
+    // bossHappy/bossAngry are PHP-Deck-shaped keyed-by-id objects, not arrays -- Object.values()
+    // per the documented gotcha (docs/loaf-phase5-plan.md §4 step 12). Every filed card resolved
+    // via its review side regardless of which pile it's in (that's how it got filed at all), so
+    // `side: "review"` is fixed here, not per-card.
+    this.bossHappyStock.addCards(Object.values(gamedatas.bossHappy).map((card) => ({ ...card, side: "review" })));
+    this.bossAngryStock.addCards(Object.values(gamedatas.bossAngry).map((card) => ({ ...card, side: "review" })));
+  }
+
   // Positions a round-card element's background on the correct sprite sheet/tile for its
-  // card_type + side. `card` must carry `card_type` (e.g. "basic_01") and `side`
-  // ("order"|"review") -- see docs/loaf-phase5-plan.md §7's pending-order/review-card notes for
-  // where that data comes from.
+  // type + side, and attaches a hover tooltip showing the same card larger (the zoom-quality
+  // sheet, docs/loaf-phase5-plan.md §4 step 5) -- the "generic hover tooltip instead of a
+  // custom zoom overlay" decision, §7. `card` must carry `type` (e.g. "basic_01", matching the
+  // Deck component's own field name -- not `card_type`) and `side` ("order"|"review").
   setupRoundCardFrontDiv(card, div) {
-    const sheet = card.side === "order" ? "order-sheet.jpg" : "review-sheet.jpg";
-    const index = ROUND_CARD_SPRITE_INDEX[card.card_type];
+    const { sheet, zoomSheet, x, y } = this.roundCardSpritePosition(card);
     div.style.backgroundImage = `url(${this.bga.images.getImgUrl(sheet)})`;
     div.style.backgroundSize = `${ROUND_CARD_SHEET_COLS * 100}% ${ROUND_CARD_SHEET_ROWS * 100}%`;
-    div.style.backgroundPositionX = spritePositionPercent(index % ROUND_CARD_SHEET_COLS, ROUND_CARD_SHEET_COLS);
-    div.style.backgroundPositionY = spritePositionPercent(
-      Math.floor(index / ROUND_CARD_SHEET_COLS),
-      ROUND_CARD_SHEET_ROWS,
+    div.style.backgroundPositionX = x;
+    div.style.backgroundPositionY = y;
+
+    // Zoom tooltip: same sprite-position math, pointing at the higher-resolution sheet, shown
+    // at 250x348 (half the source's 500x696 -- downscaled, not upscaled, stays crisp) rather
+    // than full size, so it reads as a "closer look" popup, not a full-screen takeover. Folding
+    // in the resolved review-effect's text (notif_reviewEffectApplied) is a follow-up, not done
+    // here yet -- this tooltip is visual-only for now.
+    this.bga.gameui.addTooltipHtml(
+      div.id,
+      `<div style="width:250px;height:348px;background-image:url(${this.bga.images.getImgUrl(zoomSheet)});` +
+        `background-size:${ROUND_CARD_SHEET_COLS * 100}% ${ROUND_CARD_SHEET_ROWS * 100}%;` +
+        `background-position:${x} ${y};border-radius:8px;"></div>`,
     );
+  }
+
+  roundCardSpritePosition(card) {
+    const index = ROUND_CARD_SPRITE_INDEX[card.type];
+    return {
+      sheet: card.side === "order" ? "order-sheet.jpg" : "review-sheet.jpg",
+      zoomSheet: card.side === "order" ? "zoom-order.jpg" : "zoom-review.jpg",
+      x: spritePositionPercent(index % ROUND_CARD_SHEET_COLS, ROUND_CARD_SHEET_COLS),
+      y: spritePositionPercent(Math.floor(index / ROUND_CARD_SHEET_COLS), ROUND_CARD_SHEET_ROWS),
+    };
   }
 
   // `card` must carry `color` + `value` (0-11) -- the front face for that player-colored work
@@ -422,9 +498,22 @@ export class Game {
     });
   }
 
-  // Matches Game.php's `roundStart` notification (RoundStart state).
-  async notif_roundStart(_args) {
-    // TODO: animate the new order/review card reveal once real art is wired in (Phase 5).
+  // Matches Game.php's `roundStart` notification (RoundStart state). Refreshes both pending
+  // slots from scratch rather than trying to animate the order-card sliding into the review
+  // slot (the flip-mechanic card is the same physical card, but showing a different face
+  // entirely, not a simple front/back flip) -- correctness over animation finesse for this
+  // pass, docs/loaf-phase5-plan.md §7. `pendingReviewStock` is already empty by the time this
+  // fires (moved out in notif_roundResolved below), so removeAll() there is a no-op safety net.
+  async notif_roundStart(args) {
+    await this.pendingOrderStock.removeAll();
+    await this.pendingReviewStock.removeAll();
+    await this.pendingOrderStock.addCard({ id: args.orderCardId, type: args.orderCardType, side: "order" });
+    await this.pendingReviewStock.addCard({
+      id: args.reviewCardId,
+      type: args.reviewCardType,
+      side: "review",
+      rotation: 1, // quarter-turns, not degrees -- bga-cards does rotation * 90deg internally
+    });
   }
 
   // Matches Game.php's `playerCommitted` notification (PlayCards::actCommitCard). No card
@@ -448,7 +537,7 @@ export class Game {
 
   // Matches Game.php's `roundResolved` notification (ResolveRound).
   async notif_roundResolved(args) {
-    // TODO: reveal animation for all played cards once real art is wired in (Phase 5).
+    // TODO: reveal animation for all played hand cards once §8 is built (Phase 5).
     const element = document.getElementById(
       args.bossPile === "happy" ? "boss-happy-count" : "boss-angry-count",
     );
@@ -458,6 +547,15 @@ export class Game {
     if (element) {
       element.textContent = Number(element.textContent) + args.weight;
     }
+
+    // Moves the actual card (with animation) from the pending-review slot into the pile it
+    // just resolved into -- `fromStock` automatically removes it from pendingReviewStock, so
+    // that slot is already empty by the time the next notif_roundStart fires.
+    const targetStock = args.bossPile === "happy" ? this.bossHappyStock : this.bossAngryStock;
+    await targetStock.addCard(
+      { id: args.reviewCardId, type: args.reviewCardType, side: "review" },
+      { fromStock: this.pendingReviewStock },
+    );
   }
 
   // Matches Game.php's `cardPlayedRevealed` notification (ResolveRound) -- what each player

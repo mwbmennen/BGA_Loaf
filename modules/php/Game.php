@@ -136,6 +136,25 @@ class Game extends \Bga\GameFramework\Table
         $result['currentRound'] = (int) $this->bga->globals->get(GLOBAL_CURRENT_ROUND, 0);
         $result['currentOrderAverage'] = (int) $this->bga->globals->get(GLOBAL_CURRENT_ORDER_AVERAGE, 0);
 
+        // The currently-revealed review/order cards, for the initial page load / reconnect case
+        // -- RoundStart's own 'reviewCardRevealed'/'roundStart' notifications carry the same
+        // card_id/card_type for the live-push case, same "setup + notification" dual-exposure
+        // pattern already used for bossHappyWeight/bossAngryWeight. The order card is re-derived
+        // from round_card directly (lowest card_location_arg still in 'deck') rather than a new
+        // persisted global, matching this codebase's existing "recompute rather than track
+        // redundant state" discipline (docs/loaf-phase5-plan.md §7).
+        $result['currentReviewCardId'] = (int) $this->bga->globals->get(GLOBAL_CURRENT_REVIEW_CARD_ID);
+        $result['currentReviewCardType'] = $this->getUniqueValueFromDb(
+            "SELECT `card_type` FROM `round_card` WHERE `card_id` = {$result['currentReviewCardId']}"
+        );
+        $result['currentOrderCardId'] = (int) $this->getUniqueValueFromDb(
+            "SELECT `card_id` FROM `round_card` WHERE `card_location` = 'deck' " .
+                "ORDER BY `card_location_arg` ASC LIMIT 1"
+        );
+        $result['currentOrderCardType'] = $this->getUniqueValueFromDb(
+            "SELECT `card_type` FROM `round_card` WHERE `card_id` = {$result['currentOrderCardId']}"
+        );
+
         // Boss piles: filed review cards are public once revealed, per the physical rules
         // ("slide it under the boss card so that only the effect part is visible").
         $happyCards = $this->roundCards->getCardsInLocation('review_happy');

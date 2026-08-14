@@ -41,6 +41,31 @@
 
 /********* You can start writing your CSS below this line: **********/
 
+/* Pending order/review card display (docs/loaf-phase5-plan.md §7): the current review card
+   sits to the right of the current order card, rotated 90deg -- presentation only, no
+   game-state meaning. The rotation itself is applied by bga-cards' own getCardRotation
+   (modules/js/Game.js), not a CSS transform here -- the library needs to know the real
+   rotation for its own positioning/animation math, a transform layered on top of that would
+   fight it instead of cooperating with it. Deliberately no fixed width/height on the
+   containers below -- bga-cards already swaps the rotated card's own effective width/height
+   internally (confirmed by reading its source, not guessed), so a container size hardcoded
+   here would only risk fighting that instead of just letting it size itself.
+*/
+#pending-cards {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    margin-bottom: 12px;
+}
+
+#pending-order-card,
+#pending-review-card {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
 
 /*
     Example of CSS sprites (a black token and a white token, 20x20px each, embedded in the same "tokens.png" 40x20px image):
