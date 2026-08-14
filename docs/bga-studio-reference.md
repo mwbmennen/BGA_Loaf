@@ -861,6 +861,17 @@ list with a zero-padded loop instead (`for i in $(seq -f "%02g" 1 64); do ...`),
 what `tools/build-sprite.sh` already does — don't reintroduce the brace-expansion version
 when testing commands ad hoc.
 
+**Third gotcha, confirmed live: `montage` needs `-font` on *every* call, even ones with no
+visible label.** `montage` renders a per-tile filename label by default and attempts the
+font lookup regardless of grid size or whether any label ends up legible/visible — on a
+fresh ImageMagick install (`brew install imagemagick`) its own font database can be empty
+even though the system has fonts, so the very first call missing `-font <real-font-path>`
+(e.g. `/System/Library/Fonts/Helvetica.ttc` on macOS) fails outright with
+`montage: unable to read font`. This bit a small 6-tile sheet with no readable label at that
+grid size, not just the large labeled sheets — the assumption "this one's too small for the
+label to matter" is not a safe reason to skip the flag. Pass `-font` unconditionally on every
+`montage` invocation in a build script, not just the ones where a label is expected to show.
+
 ---
 
 ## 6. Debugging in BGA Studio

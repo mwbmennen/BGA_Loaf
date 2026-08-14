@@ -27,14 +27,14 @@ not on inventing new data flows:
 - **`getAllDatas()` already returns everything needed to render the board**: weighted boss-pile
   counts (`bossHappyWeight`/`bossAngryWeight`), the actual filed card lists keyed by card id
   (`bossHappy`/`bossAngry`, including `card_type`), per-player `handCount`, and the current
-  player's own `myHand` values. No new PHP fields are anticipated for anything in this plan.
+  player's own `myHand` values. No new PHP fields are anticipated beyond §7's small
+  `card_type`-exposure addition.
 - **Every user-facing string is already wrapped** in `clienttranslate()` (PHP) or `_()` (JS),
   per the standing rule followed since Phase 1 — Phase 5 has no backlog of bare strings to
-  retrofit, only an audit to confirm (§10) plus wrapping whatever new strings it introduces.
+  retrofit, only an audit to confirm (§11) plus wrapping whatever new strings it introduces.
 - **`ReviewEffectDescription`** (Phase 4, `modules/php/Core/ReviewEffectDescription.php`) is
-  the single source of truth for a review effect's target/amount text — if Phase 5 wants a
-  richer visual effect description (tooltip, icon+label), it reads the same effect array
-  structure this class already consumes; no duplicate parsing needed.
+  the single source of truth for a review effect's target/amount text — §7's hover tooltip
+  reads the same string this class already produces for the game log, no duplicate parsing.
 - **The reputation-bonus stepped table (Phase 3) matches the physical board exactly** — see §3
   below. The numbers Phase 3 transcribed from a photo are confirmed correct against the actual
   board scan, and that scan is now the direct visual reference for where to place track
@@ -43,23 +43,45 @@ not on inventing new data flows:
   (`docs/card-scans/`, `docs/board-scan/`) — every card's art is fully baked per
   `(card_type, side)`, with no icon-compositing system to build client-side. "Which image to
   show" is just `card_type` + which side resolved, both already known server-side today.
+- **`gamedatas.bossHappy`/`bossAngry`/`myHand` are already exactly the PHP-Deck-shaped,
+  keyed-by-id map data that `bga-cards` (§2) has a documented gotcha about.** Worth flagging
+  now, before any code is written: BGA's own `bga-cards` documentation warns that "the default
+  db accessor creates a map object rather than an array, which does not work with `addCards`,"
+  requiring `array_values()` (PHP) or `Object.values()` (JS) first. This is the *same*
+  underlying PHP shape `docs/bga-template-upstream-notes.md` already flagged once for a
+  different reason (`getCardsInLocation()`'s `.length` gotcha) — two independent gotchas from
+  the same root cause, worth remembering together.
 
 ## 2. Explicit scope boundary
 
 **In scope for Phase 5:**
 
+- **Adopt `bga-cards` + `bga-animations`** — BGA's official ESM card-rendering/animation
+  libraries (confirmed via `en.doc.boardgamearena.com/BgaCards`) — for all card display and
+  animation, replacing the plain-DOM `insertAdjacentHTML` approach Phases 1–4's placeholder
+  client used. Covers boss-pile cards, the pending order/review cards, the player's own hand,
+  commit/reveal, and the advanced-effect card choices — §4, §7, §8, §9.
+- A per-card **hover tooltip showing a larger version of the card** (decided: a generic hover
+  tooltip via `bga-cards`' own `addTooltipHtml` hook, not a custom click-to-zoom overlay) — §4,
+  §7.
+- **Adopt `bga-zoom`** — BGA's separate, standard whole-board zoom control
+  (`en.doc.boardgamearena.com/BgaZoom`, `BgaZoom.Manager`). This is genuinely standard,
+  expected BGA functionality (most games ship it), distinct from and complementary to the
+  per-card tooltip above — one shows a single card bigger on hover, the other scales the whole
+  board so a player can zoom in/out and pan a busy table. Both are in scope — §4, §6.
 - An image asset pipeline: resize/compress/sprite the raw scans into `img/`, respecting BGA's
   own constraints (`img/README`'s "fewer than 10 files, no file larger than 4 Mb," the CSS
-  sprite technique) — §4.
+  sprite technique), now including a second "zoom-quality" tier feeding the per-card tooltip —
+  §4.
 - Real board rendering: a reputation track with positioned player tokens, boss piles showing
-  actual filed card art with a fraction-to-5 indicator — §5, §6.
-- Real hand/commit/reveal: the player's own hand shown as clickable card art (not a text button
-  list), and a simultaneous reveal animation once all cards are played — §7.
-- The advanced-effect interactive UI (`discard_choice`/swap) reusing the same hand-card
-  component, with ineligible cards visibly distinguished — §8.
+  actual filed card art with a fraction-to-5 indicator — §5, §7.
+- Real hand/commit/reveal: the player's own hand as a `bga-cards` `HandStock`, and a
+  simultaneous reveal animation once all cards are played — §8.
+- The advanced-effect interactive UI (`discard_choice`/swap) reusing the same `HandStock`
+  component, with ineligible cards visibly distinguished — §9.
 - A real `loaf.css` layout pass — the file is still the blank scaffold template today.
-- `console.log` cleanup and a translation-string audit (verification, not new backlog — §10).
-- Sound: **stretch-only**, not a blocking deliverable — §9.
+- `console.log` cleanup and a translation-string audit (verification, not new backlog — §11).
+- Sound: **stretch-only**, not a blocking deliverable — §10.
 
 **Explicitly out of scope:**
 
@@ -67,7 +89,7 @@ not on inventing new data flows:
   PHPUnit-tested behavior — if a visual need seems to require new logic, the right answer is
   either data the client already has (§1) or a display-only computation done entirely
   client-side, never a rules change. This is the first phase where "the Core PHPUnit diff is
-  empty" is itself a success criterion, not just an assumption (§11).
+  empty" is itself a success criterion, not just an assumption (§12).
 - **Studio playtesting, zombie-mode QA, edge-case QA (2-player minimum, all-fired ending,
   etc.)** — Phase 6, per `docs/loaf-implementation-plan.md` §7.
 - **New game options** — polish needs none.
@@ -84,21 +106,38 @@ this plan rather than assumed from filenames:
 
 1. **`docs/card-scans/` has exactly 48 files** — 24 card types (`basic_01`...`basic_12`,
    `advanced_01`...`advanced_12`) × `_order`/`_review` suffixes, matching
-   `RoundCardData::TYPES`'s keys exactly. Each is a `747×1040` PNG, print resolution, ~1MB+
-   apiece, **49MB total** for the folder — far too large and far too numerous to ship as-is
-   per `img/README`'s own guidance (fewer than 10 files, none over 4MB). Every card's art is
-   fully rendered already (icons, numbers, flavor art baked in) — no compositing needed,
-   `card_type` + resolved side is a direct filename lookup, not a data-model problem.
-2. **No art exists yet for a player's personal work-card hand** (12 cards per player, values
-   0–11, "in their color" per the rules). Not scanned or photographed at this time, unlike the
-   round-card deck, which got a full photo-driven transcription pass — confirmed by inspecting
-   both scan folders directly: `docs/card-scans/` only contains round cards, and
-   `docs/board-scan/` only contains two files, both of which are the *same* shared
-   reputation-track board (see next point), not a distinct player mat. **Decision (updated)**:
-   hand art is coming later, as a separate fast-follow — not fabricated now, and not blocking
-   Phase 5. Ship a plain CSS placeholder card (the player's BGA-assigned color as background,
-   the value as text) for this phase, built so the eventual real art is a drop-in swap, not a
-   rework — see §4 step 6.
+   `RoundCardData::TYPES`'s keys exactly. Each was `747×1040` PNG, print resolution, ~1MB+
+   apiece, **49MB total** for the folder when first inspected — far too large and far too
+   numerous to ship as-is per `img/README`'s own guidance (fewer than 10 files, none over 4MB).
+   **Update: being replaced with JPG versions, resized to ~600×836px, not kept at print
+   resolution.** Consistent with §4 step 3's JPEG decision for the pipeline's own output, and
+   removes a PNG→JPEG conversion step from the pipeline entirely for these sources (zero-padded
+   naming convention/aspect ratio expected to stay the same, only format + size change).
+   **~600×836 specifically, not smaller**: the pipeline's largest downstream tier is the
+   500×696 zoom sheet (§4 step 5) — the source must stay at or above that, or the zoom tier ends
+   up upscaled and blurry (you can always downscale further, never upscale without quality
+   loss). ~600×836 gives a little headroom above 500×696 without carrying unnecessary
+   print-resolution weight — nothing downstream ever needs more than 500×696, so anything past
+   that margin is wasted size for no benefit. At that size, one card lands around ~150KB JPEG
+   q90 (tested), so all 48 replacement files together land around **~7MB total**, versus the
+   original 49MB. Every card's art is fully rendered already (icons, numbers, flavor art baked
+   in) — no compositing needed, `card_type` + resolved side is a direct filename lookup, not a
+   data-model problem.
+2. **Update: real work-card (hand) art now exists — no longer a CSS placeholder/fast-follow.**
+   Originally not scanned or photographed at all (unlike the round-card deck's full
+   photo-driven transcription pass); since provided at `docs/card-scans/worker-cards/`, naming
+   `work_{color}_{00..11}.jpg` plus `work_{color}_back.jpg` — **78 files** (6 colors × (12
+   values + 1 back)). Directly inspected: all 78 confirmed `RGB` (not CMYK — passes §4 step 2's
+   preflight check), pixel-identical at `600×834` (right at the ~600×836 target size discussed
+   before any of it existed). Per the top-level plan's own "integrate real art directly rather
+   than building placeholder art first" instruction, this is now real pipeline work for *this*
+   phase (§4 step 10), not deferred — `HandStock`'s `setupFrontDiv` (§8) points at the real
+   sprite sheet from the start.
+   **The backs are color-specific, not one shared generic design** — confirmed via checksum
+   (all 6 `work_{color}_back.jpg` files differ) and visually (each is the same decorative tile
+   motif as the board's own background, §3 point 4, tinted to that player's color) — a real,
+   deliberate asset, not a placeholder, so `bga-cards`' `setupBackDiv` (§4 step 9's note) now has
+   real art to render too, not just a hypothetical.
 3. **`docs/board-scan/board.png` (3313×1040 PNG) and `LOAF-player-board.jpg` (3482×1214 JPEG)
    are the same board content** — the JPEG is a print-proof copy with crop-mark registration
    targets in the corners, not a second distinct component. **Judgment call**: use `board.png`
@@ -117,13 +156,35 @@ this plan rather than assumed from filenames:
    the numbers already live in `RoundCardData`/`getAllDatas()`.
 6. **The 6 physical player colors are green, orange, purple, red, white, and yellow** —
    `docs/Loaf-English-rules.md`'s "6 baker figures (in each of 6 player colours)" confirms there
-   are exactly 6, matching this game's max player count, but doesn't name them; now recorded
-   and set as `gameinfos.jsonc`'s `player_colors` (`008000`/`ffa500`/`982fff`/`ff0000`/`ffffff`/
-   `ffe500`), replacing BGA's generic 12-color scaffold default. §5's reputation-track tokens
-   should use these exact colors via `player.color` (BGA already assigns from this list, no new
-   plumbing needed) — but **white needs a visible border/outline on the token**, since the
-   board's own background (§3 point 3's scan) is a light tan/cream in places, and a plain white
-   token would have poor contrast sitting on it.
+   are exactly 6, matching this game's max player count, but doesn't name them. Sampled directly
+   from `docs/player-tokens/*.png` and set as `gameinfos.jsonc`'s `player_colors` — `36A148`
+   (green), `E67524` (orange), `7A83BE` (purple), `961B20` (red), `EEF9FE` (white), `DEB725`
+   (yellow) — replacing BGA's generic 12-color scaffold default.
+7. **Correction: `docs/player-tokens/*.png` are real usable token art, not just
+   color-reference photos.** Opened directly and inspected (same discipline as every other
+   asset in this section): each is a `201×201` **transparent** PNG (confirmed RGB, not CMYK —
+   passes §4 step 2's preflight check already) of an illustrated baker-hat character in that
+   player's color, not a flat swatch. §5's reputation-track tokens should render this actual
+   art via a small sprite (§4), not a plain CSS-colored dot as originally planned — real assets
+   exist for this, so per the top-level plan's own "integrate them directly rather than
+   building placeholder art first" instruction, use them. **Consequence for the earlier
+   "white needs a border" note**: a plain CSS `border` doesn't apply cleanly to an irregular
+   silhouette like this — use a CSS `filter: drop-shadow(...)` instead, uniformly on every
+   token color (the art's own black linework helps, but a large white-filled shape still needs
+   more separation from a light tan board background than outline strokes alone provide).
+8. **Tested, not assumed: a 24-tile sprite sheet's real file-size ceiling is far above anything
+   the always-loaded board UI will ever need.** Built real 24-tile sheets (all review-side
+   cards, 6×4 grid, JPEG quality 90) at several sizes to find where BGA's 4MB-per-file limit
+   actually bites: 180×250px/tile → 525KB, 320×445 → 1.38MB, 600×835 → 3.61MB, 650×904 → 4.09MB
+   (over). So the real technical ceiling is **~600–620px tile width** if 24 cards must share
+   one sheet — far beyond the ~150–250px anything on the always-loaded board will render at on
+   a 740px-wide interface (§4 step 3's 180px decision already has 2x headroom over a generous
+   ~90px on-screen size). The 4MB-per-sheet rule is not the binding constraint for the
+   always-loaded board art; screen layout is. (The separate zoom-quality tier, §4 step 5, is
+   sized differently because it answers a different question — legibility on hover, not
+   board-layout real estate.) The same test applied to the 6 player tokens (§3 point 7) at a
+   much smaller, board-marker-appropriate size (64×64px/tile, PNG for alpha) totals **34KB for
+   all 6 combined** — trivial.
 
 ## 4. Asset pipeline
 
@@ -150,99 +211,343 @@ immediately with "unable to read font"** — Gelati's script pins
 
 Concrete steps:
 
-1. **Pre-flight every source image** before touching anything: `sips -g space` on each PNG/JPG
+1. **Wire up `bga-cards`, `bga-animations`, and `bga-zoom` before finalizing any sprite grid
+   math.**
+   ```javascript
+   const BgaAnimations = await importEsmLib('bga-animations', '1.x');
+   const BgaCards = await importEsmLib('bga-cards', '1.x');
+   const BgaZoom = await importEsmLib('bga-zoom', '1.x');
+   ```
+   All three confirmed real, versioned, ESM-importable libraries per BGA's own documentation —
+   pin `1.x` explicitly (same "write down exactly which library/version a plan depends on"
+   discipline as this project's existing "Framework API confidence note" habit). Download each
+   library's `.d.ts` file into the project root alongside the existing `bga-framework.d.ts` —
+   this repo already has a `tsconfig.json` set up for exactly this kind of type-checked JS.
+   This step comes first because §3's sprite-sheet grid layout needs to match `bga-cards`' own
+   background-position convention (next step), not the other way around.
+2. **Pre-flight every source image** before touching anything: `sips -g space` on each PNG/JPG
    to confirm `RGB`, not `CMYK` (the documented Firefox color-inversion risk), and confirm
    pixel-identical dimensions within any group of images destined for the same sprite sheet.
-2. **Downscale before compressing.** The 747×1040 print-resolution scans are far larger than
-   any BGA card component is actually rendered on screen (typically well under 200px wide) —
-   resize to a fixed target width (e.g. 180px, aspect-preserved → ~180×251) as the *first*
-   step, not an afterthought to recompressing at full size.
-3. **Build sprite sheets, not 48 loose files** (`img/README`'s own "fewer than 10 files... use
-   CSS sprites" guidance). A natural split: one sheet for the 24 order-side faces, one for the
-   24 review-side faces — recompute the exact grid/tile size once step 2's target dimensions
-   are locked in, and verify each sheet is under 4MB with `du -sh` after building, not by
-   assumption before.
-4. **Board**: `board.png` is a single background image, not a sprite-tiled asset — resize to
+3. **Downscale before compressing, decided target: 180×251px, JPEG.** The 747×1040
+   print-resolution scans are far larger than any BGA card component is actually rendered on
+   screen — 180px is 2x a ~90px on-screen display size (retina-ready, no blur), aspect-preserved
+   from the 747:1040 scan ratio. **Format decision**: JPEG, not PNG — rounded card corners are
+   done with CSS (`border-radius` + `overflow: hidden`) on the element wrapping each card image,
+   not baked into per-tile alpha transparency. This was a deliberate trade-off: baking rounded
+   corners into the art would require PNG (and real per-pixel alpha, since these are painted
+   card faces, not solid shapes — no cheap PNG-8 palette trick available), landing meaningfully
+   bigger than JPEG even after `pngquant`-style lossy compression, for a visual result the CSS
+   approach gets identically with one shared rule reused across every card. JPEG quality ~90 at
+   this size should land each card face around 15–30KB.
+4. **Build the small display sprite sheets, not 48 loose files** (`img/README`'s own "fewer
+   than 10 files... use CSS sprites" guidance). One JPEG sheet for the 24 order-side faces, one
+   JPEG sheet for the 24 review-side faces, using step 3's locked-in 180×251 tile size — verify
+   each sheet is under 4MB with `du -sh` after building, not by assumption before.
+5. **Build a second, zoom-quality tier feeding the per-card hover tooltip (§2, §7):
+   500×696px/tile, JPEG, kept in its own separate sheets.** Tested directly (same 6×4-grid,
+   quality-90 method as §3 point 7): a 24-tile sheet at this size totals **2.8MB** — safely
+   under the 4MB ceiling, with real headroom. Deliberately kept in *separate* sheets from step
+   4's small display sheets (`zoom-order.jpg`/`zoom-review.jpg`, not merged in), since they're
+   only fetched when a tooltip actually renders, not on every page load — no reason to add that
+   weight to the always-loaded board. (This tier is unrelated to §6's `bga-zoom` whole-board
+   control — that scales whatever's already rendered, it doesn't need its own image asset.)
+6. **Build the player-token sprite sheet: 6 tiles, 64×64px, PNG (alpha required).** Unlike
+   round cards, these need real transparency — an irregular chef-hat silhouette, not a
+   rectangle, so there's no CSS-corner-rounding equivalent trick available here; PNG is the
+   right call for this one asset, not JPEG. Tested directly: a 6-tile sheet at this size totals
+   **34KB** — trivial. Source is `docs/player-tokens/{color}.png` (§3 point 7), already
+   confirmed RGB and pixel-identical (201×201 each). Total image inventory across every step in
+   this section, including the hand-card sheets (step 10): 2 small round-card sheets + 2
+   round-card zoom sheets + 1 token sheet + 1 hand-card display sheet + 2 hand-card zoom sheets +
+   `board.png` = **9 files**, still under `img/README`'s "fewer than 10" guidance, though with
+   less margin than before — worth keeping in mind before adding any further sheet.
+7. **Sprite index mapping.** `bga-cards`' documented convention keys sprite position off a
+   numeric index (`div.style.backgroundPositionX = calc(100% / N * (index - offset))`), but
+   this game's card identity is a *string* (`card_type`, e.g. `"basic_01"`) — build a small,
+   stable, ordered lookup (`basic_01`→0, ..., `basic_12`→11, `advanced_01`→12, ...,
+   `advanced_12`→23) on the client, matching the exact tile order `tools/build-sprite.sh`'s
+   zero-padded loop produces (step 11) — the index must come from this lookup, never parsed out
+   of the `card_type` string itself, so the two stay in sync by construction, not convention.
+   (Tokens, step 6, don't need this — there are only 6, keyed directly by `player.color`.) Hand
+   cards (step 10) need a similar lookup, but a two-part one: a `(color, value)` → index-within-
+   `hand-sheet.jpg` mapping for the display/back tier, plus a separate `color` → which-zoom-sheet
+   (`zoom-hand-1.jpg` vs `zoom-hand-2.jpg`) + index-within-that-sheet mapping for the zoom tier,
+   since that tier is split by color group rather than being one sheet like the round cards.
+8. **Board**: `board.png` is a single background image, not a sprite-tiled asset — resize to
    its actual on-screen rendered width (a fraction of the 3313px scan), recompress, done.
-5. **Card back**: no back-face scan exists. Per `docs/loaf-implementation-plan.md` §1, the
+9. **Card back**: no back-face scan exists. Per `docs/loaf-implementation-plan.md` §1, the
    order side is described as "still face-up from setup," suggesting the round-card deck may
    never need a hidden-face rendering at all — confirm this against `docs/Loaf-English-rules.md`
    before building anything; if a back genuinely turns out to be needed, it's a simple solid
-   design, not something requiring a new scan.
-6. **Player hand-card art**: no scan exists yet (§3 point 2) — build via CSS for this phase,
-   skip the sprite pipeline entirely for now. Since real art is coming later as a separate
-   fast-follow, keep the swap cheap: render each hand card from a single component keyed only
-   by `value` + `player.color` (e.g. a `.work-card` element with `data-value`/a color-derived
-   class), with no other code path assuming "hand cards are CSS-only" — when real art lands,
-   it should be a matter of pointing that one component at an image (or sprite tile) instead of
-   a solid-color background, not restructuring the hand/commit/reveal DOM built in §7.
-7. **Adapt `tools/build-sprite.sh` from the Gelati project**
-   (`/Users/rianmennen/Website/BGA/Gelati/BGA_Gelati/tools/build-sprite.sh`) rather than writing
-   one from scratch — copy it in, then swap Gelati's `tiles`/`orders`/`parts` categories for
-   L'Oaf's own: a 24-tile `montage` for the order-side faces, a second 24-tile `montage` for the
-   review-side faces (grid dimensions/`geometry` recomputed for step 2's target size, not
-   copied verbatim from Gelati's own 300×150/300×300 tile sizes), keeping the zero-padded `seq`
-   loop, the `MONTAGE_FONT` pin, and the `check_size()` 4MB guard as-is. `tools/` is already in
-   `.vscode/sftp.json`'s ignore list per `CLAUDE.md` — confirm it stays excluded, since this is
-   a dev-time build script, not a runtime asset BGA Studio needs to serve.
+   design, not something requiring a new scan. (If needed, it also becomes what `bga-cards`'
+   `setupBackDiv` renders — see §7's note on `isCardVisible`.)
+10. **Player hand-card art: real art now provided (§3 point 2), tested and sprited like every
+    other asset — no longer CSS-only.** Source: `docs/card-scans/worker-cards/`, 78 files
+    (72 fronts + 6 color-specific backs). Two sheets, both tested directly against the real
+    files (not estimated):
+    - **Small display tier, fronts + backs combined: 78 tiles, 180×251, 13×6 grid, JPEG q90 —
+      `img/hand-sheet.jpg`, tested at 1.38MB.** Backs are display-quality only (a repeating
+      tile pattern has no fine detail worth a hover-zoom), so they're only in this tier, not
+      duplicated into a zoom sheet.
+    - **Zoom tier, fronts only, split by color into two sheets of 36 tiles each (500×696, 6×6
+      grid, JPEG q90)** — a single 72-tile sheet measured at 6.15MB, over the 4MB ceiling, so it
+      needs splitting; grouped 3 colors per sheet rather than by value, both tested directly:
+      `img/zoom-hand-1.jpg` (green/orange/purple) at **3.02MB**, `img/zoom-hand-2.jpg`
+      (red/white/yellow) at **3.13MB** — a per-color split (6 sheets of ~1.05MB each) would also
+      work but costs 3 more files for no real benefit once the 3-colors-per-sheet grouping is
+      already safely under 4MB.
+    - Build order/grouping must be **explicit and deterministic** (an ordered loop over a fixed
+      color/value list), not a filesystem glob sorted alphabetically — a glob interleaves
+      `work_green_back.jpg` before `work_green_00.jpg` before `work_orange_...`, which is fine
+      for a one-off size test but would silently scramble the real sprite-index mapping (step 7)
+      if relied on for the actual build.
+    - `HandStock`'s `setupFrontDiv`/`setupBackDiv` (§8) point at these real sheets from the
+      start — no CSS-placeholder stage, no later swap-in needed, per the top-level plan's own
+      "integrate real art directly" instruction now that the art actually exists.
+11. **Done — `tools/build-sprite.sh` adapted from the Gelati project**
+    (`/Users/rianmennen/Website/BGA/Gelati/BGA_Gelati/tools/build-sprite.sh`), all **nine**
+    sheets (§4 asset manifest below has the final built sizes) built and verified. Correction to
+    an earlier assumption in this same step: the token sheet (step 6, PNG, `-background none`
+    instead of a JPEG quality flag) still needs `-font "$MONTAGE_FONT"` even though it renders
+    no visible per-tile label — `montage` attempts the label-rendering font lookup regardless of
+    grid size or whether a label ends up visible, and fails outright without it (confirmed live
+    while building this script: `montage: unable to read font` on the token call specifically,
+    which was the one call missing the flag). Apply `-font` to every `montage` invocation in
+    this script unconditionally, not just the ones expected to show readable labels. Every sheet
+    is built from an explicit, zero-padded, deterministically-ordered file list matching the
+    tile-order lookups (step 7), so the index mapping never drifts from what's actually in each
+    sheet. `tools/` is already in `.vscode/sftp.json`'s ignore list per `CLAUDE.md` — confirmed
+    it stays excluded, since this is a dev-time build script, not a runtime asset BGA Studio
+    needs to serve.
+12. **Two `bga-cards`-specific gotchas worth planning around before writing any code**, both
+    confirmed directly from BGA's own documentation:
+    - **PHP Deck map-vs-array casting** (§1's last bullet): `addCards()` rejects a PHP
+      associative/keyed-by-id array serialized as a JS object — cast with `array_values()`
+      server-side or `Object.values()` client-side before ever calling `addCards()`. Applies
+      directly to `bossHappy`, `bossAngry`, and `myHand`.
+    - **Integer-typed fields, sent as strings.** `bga-cards`' own sort/comparison helpers (e.g.
+      `BgaCards.sort`) assume numeric fields like `type`/`value` are real integers, but PHP
+      sends everything as a JSON string by default — the *exact same* "DB values come back as
+      strings" gotcha this project already got bitten by once in Phase 1
+      (`in_array($value, $dbResults, true)` silently rejecting valid moves, per
+      `docs/bga-template-upstream-notes.md`). Apply the same `array_map('intval', ...)`
+      discipline to any field `bga-cards` will sort or position by, particularly
+      `work_card.value`.
+
+### Asset manifest
+
+Consolidated reference for the steps above — source images (what must exist before the
+pipeline runs) and build outputs (what the pipeline produces into `img/`) are two different
+lists; don't confuse "I need to supply this" with "the script generates this."
+
+**Source images**
+
+| Asset | Location | Naming | Count | Size / format | Status |
+|---|---|---|---|---|---|
+| Round card scans (order side) | `docs/card-scans/order-cards/` | `{basic\|advanced}_{01..12}_order.jpg` | 24 | 600×834 JPEG, confirmed RGB | Provided |
+| Round card scans (review side) | `docs/card-scans/review-cards/` | `{basic\|advanced}_{01..12}_review.jpg` | 24 | 600×834 JPEG, confirmed RGB | Provided |
+| Board scan | `docs/board-scan/` | `board.png` | 1 | 3313×1040 PNG | Provided |
+| Player tokens | `docs/player-tokens/` | `{green\|orange\|purple\|red\|white\|yellow}.png` | 6 | 201×201 PNG, alpha | Provided |
+| Hand-card art (fronts) | `docs/card-scans/worker-cards/` | `work_{color}_{00..11}.jpg` | 72 | 600×834 JPEG (confirmed RGB, pixel-identical) | Provided |
+| Hand-card art (backs) | `docs/card-scans/worker-cards/` | `work_{color}_back.jpg` | 6 | 600×834 JPEG (confirmed RGB) — color-specific, not one shared design (§3 point 2) | Provided |
+| Round card back | *(TBD — may not be needed at all)* | TBD | TBD | TBD | **Conditional** — confirm against `docs/Loaf-English-rules.md` before commissioning anything, §4 step 9. (Not the same question as the hand-card back above, which is already resolved — this is specifically about the shared round-card deck.) |
+
+**Build outputs** (`img/`, generated by `tools/build-sprite.sh` from the sources above — not hand-created)
+
+| Sheet | Filename | Tiles | Tile size | Format | Grid | Size |
+|---|---|---|---|---|---|---|
+| Order display | `img/order-sheet.jpg` | 24 | 180×251 | JPEG q90 | 6×4 | 424KB (built) |
+| Review display | `img/review-sheet.jpg` | 24 | 180×251 | JPEG q90 | 6×4 | 559KB (built) |
+| Order zoom | `img/zoom-order.jpg` | 24 | 500×696 | JPEG q90 | 6×4 | 2.24MB (built) |
+| Review zoom | `img/zoom-review.jpg` | 24 | 500×696 | JPEG q90 | 6×4 | 2.72MB (built) |
+| Player tokens | `img/tokens.png` | 6 | 64×64 | PNG, alpha | 6×1 | 41KB (built) |
+| Board background | `img/board.png` | 1 (not tiled) | 740px wide (matches `gameinfos.jsonc`'s `game_interface_width.min` / §6's `autoZoom.expectedWidth`) | PNG | — | 267KB (built) |
+| Hand-card display | `img/hand-sheet.jpg` | 78 (72 fronts + 6 backs) | 180×251 | JPEG q90 | 13×6 | 1.37MB (built) |
+| Hand-card zoom, sheet 1 (green/orange/purple) | `img/zoom-hand-1.jpg` | 36 | 500×696 | JPEG q90 | 6×6 | 3.00MB (built) |
+| Hand-card zoom, sheet 2 (red/white/yellow) | `img/zoom-hand-2.jpg` | 36 | 500×696 | JPEG q90 | 6×6 | 3.11MB (built) |
+
+**All 9 sheets built and verified** — `tools/build-sprite.sh` (adapted from Gelati's, §4 step
+11) runs cleanly end-to-end, every sheet lands under the 4MB ceiling with real margin, and each
+was visually spot-checked (correct grid alignment, correct color/value in the right cell, token
+alpha transparency intact) — not just file-size-tested. Total `img/` file count: **9**, still
+under `img/README`'s "fewer than 10" guidance, but with only one file of margin left; think
+carefully before adding a tenth.
 
 ## 5. Board & reputation-track rendering
+
+Not part of the card-rendering libraries — the reputation track and its tokens aren't cards, so
+this stays plain DOM/CSS exactly as originally planned. (§6's whole-board zoom wraps this
+section's markup along with everything else, but doesn't change how it's built.)
 
 - Replace the `#boss-piles`/`#player-tables` `insertAdjacentHTML` scaffolding
   (`modules/js/Game.js:213-241`) with a real layout: the reputation-track board image (§4) as a
   background, with one token per player positioned via CSS along the −10..+10 rail, driven by
   `player.reputation` at setup and `notif_reputationChanged` live — the same event already
   wired, now moving a positioned element instead of overwriting text content.
-- Token color = `player.color`, a standard field BGA already supplies in `gamedatas.players` —
-  reuse directly, no new PHP data needed. Now that `gameinfos.jsonc`'s `player_colors` is the
-  6 real baker colors (§3 point 6) rather than BGA's generic default, tokens automatically match
-  the physical components — no color-mapping logic needed on the client either.
-- Give every token a visible border/outline regardless of color, not just as a white-specific
-  patch — the board's background (§3 point 3) shifts between a light tan and a darker olive
-  across the track, so any single flat token color risks blending into one half or the other.
-  This matters most for the white player (§3 point 6) but is worth applying uniformly rather
-  than special-casing one color.
+- **Token art = the real chef-hat token sprite (§3 point 7, §4 step 6), not a plain CSS-colored
+  dot.** `docs/player-tokens/*.png` turned out to be genuine, ready-to-use illustrated art, not
+  just color-reference photos — a background-image lookup keyed by `player.color` (one of the
+  6 sprite tiles, §4 step 6) replaces what was originally planned as a flat circle. Now that
+  `gameinfos.jsonc`'s `player_colors` is the 6 real baker colors (§3 point 6), the color→sprite
+  mapping is a direct 1:1 lookup, no translation layer needed.
+- Give every token a `filter: drop-shadow(...)` regardless of color, not just as a
+  white-specific patch — the board's background (§3 point 3) shifts between a light tan and a
+  darker olive across the track, so any single flat token color risks blending into one half or
+  the other. A CSS `border` doesn't work cleanly on this art's irregular silhouette the way it
+  would on a plain circle, hence `drop-shadow` instead (§3 point 7). This matters most for the
+  white player but is worth applying uniformly rather than special-casing one color.
 - Position math (percentage of track width per reputation point) is pure client-side CSS/JS,
-  no server involvement.
+  no server involvement. Using percentages rather than fixed pixels here also matters for §6:
+  it's what keeps token positions correct at every zoom level, not just 100%.
 
-## 6. Boss piles & review-card reveal
+## 6. Whole-board zoom (`bga-zoom`)
 
-- Replace the `${bossHappyCount} / 5` text counters with a real stack showing the actual filed
-  card's art on top — `gamedatas.bossHappy`/`bossAngry` already carry `card_type` per card
-  (keyed-by-id objects, per the already-documented Deck-component gotcha in
-  `docs/bga-template-upstream-notes.md`: use `Object.keys(...).length`/`Object.values(...)`,
-  never a bare `.length`). Resolve `card_type` + which side (success → Happy pile, fail →
-  Angry pile, same mapping `ResolveRound.php` already uses) to a sprite-sheet tile.
-- On `notif_roundResolved`, animate the just-filed card appearing on the correct pile, instead
-  of only bumping the counter text (the counter's weighted-increment logic, shipped in Phase
-  4's log-ordering fix, stays exactly as-is).
-- On `notif_reviewEffectApplied`, consider a transient highlight/tooltip on the just-filed card
-  showing the effect text — reuses the exact string the game log already receives via
-  `ReviewEffectDescription`, no new PHP data needed.
+BGA's standard accessibility zoom control — confirmed real and documented at
+`en.doc.boardgamearena.com/BgaZoom` — scales an entire game-area element, with its own on-screen
+zoom controls and an auto-fit-on-load option. This is standard, expected functionality across
+BGA games, and a genuinely different feature from §7's per-card hover tooltip (that shows one
+card bigger on hover; this scales the whole board so a player can zoom in/out and pan a busy
+table) — both are worth having, they solve different problems, not a choice between them.
 
-## 7. Hand, commit, and reveal animation
+```javascript
+this.boardZoom = new BgaZoom.Manager({
+    element: document.getElementById('game-board'), // wraps the whole board, not just the track
+    zoomControls: {
+        color: 'black',
+    },
+    localStorageZoomKey: 'loaf-zoom',
+    autoZoom: {
+        expectedWidth: 740, // matches gameinfos.jsonc's game_interface_width.min
+        minZoomLevel: 0.5,
+    },
+});
+```
 
-- Player's own hand: replace `PlayCards`' status-bar `addActionButton` list
-  (`modules/js/Game.js:71-77`) with real card visuals the player clicks directly, still calling
-  the same `actCommitCard` action — purely a rendering change over the existing `handValues`
-  array from `PlayCards::getArgs()`, no PHP change.
-- Commit: the selected card visually moves to a face-down "committed" slot instead of just
-  disabling the button list.
-- Reveal: `notif_cardPlayedRevealed` (§1) is exactly the data a simultaneous multi-card reveal
-  needs — flip every player's face-down card to show its value at that notification, ahead of
-  the reputation-change animation that already follows it in call order (mirrors the
-  cause-before-effect narrative-order fix already made server-side in Phase 4 — now applied
-  visually too, not just in the log).
+- Import alongside `bga-cards`/`bga-animations` in §4 step 1
+  (`await importEsmLib('bga-zoom', '1.x')`), same versioning/`.d.ts` discipline.
+- Wrap the **entire board** (reputation track, boss piles, pending order/review cards, hand,
+  player panels) in one container element for `BgaZoom.Manager` to target — not just §5's
+  reputation track in isolation.
+- `expectedWidth: 740` matches this project's own `game_interface_width.min` in
+  `gameinfos.jsonc` (already `740`) — the `autoZoom` config should reflect the actual board
+  width this game is designed for, not an arbitrary number copied from an example.
+- `localStorageZoomKey` persists each player's chosen zoom level across page reloads/sessions —
+  a real usability detail the library handles for free, worth using rather than resetting to a
+  default every load.
+- No interaction expected with `bga-cards`' sprite positioning (§4) — both rely on
+  percentage/relative CSS, which is exactly what stays correct under a zoom transform — but
+  worth a deliberate live check anyway (§13) rather than an assumption, given this is the first
+  time this project combines a CSS-transform-based zoom with sprite-positioned art.
 
-## 8. Advanced-effect interactive UI
+## 7. Boss piles & the pending order/review cards
 
-- `ResolveAdvancedEffect`'s action buttons (`modules/js/Game.js:130-136`) get the same
-  hand-card-visual treatment as §7's `PlayCards`, scoped to `eligibleValues` instead of the
-  full hand (already computed server-side — no change needed there). Ineligible cards in hand
-  should render grayed out/unclickable rather than simply being absent from a button list, so
-  the player can see their whole hand and understand *why* only some cards are valid choices.
+- **One `bga-cards` `Manager` for round cards**, covering both order-side and review-side card
+  objects (distinguished by a `side` field on each rendered card object, driving which sprite
+  sheet `setupFrontDiv` points at):
+  ```javascript
+  this.roundCardsManager = new BgaCards.Manager({
+      animationManager: this.animationManager,
+      type: 'loaf-round-card',
+      getId: (card) => card.id,
+      isCardVisible: (_card) => true, // round cards are always public -- see note below
+      setupFrontDiv: (card, div) => {
+          const index = ROUND_CARD_SPRITE_INDEX[card.card_type]; // §4 step 7's lookup
+          div.style.backgroundImage = `url(${imgUrl(card.side === 'order' ? 'order-sheet.jpg' : 'review-sheet.jpg')})`;
+          div.style.backgroundPositionX = `calc(100% / 6 * (${index % 6}))`;
+          div.style.backgroundPositionY = `calc(100% / 4 * (${Math.floor(index / 6)}))`;
+          this.bga.gameui.addTooltipHtml(div.id, buildZoomTooltipHtml(card)); // see below
+      },
+  });
+  ```
+  `isCardVisible` is defined explicitly and always returns `true` rather than relying on the
+  library's default (which reads `card.type`) — per `bga-cards`' own documented advice ("the
+  documentation suggests always defining a custom function for clarity"), and because order/
+  review cards genuinely are always public information in this game (unlike hand cards, §8),
+  so there's no ambiguity to leave implicit.
+- **Boss piles**: one `SlotStock`/`LineStock` each for `review_happy`/`review_angry`, seeded at
+  setup from `gamedatas.bossHappy`/`bossAngry` (cast via `Object.values()` per §4 step 12's
+  gotcha), appended to via `addCards()` on `notif_roundResolved` — replacing the
+  `${bossHappyCount} / 5` text counter's card-less display with the actual filed card art. The
+  counter's own weighted-increment logic (shipped in Phase 4's log-ordering fix) is untouched;
+  only what renders alongside it changes.
+- **Pending order/review card display (decided: show both, not just the filed pile).** Matching
+  the physical game — both the current order card (target side) and the current review card
+  (effect side) sit face-up on the table all round, not just once resolved/filed. Two more
+  single-card `SlotStock`s near the piles, updated via `addCards`/`removeCards` on `roundStart`.
+  **Requires a small PHP data-exposure addition, not currently present**: neither
+  `reviewCardRevealed` nor `roundStart` (`modules/php/States/RoundStart.php`) sends the card's
+  `card_type` today, only descriptive text/numbers — add `card_type` to both notifications'
+  args, plus the currently-revealed review/order card types to `getAllDatas()` (for the
+  initial page load / reconnect case, same "setup + notification" dual-exposure pattern already
+  used for `bossHappyWeight`/`bossAngryWeight`). This is a states-adapter data-exposure tweak
+  like that one, not a rules/Core change — still inside §2's scope boundary.
+- **Hover tooltip = the per-card "zoom" decision, concretely.** Every round-card's
+  `setupFrontDiv` calls `this.bga.gameui.addTooltipHtml(div.id, htmlContent)` (confirmed real
+  hook, per `bga-cards`' own usage example) with `htmlContent` being a small element styled with
+  the *zoom-quality* sheet (§4 step 5) at the same computed sprite index — a bigger, crisper
+  version of the same card, on hover, no custom lightbox/modal needed. Fold
+  `notif_reviewEffectApplied`'s effect text (`ReviewEffectDescription`'s string, already sent to
+  the log) into that same tooltip HTML — one tooltip answers both "what does this look like
+  bigger" and "what does it do," rather than two separate half-built mechanisms. (This is
+  independent of §6's `bga-zoom` whole-board control — a player can zoom the whole board out to
+  see everything, or hover one card to see it in detail; the two aren't mutually exclusive.)
+- **Async gotcha, worth testing deliberately, not discovering live**: `addCards()`/
+  `removeCards()` are documented as async (return Promises). Code that seeds a pile in `setup()`
+  and expects it populated synchronously on the very next line — e.g. to compute some derived
+  UI state — needs to `await` it first, per `bga-cards`' own documented caveat.
 
-## 9. Sound
+## 8. Hand, commit, and reveal animation
+
+- **`HandStock`** (purpose-built for player hands, per `bga-cards`' own component list) replaces
+  `PlayCards`' status-bar `addActionButton` list (`modules/js/Game.js:71-77`) — seeded from
+  `gamedatas.myHand` (cast via `Object.values()`/`array_values()` per §4 step 12's gotcha), each
+  card's `setupFrontDiv` points at `img/hand-sheet.jpg` (§4 step 10) via the `(color, value)`
+  sprite-index lookup (§4 step 7) and wires a click to the same `actCommitCard` action as
+  before — purely a rendering change over data `PlayCards::getArgs()` already returns, no PHP
+  change here.
+- **Card flip / privacy**: define `isCardVisible` explicitly for the hand-card `Manager` (unlike
+  round cards in §7, this one is genuinely conditional — a player's own hand is visible, an
+  opponent's isn't, and a committed-but-unrevealed card is face-down for everyone) rather than
+  leaving it at the library's default. `setupBackDiv` now has real art to render for the face-
+  down state (the color-specific back designs, §3 point 2, also in `img/hand-sheet.jpg`) instead
+  of a placeholder. This is where the existing hand/discard privacy guarantee
+  (`docs/loaf-open-questions.md` Q3) actually gets enforced client-side now that real card faces
+  (and backs) exist to hide behind.
+- **Commit**: `removeCards()`/`addCards()` between the `HandStock` and a face-down "committed"
+  `SlotStock`, using `bga-cards`' own move/flip animation instead of hand-building one.
+- **Reveal**: on `notif_cardPlayedRevealed` (§1), flip the committed card face-up (via
+  `isCardVisible`) for every player at once, ahead of the reputation-change animation that
+  already follows it in call order — mirrors the cause-before-effect narrative-order fix already
+  made server-side in Phase 4, now applied visually too. `bga-cards`' built-in animation support
+  (e.g. the `slideTo` pattern already shown in its own `VoidStock` workaround example) replaces
+  what would otherwise be hand-rolled animation timing.
+- **Real risk worth flagging up front, not discovering live**: `bga-cards`' own documented async
+  caveat — *"`addCards` is async while `setSelectableCards` is not. So if you add cards to your
+  hand in the `setup()` method, and try to set what is selectable in `onEnteringState()` — that
+  won't work properly, unless you also promisify the call"* — lands on exactly the fault line
+  this project has already been burned by **twice**: the Phase 1–2 `MULTIPLE_ACTIVE_PLAYER`
+  lifecycle saga (`docs/bga-template-upstream-notes.md`'s missing-`setAllPlayersMultiactive()`/
+  `_private`/`$activePlayerId`-vs-`$currentPlayerId` chain) and the separate
+  `onEnteringState`'s-`isCurrentPlayerActive`-can-be-stale entry right after it. Treat every
+  `addCards`/`removeCards` call a later hook depends on as needing an explicit `await`, and
+  test the same "does this work on a live push, not just on page load" scenario that caught
+  both earlier bugs — this is a new instance of an already-familiar risk category for this
+  project, not a fresh one.
+- `work_card.value` must be `intval`'d (already true server-side per Phase 1's own fix) before
+  any `bga-cards` sort/positioning math touches it — §4 step 12's second gotcha, same underlying
+  discipline as the original `in_array` fix, different call site.
+
+## 9. Advanced-effect interactive UI
+
+- The same `HandStock` component from §8 is reused for `ResolveAdvancedEffect`'s card choice
+  (`modules/js/Game.js:130-136`'s current button list), scoped to `eligibleValues` (already
+  computed server-side — no change needed there). Inside `setupFrontDiv`, toggle a CSS class
+  based on membership (`div.classList.toggle('ineligible', !eligibleValues.includes(card.value))`)
+  instead of building a separate button list — ineligible cards render dimmed/unclickable in
+  place, so the player sees their whole hand and understands *why* only some cards are choices,
+  rather than only ever seeing the eligible subset.
+
+## 10. Sound
 
 The top-level plan explicitly hedges this ("sound (if any)"), and no sound assets exist
 anywhere in this repo or the scanned physical components — the rules document never mentions
@@ -251,7 +556,7 @@ effect (e.g. a single reveal chime) is easy to source and wire through BGA's sta
 API — don't block Phase 5 completion on it, and don't invest scanning/commissioning effort
 into something with zero source material and zero rules-text justification.
 
-## 10. Translation-string and `console.log` audit
+## 11. Translation-string and `console.log` audit
 
 Not new work if the Phase 1–4 discipline held (every string already routed through
 `clienttranslate()`/`_()`) — this is a verification pass over existing code, plus wrapping
@@ -266,24 +571,27 @@ whatever Phase 5 itself introduces:
   last line already says "Remove before going to production!"; Phase 5 is the natural point to
   actually act on it now that the client is otherwise final.
 - Sweep every literal string Phase 5's *own* new UI code introduces (button labels, alt/ARIA
-  text, tooltips) for `clienttranslate()`/`_()` wrapping — new code is the actual risk here,
-  not the already-audited Phase 1–4 code.
+  text, tooltip content) for `clienttranslate()`/`_()` wrapping — new code is the actual risk
+  here, not the already-audited Phase 1–4 code.
 
-## 11. Testing plan
+## 12. Testing plan
 
 Phase 5 is client/asset work, not Core logic — the existing PHPUnit suite (99 tests as of
 Phase 4) is a **regression guard**, not something this phase adds new tests to:
 
 - `vendor/bin/phpunit` must stay green, and — more importantly per §2's scope boundary — the
-  diff touching `modules/php/Core/` for this phase should be **empty**. If it isn't, that's a
-  signal scope has crept into logic territory that belongs in an earlier phase, not client
-  polish.
+  diff touching `modules/php/Core/` for this phase should be **empty**. The only PHP touches
+  anticipated anywhere in this plan are §7's small `card_type`-exposure addition to
+  `RoundStart.php`/`getAllDatas()` — a states-adapter data-exposure tweak, same shape as
+  Phase 4's `bossHappyWeight` addition, not a rules change. If the diff touches
+  `modules/php/Core/` at all, that's a signal scope has crept into logic territory that belongs
+  in an earlier phase, not client polish.
 - No new automated tests are expected: there's no PHPUnit-testable surface in CSS layout,
-  sprite positioning, or animation timing. Correctness here is verified live (§12), the same
+  sprite positioning, or animation timing. Correctness here is verified live (§13), the same
   "functional client, no local test harness" situation every prior phase's `States/*` adapters
   already accepted for their own thin BGA-glue code.
 
-## 12. Live verification checklist (Studio)
+## 13. Live verification checklist (Studio)
 
 Same format as Phase 4's §8 — check items off in place as they're confirmed.
 
@@ -296,6 +604,26 @@ Same format as Phase 4's §8 — check items off in place as they're confirmed.
 - [ ] Hard-reload (`Cmd+Shift+R`) after every CSS/image sync — Studio aggressively caches CSS
       (already documented in `docs/bga-studio-reference.md`).
 
+### `bga-cards`/`bga-animations`/`bga-zoom` adoption
+
+- [ ] All three libraries import cleanly (`importEsmLib('bga-cards', '1.x')`/`'bga-animations'`/
+      `'bga-zoom'`) with no console errors, and their `.d.ts` files are present for
+      IDE/type-checking (§4 step 1).
+- [ ] `addCards()`/`removeCards()` async timing verified live across a real state transition
+      (not just initial page load) — the documented async-vs-`onEnteringState` risk (§8),
+      tested the same "live push, not page load" way the earlier `MULTIPLE_ACTIVE_PLAYER` bugs
+      were caught.
+- [ ] `bossHappy`/`bossAngry`/`myHand` render correctly from their PHP-Deck-shaped map data —
+      not silently empty from a rejected map object (§4 step 12's `array_values()` gotcha).
+- [ ] Card flip (`isCardVisible`) correctly keeps opponent hand cards and any not-yet-revealed
+      committed card face-down until the right notification — a privacy regression check on top
+      of the existing "opponent hands show count only" guarantee.
+- [ ] `bga-zoom`'s controls appear, actually zoom the whole board (not just part of it), and
+      `localStorageZoomKey` persists the chosen level across a page reload.
+- [ ] Card art stays correctly positioned/aligned at zoom levels other than 100% — confirms
+      §6's "percentage-based positioning should just work under a transform" assumption instead
+      of leaving it as one.
+
 ### Board & reputation track
 
 - [ ] All player counts (2–6) show a token in the visually correct starting position
@@ -303,17 +631,25 @@ Same format as Phase 4's §8 — check items off in place as they're confirmed.
 - [ ] A token moves to the correct new track position immediately on `reputationChanged`, no
       refresh needed.
 - [ ] Token color matches each player's assigned BGA color.
+- [ ] All 6 token sprites (real chef-hat art, not a placeholder dot) render correctly and stay
+      legible against both the light-tan and darker-olive sections of the board background,
+      including the white token specifically.
 
-### Boss piles
+### Boss piles & pending cards
 
 - [ ] The correct card art (matching `card_type` + the side that actually resolved) appears on
       the correct pile the instant a round resolves.
 - [ ] The weighted counter (already correct as of Phase 4) still reads correctly once real card
       art replaces the plain text counter.
+- [ ] The pending order card and pending review card both update correctly at the start of every
+      new round, matching what the `roundStart`/`reviewCardRevealed` log text already says.
+- [ ] Hovering any round card shows the zoom-quality tooltip, correctly positioned/cropped and
+      matching the card underneath (not a stale or off-by-one sprite index), including the
+      review effect's description text for cards where that applies.
 
 ### Hand / commit / reveal
 
-- [ ] Own hand renders as real card art, one visual per value currently in hand.
+- [ ] Own hand renders as real card art via `HandStock`, one visual per value currently in hand.
 - [ ] Clicking a card commits it (same `actCommitCard` action as before, new visual only).
 - [ ] All players' played cards reveal together (simultaneously or in fast sequence) once every
       player has committed, and the revealed values match what the game log already shows.
@@ -337,18 +673,24 @@ Same format as Phase 4's §8 — check items off in place as they're confirmed.
 - [ ] Update `docs/loaf-remarks.md` with a "Phase 5 live verification" entry, same convention
       as every prior phase.
 
-## 13. Suggested implementation order
+## 14. Suggested implementation order
 
-1. Asset pipeline first (§4) — nothing else in this phase can be verified without real images
-   to point at.
-2. Board & reputation track (§5) — the simplest integration (one background image, position
-   math), a good first live-deploy smoke test for the new assets.
-3. Boss piles (§6) — reuses the same sprite sheet, next simplest.
-4. Hand/commit/reveal (§7) — the most involved piece (animation timing, replacing the action-
-   button component); do this after the simpler pieces have already proven the asset pipeline
-   works end-to-end.
-5. Advanced-effect UI (§8) — a small delta on top of §7's component.
-6. `console.log`/translation audit (§10) — last, sweeping everything Phase 5 itself just added
+1. Wire up `bga-cards`/`bga-animations`/`bga-zoom` and the asset pipeline together (§4) — the
+   sprite index convention and the library setup are interdependent, so do them as one pass;
+   nothing else in this phase can be verified without both real images and the libraries in
+   place.
+2. Board & reputation track (§5) — doesn't depend on `bga-cards` at all (tokens aren't cards),
+   a good first live-deploy smoke test for the new image assets in isolation.
+3. Whole-board zoom (§6) — layer it on top of §5's now-real board markup while the board is
+   still simple, before §7–§9 add more moving parts to verify zoom against.
+4. Boss piles & pending order/review cards (§7) — first real `bga-cards` integration; simpler
+   than the hand (no player-driven interaction yet), good place to catch the async/PHP-Deck
+   gotchas (§4 step 12) before they compound with §8's action-handling complexity.
+5. Hand/commit/reveal (§8) — the most involved piece (animation timing, privacy-sensitive flip
+   logic, replacing the action-button component); do this after §7 has already proven the
+   library/asset pipeline works end-to-end.
+6. Advanced-effect UI (§9) — a small delta on top of §8's component.
+7. `console.log`/translation audit (§11) — last, sweeping everything Phase 5 itself just added
    alongside the pre-existing scaffold debug lines.
-7. Sound only if trivial (§9); otherwise skip without regret.
-8. Deploy, live-verify per §12, update `docs/loaf-remarks.md`.
+8. Sound only if trivial (§10); otherwise skip without regret.
+9. Deploy, live-verify per §13, update `docs/loaf-remarks.md`.
