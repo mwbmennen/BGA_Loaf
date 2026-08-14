@@ -313,6 +313,23 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   (e.g. `/System/Library/Fonts/Helvetica.ttc` on macOS) on every `montage` invocation in a
   build script. Where: `bga-studio-reference.md` §5, "sprite sheet is way over the 4MB limit"
   section's third gotcha (`docs/loaf-phase5-plan.md` §4 step 11 has the concrete incident).
+- [ ] **BGA's official `bga-cards`/`bga-animations`/`bga-zoom` libraries: real downloadable
+  `.d.ts` URL, a `.d.ts`-collision gotcha, and a sprite-position math correction.** Already
+  generically worded, ready to copy essentially verbatim. Where:
+  `bga-studio-reference.md` §10, "Using BGA's official card/animation/zoom libraries" —
+  covers (1) the working `.d.ts` download URL pattern
+  (`https://x.boardgamearena.net/data/game-libs/{library-name}/1.x/dist/{library-name}.d.ts`)
+  and stripping the trailing `export` line to keep it an ambient global file; (2)
+  `bga-cards.d.ts` shipping its own loose `type AnimationManager = any;` placeholder that
+  collides (`TS2300: Duplicate identifier`) with `bga-animations.d.ts`'s real class the moment
+  both are present, fixed by deleting the placeholder; (3) `bga-cards`' own usage-example
+  snippet for sprite-sheet `background-position` (`calc(100% / N * index)`) only working by
+  coincidence for whatever column/row count that specific example used — the real CSS formula
+  divides by `(columns - 1)`/`(rows - 1)`, confirmed live on L'Oaf's 6-column round-card sheet
+  where the literal example divisor would have cropped a visibly wrong tile; (4)
+  `cardBorderRadius` is a native `CardManagerSettings` option, no custom CSS wrapper needed for
+  rounded card corners. Added while wiring these libraries into L'Oaf's Phase 5 client
+  (`docs/loaf-phase5-plan.md` §4 step 1, `modules/js/Game.js`'s `setupCardsAndZoom()`).
 
 ## Needs generalizing before it's portable
 

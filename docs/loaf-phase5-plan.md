@@ -211,20 +211,35 @@ immediately with "unable to read font"** — Gelati's script pins
 
 Concrete steps:
 
-1. **Wire up `bga-cards`, `bga-animations`, and `bga-zoom` before finalizing any sprite grid
-   math.**
-   ```javascript
-   const BgaAnimations = await importEsmLib('bga-animations', '1.x');
-   const BgaCards = await importEsmLib('bga-cards', '1.x');
-   const BgaZoom = await importEsmLib('bga-zoom', '1.x');
-   ```
-   All three confirmed real, versioned, ESM-importable libraries per BGA's own documentation —
-   pin `1.x` explicitly (same "write down exactly which library/version a plan depends on"
-   discipline as this project's existing "Framework API confidence note" habit). Download each
-   library's `.d.ts` file into the project root alongside the existing `bga-framework.d.ts` —
-   this repo already has a `tsconfig.json` set up for exactly this kind of type-checked JS.
-   This step comes first because §3's sprite-sheet grid layout needs to match `bga-cards`' own
-   background-position convention (next step), not the other way around.
+1. **Done — `bga-cards`, `bga-animations`, and `bga-zoom` wired up** in
+   `modules/js/Game.js`'s new `setupCardsAndZoom()` (called first thing in `async setup()`,
+   which itself had to become `async` — the framework's own `.d.ts` types `setup()` as
+   returning `void`, but doesn't actually await it, so an `async` override is safe in practice).
+   All three really are real, versioned, ESM-importable libraries, pinned `1.x`. Real `.d.ts`
+   files downloaded from BGA's own CDN (`https://x.boardgamearena.net/data/game-libs/{name}/1.x/dist/{name}.d.ts`
+   — a genuine, working URL, not guessed) into `bga-cards.d.ts`/`bga-animations.d.ts`/
+   `bga-zoom.d.ts` at the project root, alongside the existing `bga-framework.d.ts`; each file's
+   trailing `export {...}` line stripped per BGA's own documented advice, so they stay ambient
+   global declarations like `bga-framework.d.ts` rather than becoming isolated ES modules.
+   **Two things only found by actually doing this, not by reading the docs**:
+   - `bga-cards.d.ts` ships its own loose `type AnimationManager = any;` placeholder (for
+     standalone use without `bga-animations`), which collides (`tsc`: `TS2300: Duplicate
+     identifier`) with `bga-animations.d.ts`'s real `declare class AnimationManager` the moment
+     both files sit in the same project — always true here, since both are imported together.
+     Fix: delete the placeholder line from `bga-cards.d.ts`, letting the real class win.
+     Confirmed clean via `npx tsc --noEmit` afterward.
+   - `CardManagerSettings` has a native `cardBorderRadius` option (e.g. `'8px'`) — the library
+     handles rounded corners itself. This **replaces** §3 step 3's originally-planned approach
+     (a custom `border-radius` + `overflow: hidden` CSS class on a wrapper element) with
+     something simpler; the JPEG-not-PNG reasoning in that step is unaffected (still true
+     regardless of which layer draws the rounding), only the "how" changes.
+   Managers created so far: `this.animationManager` (`BgaAnimations.Manager`), a round-card
+   `this.roundCardsManager` and a hand-card `this.handCardsManager` (both `BgaCards.Manager`,
+   `cardWidth: 180, cardHeight: 251, cardBorderRadius: '8px'`, matching the small display tier's
+   real dimensions), and `this.boardZoom` (`BgaZoom.Manager`, wrapping
+   `this.bga.gameArea.getElement()`, `expectedWidth: 740`, `localStorageZoomKey: 'loaf-zoom'`).
+   No Stocks built yet — that's §5-§9's job, consuming these Managers once real game data flows
+   through them.
 2. **Pre-flight every source image** before touching anything: `sips -g space` on each PNG/JPG
    to confirm `RGB`, not `CMYK` (the documented Firefox color-inversion risk), and confirm
    pixel-identical dimensions within any group of images destined for the same sprite sheet.
@@ -409,12 +424,12 @@ BGA games, and a genuinely different feature from §7's per-card hover tooltip (
 card bigger on hover; this scales the whole board so a player can zoom in/out and pan a busy
 table) — both are worth having, they solve different problems, not a choice between them.
 
+**Done (§4 step 1)** — `this.boardZoom` (`BgaZoom.Manager`) already created in `Game.js`'s
+`setupCardsAndZoom()`:
 ```javascript
 this.boardZoom = new BgaZoom.Manager({
-    element: document.getElementById('game-board'), // wraps the whole board, not just the track
-    zoomControls: {
-        color: 'black',
-    },
+    element: this.bga.gameArea.getElement(), // everything setup() renders, not a separate wrapper div
+    zoomControls: { color: ['black', 'rgb(229, 231, 235)'] }, // light/dark theme pair, not a single color
     localStorageZoomKey: 'loaf-zoom',
     autoZoom: {
         expectedWidth: 740, // matches gameinfos.jsonc's game_interface_width.min
@@ -422,12 +437,20 @@ this.boardZoom = new BgaZoom.Manager({
     },
 });
 ```
-
-- Import alongside `bga-cards`/`bga-animations` in §4 step 1
+**Correction from an earlier draft of this plan**: no separate `#game-board` wrapper `<div>`
+needed (an earlier draft here referenced one that never actually existed in `Game.js`'s DOM) —
+`this.bga.gameArea.getElement()` already returns exactly "the Game Area div (for all displayed
+game components)" per `bga-framework.d.ts`'s own doc comment, and `ZoomManager`'s constructor
+itself "place[s] the settings.element in a zoom wrapper," so it wraps its own container rather
+than needing one prepared for it. Also corrected `zoomControls.color` from a single string to a
+light/dark theme pair (`ZoomControls.color: string[] | string`, defaulting to
+`['black', 'rgb(229, 231, 235)']`) — matches BGA's own convention for a control that needs to
+read against both site themes, not just one.
+- Imported alongside `bga-cards`/`bga-animations` in §4 step 1
   (`await importEsmLib('bga-zoom', '1.x')`), same versioning/`.d.ts` discipline.
-- Wrap the **entire board** (reputation track, boss piles, pending order/review cards, hand,
-  player panels) in one container element for `BgaZoom.Manager` to target — not just §5's
-  reputation track in isolation.
+- Wraps the **entire board** (reputation track, boss piles, pending order/review cards, hand,
+  player panels) since it targets `gameArea` itself — not just §5's reputation track in
+  isolation.
 - `expectedWidth: 740` matches this project's own `game_interface_width.min` in
   `gameinfos.jsonc` (already `740`) — the `autoZoom` config should reflect the actual board
   width this game is designed for, not an arbitrary number copied from an example.
@@ -441,24 +464,33 @@ this.boardZoom = new BgaZoom.Manager({
 
 ## 7. Boss piles & the pending order/review cards
 
-- **One `bga-cards` `Manager` for round cards**, covering both order-side and review-side card
-  objects (distinguished by a `side` field on each rendered card object, driving which sprite
-  sheet `setupFrontDiv` points at):
+- **Done (§4 step 1) — `this.roundCardsManager`** (`BgaCards.Manager`) already created in
+  `Game.js`'s `setupCardsAndZoom()`, covering both order-side and review-side card objects
+  (distinguished by a `side` field on each rendered card object, driving which sprite sheet
+  `setupRoundCardFrontDiv` points at):
   ```javascript
-  this.roundCardsManager = new BgaCards.Manager({
-      animationManager: this.animationManager,
-      type: 'loaf-round-card',
-      getId: (card) => card.id,
-      isCardVisible: (_card) => true, // round cards are always public -- see note below
-      setupFrontDiv: (card, div) => {
-          const index = ROUND_CARD_SPRITE_INDEX[card.card_type]; // §4 step 7's lookup
-          div.style.backgroundImage = `url(${imgUrl(card.side === 'order' ? 'order-sheet.jpg' : 'review-sheet.jpg')})`;
-          div.style.backgroundPositionX = `calc(100% / 6 * (${index % 6}))`;
-          div.style.backgroundPositionY = `calc(100% / 4 * (${Math.floor(index / 6)}))`;
-          this.bga.gameui.addTooltipHtml(div.id, buildZoomTooltipHtml(card)); // see below
-      },
-  });
+  setupRoundCardFrontDiv(card, div) {
+    const sheet = card.side === "order" ? "order-sheet.jpg" : "review-sheet.jpg";
+    const index = ROUND_CARD_SPRITE_INDEX[card.card_type]; // §4 step 7's lookup
+    div.style.backgroundImage = `url(${this.bga.images.getImgUrl(sheet)})`;
+    div.style.backgroundSize = "600% 400%"; // 6 cols x 4 rows
+    div.style.backgroundPositionX = spritePositionPercent(index % 6, 6);
+    div.style.backgroundPositionY = spritePositionPercent(Math.floor(index / 6), 4);
+  }
   ```
+  **Correction from an earlier draft of this plan**: the background-position percentage must
+  divide by `(columns - 1)`/`(rows - 1)`, not by `columns`/`rows` — verified from the CSS spec's
+  own `background-position` percentage formula (`offset = (box - image) × pct/100`, and
+  `image = columns × box` when `background-size` is `columns×100%`), not copied from BGA's own
+  `bga-cards` usage-example snippet as originally drafted here, whose literal `/ 14`/`/ 3` only
+  happens to be correct for whatever column/row count *that* specific example's sheet actually
+  had — assuming it generalizes to L'Oaf's 6-column sheet would have been a visibly wrong crop,
+  not a rounding error. `spritePositionPercent(index, count)` is the small shared helper that
+  implements the correct formula once (`modules/js/Game.js`), used by both round cards and hand
+  cards (§8) rather than duplicating the `(count - 1)` divisor at each call site.
+  A separate hover tooltip (via `addTooltipHtml`, pointing at the zoom-quality sheet) is not
+  wired up yet — that's still pending, tracked further down in this section, not part of the
+  §4-step-1 wiring that's now done.
   `isCardVisible` is defined explicitly and always returns `true` rather than relying on the
   library's default (which reads `card.type`) — per `bga-cards`' own documented advice ("the
   documentation suggests always defining a custom function for clarity"), and because order/
@@ -498,21 +530,27 @@ this.boardZoom = new BgaZoom.Manager({
 
 ## 8. Hand, commit, and reveal animation
 
+- **Done (§4 step 1) — `this.handCardsManager` (`BgaCards.Manager`) already created**, with
+  `setupHandCardFrontDiv`/`setupHandCardBackDiv` both pointing at `img/hand-sheet.jpg` (§4 step
+  10) via `positionHandCardSprite()`, the shared `(color, value)` sprite-index lookup (§4 step 7,
+  `handCardSpriteIndex()` in `Game.js`) — value `null` selects that color's back tile. Not yet
+  done: an actual `HandStock` consuming this Manager (below).
 - **`HandStock`** (purpose-built for player hands, per `bga-cards`' own component list) replaces
   `PlayCards`' status-bar `addActionButton` list (`modules/js/Game.js:71-77`) — seeded from
   `gamedatas.myHand` (cast via `Object.values()`/`array_values()` per §4 step 12's gotcha), each
-  card's `setupFrontDiv` points at `img/hand-sheet.jpg` (§4 step 10) via the `(color, value)`
-  sprite-index lookup (§4 step 7) and wires a click to the same `actCommitCard` action as
-  before — purely a rendering change over data `PlayCards::getArgs()` already returns, no PHP
-  change here.
-- **Card flip / privacy**: define `isCardVisible` explicitly for the hand-card `Manager` (unlike
-  round cards in §7, this one is genuinely conditional — a player's own hand is visible, an
-  opponent's isn't, and a committed-but-unrevealed card is face-down for everyone) rather than
-  leaving it at the library's default. `setupBackDiv` now has real art to render for the face-
-  down state (the color-specific back designs, §3 point 2, also in `img/hand-sheet.jpg`) instead
-  of a placeholder. This is where the existing hand/discard privacy guarantee
-  (`docs/loaf-open-questions.md` Q3) actually gets enforced client-side now that real card faces
-  (and backs) exist to hide behind.
+  card wires a click to the same `actCommitCard` action as before — purely a rendering change
+  over data `PlayCards::getArgs()` already returns, no PHP change here.
+- **Card flip / privacy**: `isCardVisible` is already defined explicitly on
+  `this.handCardsManager` (unlike round cards in §7, this one is genuinely conditional — a
+  player's own hand is visible, an opponent's isn't, and a committed-but-unrevealed card is
+  face-down for everyone), reading a real `card.visible` field rather than leaving it at the
+  library's default — but nothing populates that field with real per-card visibility yet; that's
+  part of building the `HandStock` above, not done in this step. `setupBackDiv` already has real
+  art to render for the face-down state (the color-specific back designs, §3 point 2, also in
+  `img/hand-sheet.jpg`) instead of a placeholder. This is where the existing hand/discard privacy
+  guarantee (`docs/loaf-open-questions.md` Q3) will actually get enforced client-side, once the
+  `HandStock`/`card.visible` wiring is finished — real card faces (and backs) now exist to hide
+  behind, the plumbing to actually hide them is still pending.
 - **Commit**: `removeCards()`/`addCards()` between the `HandStock` and a face-down "committed"
   `SlotStock`, using `bga-cards`' own move/flip animation instead of hand-building one.
 - **Reveal**: on `notif_cardPlayedRevealed` (§1), flip the committed card face-up (via
@@ -675,10 +713,11 @@ Same format as Phase 4's §8 — check items off in place as they're confirmed.
 
 ## 14. Suggested implementation order
 
-1. Wire up `bga-cards`/`bga-animations`/`bga-zoom` and the asset pipeline together (§4) — the
-   sprite index convention and the library setup are interdependent, so do them as one pass;
-   nothing else in this phase can be verified without both real images and the libraries in
-   place.
+1. **Done** — `bga-cards`/`bga-animations`/`bga-zoom` wired up and the asset pipeline built
+   together (§4) — the sprite index convention and the library setup turned out to be genuinely
+   interdependent (§4 step 1's `AnimationManager` .d.ts collision, the corrected
+   `spritePositionPercent()` formula), confirming they needed to happen as one pass rather than
+   sequentially.
 2. Board & reputation track (§5) — doesn't depend on `bga-cards` at all (tokens aren't cards),
    a good first live-deploy smoke test for the new image assets in isolation.
 3. Whole-board zoom (§6) — layer it on top of §5's now-real board markup while the board is
