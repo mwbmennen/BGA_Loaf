@@ -66,20 +66,16 @@
   // NB: the default will be the first language in this list spoken by the player, so you should list them by popularity/preference.
   "language_dependency": false,
 
-  // Colors attributed to players
+  // Colors attributed to players -- matches the 6 physical baker-figure/work-card colors
+  // (docs/Loaf-English-rules.md: "6 baker figures (in each of 6 player colours)"), not BGA's
+  // generic 12-color default. Exactly 6 entries, matching this game's max player count.
   "player_colors": [
-    "ff0000",
-    "008000",
-    "0000ff",
-    "ffa500",
-    "e94190",
-    "982fff",
-    "72c3b1",
-    "f07f16",
-    "bdd002",
-    "7b7b7b",
-    "000000",
-    "ffffff"
+    "36A148", // green
+    "E67524", // orange
+    "7A83BE", // purple
+    "961B20", // red
+    "EEF9FE", // white
+    "DEB725", // yellow
   ],
 
   // Favorite colors support : if set to "true", support attribution of favorite colors based on player's preferences (see reattributeColorsBasedOnPreferences PHP method)
@@ -97,9 +93,9 @@
     //  default: 740
     //  maximum possible value: 740 (ie: your game interface should fit with a 740px width (correspond to a 1024px screen)
     //  minimum possible value: 320 (the lowest value you specify, the better the display is on mobile)
-    "min": 740
+    "min": 740,
   },
 
   // Trigger an exception when PHP detect warnings.
-  "exception_on_warning": true
+  "exception_on_warning": true,
 }
