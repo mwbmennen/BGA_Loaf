@@ -1134,6 +1134,72 @@ If this is wrong, PHPUnit tests will fail to load your game classes.
 
 ---
 
+## 10. Using BGA's official card/animation/zoom libraries (`bga-cards`, `bga-animations`, `bga-zoom`)
+
+BGA publishes real, versioned, ESM-importable libraries for card rendering (`bga-cards`),
+generic animation (`bga-animations`), and whole-board zoom (`bga-zoom`) — `await
+importEsmLib('bga-cards', '1.x')` etc. Their `.d.ts` files are downloadable from a real,
+working CDN URL pattern, not something you have to guess or hand-write:
+
+```
+https://x.boardgamearena.net/data/game-libs/{library-name}/1.x/dist/{library-name}.d.ts
+```
+
+e.g. `https://x.boardgamearena.net/data/game-libs/bga-cards/1.x/dist/bga-cards.d.ts`. Put the
+downloaded file at your project root alongside `bga-framework.d.ts`, and strip its trailing
+`export {...}` line(s) — per the library's own documentation, this keeps it an ambient global
+declaration file (matching `bga-framework.d.ts`'s own style) instead of turning it into an
+isolated ES module whose `declare class`es become invisible everywhere else.
+
+### Error: `TS2300: Duplicate identifier 'AnimationManager'` after adding both `bga-cards.d.ts` and `bga-animations.d.ts`
+
+**Cause:** `bga-cards.d.ts` ships its own loose `type AnimationManager = any;` placeholder, for
+projects that use `bga-cards` standalone without `bga-animations`. The moment both `.d.ts`
+files sit in the same project (true for any game using both libraries together, which is the
+normal case — `bga-cards`' own `CardManagerSettings.animationManager` field expects a real
+`AnimationManager` instance), this placeholder collides with `bga-animations.d.ts`'s real
+`declare class AnimationManager`.
+
+**Fix:** delete the `type AnimationManager = any;` line from `bga-cards.d.ts` after downloading
+it, so the real class from `bga-animations.d.ts` is the only declaration. Confirm with `npx tsc
+--noEmit` (add a minimal `tsconfig.json` with `"include": ["*.d.ts"]` if the project doesn't
+already have one for its `.d.ts` files).
+
+### `bga-cards` sprite-sheet background-position: divide by `(columns - 1)`, not `columns`
+
+**Symptom:** following `bga-cards`' own documentation usage example literally
+(`div.style.backgroundPositionX = calc(100% / N * index)`) produces a visibly wrong crop on a
+sprite sheet with a different column count than whatever the example's own sheet had — not a
+subtle rounding error, a genuinely wrong tile showing.
+
+**Cause:** the CSS `background-position` percentage formula is `offset = (box_size -
+image_size) * (percent / 100)`. For a sprite sheet displayed at `background-size:
+{columns*100}% {rows*100}%` (i.e. `image_size = columns * box_size`), solving for the
+percentage that shifts the image left by exactly `index` tile-widths gives `percent = 100 *
+index / (columns - 1)` — the divisor is `columns - 1`, not `columns`. BGA's own doc example
+divides by a number that happens to equal *that specific example's* `columns - 1` (or
+`rows - 1`) — it is not a "divide by the column count" rule that generalizes to a different
+grid size, and copying it verbatim for a sheet with a different column/row count silently
+crops the wrong tile.
+
+**Fix:** implement the formula directly rather than copying the example's literal divisor:
+
+```javascript
+function spritePositionPercent(index, count) {
+  return count <= 1 ? "0%" : `${(100 * index) / (count - 1)}%`;
+}
+// backgroundPositionX: spritePositionPercent(col, totalColumns)
+// backgroundPositionY: spritePositionPercent(row, totalRows)
+```
+
+### `cardBorderRadius` is a native `CardManagerSettings` option
+
+Don't build a custom `border-radius` + `overflow: hidden` CSS wrapper for rounded card corners
+— `bga-cards`' `CardManager` constructor already accepts `cardBorderRadius: '8px'` (or any CSS
+length/percentage) directly and handles it internally.
+
+---
+
 ## State Transitions: Old vs New Style
 
 The BGA framework supports two styles of state transition. The training plan exercises mention `nextState()` but the Reversi project uses the newer return-based style.

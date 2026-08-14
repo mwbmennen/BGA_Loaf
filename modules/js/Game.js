@@ -17,6 +17,43 @@
  * When executing code in this state, you can access the args using this.args
  */
 
+// Sprite-index lookups for the sheets built by tools/build-sprite.sh (docs/loaf-phase5-plan.md
+// §4) -- these arrays/orderings must stay in exact sync with that script's own explicit,
+// zero-padded file-list order, never derived from the card_type/color strings themselves.
+const ROUND_CARD_SPRITE_INDEX = Object.fromEntries(
+  [
+    ...Array.from({ length: 12 }, (_, i) => `basic_${String(i + 1).padStart(2, "0")}`),
+    ...Array.from({ length: 12 }, (_, i) => `advanced_${String(i + 1).padStart(2, "0")}`),
+  ].map((type, index) => [type, index]),
+);
+const ROUND_CARD_SHEET_COLS = 6;
+const ROUND_CARD_SHEET_ROWS = 4;
+
+const HAND_CARD_COLORS = ["green", "orange", "purple", "red", "white", "yellow"];
+const HAND_CARD_SHEET_COLS = 13; // 12 values + 1 back tile per color
+const HAND_CARD_SHEET_ROWS = 6; // one row per color
+
+// value === null means the color's back tile (the 13th column, after that color's 12 fronts --
+// see tools/build-sprite.sh's own HAND_FILES loop).
+function handCardSpriteIndex(color, value) {
+  const colorIndex = HAND_CARD_COLORS.indexOf(color);
+  const columnInRow = value === null ? 12 : value;
+  return colorIndex * HAND_CARD_SHEET_COLS + columnInRow;
+}
+
+// CSS background-position percentage math for an N-column/M-row sprite sheet displayed at
+// `background-size: {N*100}% {M*100}%`: the correct divisor is (N-1)/(M-1), not N/M --
+// verified from the CSS spec's own background-position percentage formula
+// (offset = (box - image) * pct/100, image = N * box), not copied blindly from BGA's own
+// bga-cards usage-example snippet, whose "divide by 14"/"divide by 3" only happens to be
+// correct for however many columns/rows *that* specific example's sheet actually had (cols-1
+// there, not cols) -- confirmed by re-deriving the formula rather than assuming the example's
+// literal numbers generalize to a 6-column/13-column sheet, where the off-by-one would be a
+// visibly wrong crop, not a rounding error.
+function spritePositionPercent(index, count) {
+  return count <= 1 ? "0%" : `${(100 * index) / (count - 1)}%`;
+}
+
 // Automatic states (RoundStart/ResolveRound/EndGame) have nothing for the client to do beyond
 // showing a status message -- the server drives the transition on its own.
 class RoundStart {
@@ -196,9 +233,11 @@ export class Game {
         "gamedatas" argument contains all datas retrieved by your "getAllDatas" PHP method.
     */
 
-  setup(gamedatas) {
+  async setup(gamedatas) {
     console.log("Starting game setup");
     this.gamedatas = gamedatas;
+
+    await this.setupCardsAndZoom();
 
     // Minimal, functional-not-pretty per docs/loaf-phase1-plan.md's Client section -- just
     // enough to see the 5-card end trigger approaching while playtesting. Real boss-pile
@@ -244,6 +283,102 @@ export class Game {
     this.setupNotifications();
 
     console.log("Ending game setup");
+  }
+
+  // Imports and configures the three BGA card/animation/zoom libraries
+  // (docs/loaf-phase5-plan.md §4 step 1) -- called once, at the very start of setup(), before
+  // any card-rendering code runs. Managers are created here; the actual Stocks that consume
+  // real game data (boss piles, hand, etc.) are built in later Phase 5 steps on top of these.
+  async setupCardsAndZoom() {
+    const BgaAnimations = await importEsmLib("bga-animations", "1.x");
+    const BgaCards = await importEsmLib("bga-cards", "1.x");
+    const BgaZoom = await importEsmLib("bga-zoom", "1.x");
+
+    this.animationManager = new BgaAnimations.Manager({
+      animationsActive: () => this.bga.gameui.bgaAnimationsActive(),
+    });
+
+    // Round cards (order/review): always public information once revealed (isCardVisible is
+    // always true, unlike hand cards below) -- docs/loaf-phase5-plan.md §7.
+    this.roundCardsManager = new BgaCards.Manager({
+      animationManager: this.animationManager,
+      type: "loaf-round-card",
+      cardWidth: 180,
+      cardHeight: 251,
+      cardBorderRadius: "8px",
+      getId: (card) => card.id,
+      isCardVisible: () => true,
+      setupFrontDiv: (card, div) => this.setupRoundCardFrontDiv(card, div),
+    });
+
+    // Hand cards (a player's own numbered work cards): visibility is genuinely conditional --
+    // own hand visible, opponents' hidden, committed-but-unrevealed face-down for everyone --
+    // so isCardVisible reads real per-card state instead of always returning true.
+    // docs/loaf-phase5-plan.md §8.
+    this.handCardsManager = new BgaCards.Manager({
+      animationManager: this.animationManager,
+      type: "loaf-hand-card",
+      cardWidth: 180,
+      cardHeight: 251,
+      cardBorderRadius: "8px",
+      getId: (card) => `${card.color}_${card.value}`,
+      isCardVisible: (card) => card.visible === true,
+      setupFrontDiv: (card, div) => this.setupHandCardFrontDiv(card, div),
+      setupBackDiv: (card, div) => this.setupHandCardBackDiv(card, div),
+    });
+
+    // Whole-board zoom control (docs/loaf-phase5-plan.md §6) -- wraps everything setup() renders
+    // into gameArea, not just one section of it; distinct from and complementary to the
+    // per-card hover tooltip §7 adds later (that shows one card bigger, this scales the board).
+    this.boardZoom = new BgaZoom.Manager({
+      element: this.bga.gameArea.getElement(),
+      zoomControls: { color: ["black", "rgb(229, 231, 235)"] },
+      localStorageZoomKey: "loaf-zoom",
+      autoZoom: {
+        expectedWidth: 740, // matches gameinfos.jsonc's game_interface_width.min
+        minZoomLevel: 0.5,
+      },
+    });
+  }
+
+  // Positions a round-card element's background on the correct sprite sheet/tile for its
+  // card_type + side. `card` must carry `card_type` (e.g. "basic_01") and `side`
+  // ("order"|"review") -- see docs/loaf-phase5-plan.md §7's pending-order/review-card notes for
+  // where that data comes from.
+  setupRoundCardFrontDiv(card, div) {
+    const sheet = card.side === "order" ? "order-sheet.jpg" : "review-sheet.jpg";
+    const index = ROUND_CARD_SPRITE_INDEX[card.card_type];
+    div.style.backgroundImage = `url(${this.bga.images.getImgUrl(sheet)})`;
+    div.style.backgroundSize = `${ROUND_CARD_SHEET_COLS * 100}% ${ROUND_CARD_SHEET_ROWS * 100}%`;
+    div.style.backgroundPositionX = spritePositionPercent(index % ROUND_CARD_SHEET_COLS, ROUND_CARD_SHEET_COLS);
+    div.style.backgroundPositionY = spritePositionPercent(
+      Math.floor(index / ROUND_CARD_SHEET_COLS),
+      ROUND_CARD_SHEET_ROWS,
+    );
+  }
+
+  // `card` must carry `color` + `value` (0-11) -- the front face for that player-colored work
+  // card, from the combined fronts+backs hand-sheet.jpg (docs/loaf-phase5-plan.md §4 step 10).
+  setupHandCardFrontDiv(card, div) {
+    this.positionHandCardSprite(card.color, card.value, div);
+  }
+
+  // Same sheet, but the color's back tile (13th column, after that color's 12 fronts) --
+  // rendered whenever isCardVisible returns false for this card (opponent hands, a
+  // committed-but-unrevealed card).
+  setupHandCardBackDiv(card, div) {
+    this.positionHandCardSprite(card.color, null, div);
+  }
+
+  positionHandCardSprite(color, value, div) {
+    const index = handCardSpriteIndex(color, value);
+    div.style.backgroundImage = `url(${this.bga.images.getImgUrl("hand-sheet.jpg")})`;
+    div.style.backgroundSize = `${HAND_CARD_SHEET_COLS * 100}% ${HAND_CARD_SHEET_ROWS * 100}%`;
+    div.style.backgroundPositionX = spritePositionPercent(index % HAND_CARD_SHEET_COLS, HAND_CARD_SHEET_COLS);
+    div.style.backgroundPositionY = spritePositionPercent(
+      Math.floor(index / HAND_CARD_SHEET_COLS),
+      HAND_CARD_SHEET_ROWS,
+    );
   }
 
   ///////////////////////////////////////////////////
