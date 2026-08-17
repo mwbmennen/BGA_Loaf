@@ -116,10 +116,31 @@ class Game extends \Bga\GameFramework\Table
         $result = [];
         // WARNING: We must only return information visible by the current player (using $currentPlayerId).
 
+        // `color` (hex, no `#`) is explicitly selected rather than relied on from any automatic
+        // framework merge -- same "don't trust an unverified default" discipline as the Deck
+        // row-ordering call in RoundStart.php (docs/loaf-phase1-plan.md's "Framework API
+        // confidence note"): no vendored framework locally to confirm whether `gamedatas.players`
+        // gets `color` for free, so Phase 5's reputation-track token art (docs/loaf-phase5-plan.md
+        // §5, needs each player's color to pick the right token sprite) queries it directly.
         $result['players'] = $this->getCollectionFromDb(
             'SELECT `player_id` AS `id`, `player_score` AS `score`, `player_reputation` AS `reputation`, ' .
-                '`player_fired` AS `fired` FROM `player`'
+                '`player_fired` AS `fired`, `player_color` AS `color` FROM `player`'
         );
+        // getCollectionFromDb returns every column as a PHP string (raw DB driver output, not
+        // cast) -- harmless as long as every consumer only ever displays these as text, which
+        // was true before Phase 5's reputation-track token math started doing real arithmetic
+        // and strict `=== 0` comparisons on `reputation` client-side. Same root cause, same fix,
+        // as `Game::getPartCounts()`'s documented `(int)` cast bug
+        // (docs/bga-studio-reference.md's "A missed (int) cast on a DB value..." section) --
+        // cast every numeric field here at the source rather than defensively in every JS
+        // call site that touches `gamedatas.players`.
+        foreach ($result['players'] as &$player) {
+            $player['id'] = (int) $player['id'];
+            $player['score'] = (int) $player['score'];
+            $player['reputation'] = (int) $player['reputation'];
+            $player['fired'] = (bool) $player['fired'];
+        }
+        unset($player);
 
         // Own hand values in full; other players only get a hand count (never values), per
         // the "discard/hand visible only to owner" rule (docs/loaf-open-questions.md Q3). No

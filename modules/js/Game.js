@@ -29,16 +29,100 @@ const ROUND_CARD_SPRITE_INDEX = Object.fromEntries(
 const ROUND_CARD_SHEET_COLS = 6;
 const ROUND_CARD_SHEET_ROWS = 4;
 
-const HAND_CARD_COLORS = ["green", "orange", "purple", "red", "white", "yellow"];
+// Shared 6-color ordering (green/orange/purple/red/white/yellow) -- matches
+// gameinfos.jsonc's player_colors list and both tools/build-sprite.sh's HAND_FILES and
+// TOKEN_FILES loops, all written from the same §3 point 6 color sampling. Used to index both
+// the hand-card sheet (one row per color) and the token sheet (one column per color) below.
+const PLAYER_COLORS = ["green", "orange", "purple", "red", "white", "yellow"];
 const HAND_CARD_SHEET_COLS = 13; // 12 values + 1 back tile per color
 const HAND_CARD_SHEET_ROWS = 6; // one row per color
 
 // value === null means the color's back tile (the 13th column, after that color's 12 fronts --
 // see tools/build-sprite.sh's own HAND_FILES loop).
 function handCardSpriteIndex(color, value) {
-  const colorIndex = HAND_CARD_COLORS.indexOf(color);
+  const colorIndex = PLAYER_COLORS.indexOf(color);
   const columnInRow = value === null ? 12 : value;
   return colorIndex * HAND_CARD_SHEET_COLS + columnInRow;
+}
+
+// `player.color` (from Game.php's getAllDatas) is the raw hex BGA stores, e.g. "36A148" --
+// this maps it to the token-sprite column built by tools/build-sprite.sh's TOKEN_FILES array
+// (green/orange/purple/red/white/yellow, in that order, matching gameinfos.jsonc's
+// player_colors list exactly -- both were written from the same §3 point 6 color sampling).
+// Keyed by hex rather than assuming array-position parity with player order, since BGA can
+// reassign which physical hex goes to which seat (favorite-color preference,
+// reattributeColorsBasedOnPreferences) -- the mapping itself never changes, only who has which.
+const PLAYER_COLOR_HEX_TO_NAME = {
+  "36A148": "green",
+  "E67524": "orange",
+  "7A83BE": "purple",
+  "961B20": "red",
+  "EEF9FE": "white",
+  "DEB725": "yellow",
+};
+const TOKEN_SHEET_COLS = 6;
+
+// Reputation-track pixel geometry, measured directly from img/board.png (740x232 native) with
+// Pillow -- sampling a horizontal scanline for the bright cream divider lines between columns,
+// not guessed from the visual thumbnail. The board has 3 regions left-to-right: 10 equal-width
+// columns for -10..-1, one wider "0" column, then 10 equal-width columns for 1..10. Measured
+// column width was consistently ~31px across both halves (the board is symmetric by design);
+// the "0" column is roughly 2.3x that.
+// Live-verified (2026-08-17) and corrected once: `posLeftEdge` was originally 403, taken
+// directly from the first detected divider peak next to the "0" column -- that particular
+// peak turned out to be a ~5px outlier (35px gap vs. a consistent ~31px for every other
+// divider on both halves), so the token visibly sat left of its printed number on the positive
+// side only. Refit from the 9 *consistent* later divider positions instead of the one noisy
+// point (718 - 10*31 = 408) and confirmed correct live -- if a similar drift ever shows up
+// again, refit the same way rather than nudging this by eye.
+const REPUTATION_TRACK = {
+  boardWidth: 740,
+  negLeftEdge: 20, // left edge of the "-10" column
+  colWidth: 31.1, // width of each -10..-1 / 1..10 column
+  zeroColLeft: 331, // left edge of the "0" column
+  // Right edge of the "0" column is the same physical divider as posLeftEdge below (column 1's
+  // left edge) -- kept consistent with that corrected value (331 + 77 = 408), not
+  // independently re-measured/live-verified for the "0" token specifically.
+  zeroColWidth: 77,
+  posLeftEdge: 408, // left edge of the "1" column
+  boardHeight: 232,
+  // The board is not vertically symmetric between halves -- the printed number strip sits
+  // lower-middle on the negative side (with its own biggest open, strip-free area *above* it)
+  // but near the top on the positive side (open area *below* it). A single universal vertical
+  // center (originally just "50%") landed close enough to the positive strip to look fine but
+  // close enough to the negative strip to visibly overlap it (confirmed live: "negative players
+  // are a bit low on the track"). Re-measured each half's actual open area with Pillow rather
+  // than nudging the old value by eye: both open areas are exactly 98px tall (a deliberate,
+  // symmetric board design), just positioned on opposite sides of each half's strip.
+  negVerticalCenter: 85, // y-center of the negative half's open area (above its strip)
+  posVerticalCenter: 145, // y-center of the positive half's open area (below its strip)
+};
+
+// Percentage (of board width) for the horizontal center of a given reputation value's column --
+// used as a token's CSS `left`, paired with `transform: translateX(-50%)` to center on that
+// point rather than align its own left edge to it.
+function reputationTrackPositionPercent(value) {
+  const t = REPUTATION_TRACK;
+  let centerX;
+  if (value < 0) {
+    centerX = t.negLeftEdge + (value + 10 + 0.5) * t.colWidth;
+  } else if (value === 0) {
+    centerX = t.zeroColLeft + t.zeroColWidth / 2;
+  } else {
+    centerX = t.posLeftEdge + (value - 0.5) * t.colWidth;
+  }
+  return (centerX / t.boardWidth) * 100;
+}
+
+// Percentage (of board height) for the vertical center of a given reputation value's open
+// track area -- see REPUTATION_TRACK's negVerticalCenter/posVerticalCenter comment for why
+// this isn't just a flat 50% for every value. The "0" column has no printed strip splitting it
+// (docs/loaf-remarks.md's original §5 entry -- its "0" labels sit right at the very top/bottom
+// edges, not mid-column), so true board-center remains correct there.
+function reputationTrackVerticalCenterPercent(value) {
+  const t = REPUTATION_TRACK;
+  const centerY = value < 0 ? t.negVerticalCenter : value > 0 ? t.posVerticalCenter : t.boardHeight / 2;
+  return (centerY / t.boardHeight) * 100;
 }
 
 // CSS background-position percentage math for an N-column/M-row sprite sheet displayed at
@@ -271,16 +355,21 @@ export class Game {
                     <div id="boss-angry-pile"></div>
                 </div>
             </div>
+            <div id="reputation-board"></div>
             <div id="player-tables"></div>
         `,
     );
 
     this.setupRoundCardStocks(gamedatas);
+    this.setupReputationBoard(gamedatas);
+    this.setupPlayerPanelReputation(gamedatas);
 
-    // Setting up player boards: reputation + hand card count. Own hand values are shown as
-    // PlayCards action buttons rather than here; opponents only ever get a count
-    // (docs/loaf-open-questions.md Q3 -- hands/discards are private to their owner). No
-    // "Committed" count -- not useful information (docs/loaf-remarks.md's Phase 4 entry).
+    // Setting up player boards: name + hand card count. Reputation itself now lives on the
+    // reputation-board token (setupReputationBoard, docs/loaf-phase5-plan.md §5) rather than
+    // being duplicated as text here -- own hand values are shown as PlayCards action buttons
+    // rather than here; opponents only ever get a count (docs/loaf-open-questions.md Q3 --
+    // hands/discards are private to their owner). No "Committed" count -- not useful
+    // information (docs/loaf-remarks.md's Phase 4 entry).
     Object.values(gamedatas.players).forEach((player) => {
       const handCount = gamedatas.handCount[player.id] ?? 0;
 
@@ -289,7 +378,6 @@ export class Game {
         `
                 <div id="player-table-${player.id}">
                     <strong>${player.name}</strong>
-                    <div>Reputation: <span id="reputation-player-${player.id}">${player.reputation}</span></div>
                     <div>Hand: <span id="hand-count-player-${player.id}">${handCount}</span> card(s)</div>
                 </div>
             `,
@@ -396,6 +484,72 @@ export class Game {
     // `side: "review"` is fixed here, not per-card.
     this.bossHappyStock.addCards(Object.values(gamedatas.bossHappy).map((card) => ({ ...card, side: "review" })));
     this.bossAngryStock.addCards(Object.values(gamedatas.bossAngry).map((card) => ({ ...card, side: "review" })));
+  }
+
+  // Builds the reputation-track board (img/board.png as a background) and one token per player
+  // on top of it (docs/loaf-phase5-plan.md §5) -- real chef-hat-token art rather than a plain
+  // CSS dot (§3 point 7), positioned by reputationTrackPositionPercent's measured column
+  // geometry rather than the earlier per-player text line. Tokens sharing the same reputation
+  // value would otherwise sit exactly on top of each other and become indistinguishable -- each
+  // player gets a fixed vertical "lane" (by player order, not by current reputation, so a
+  // token's lane doesn't jump around as reputation changes) fanned out from board-center,
+  // rather than only separating tokens once a collision is detected.
+  setupReputationBoard(gamedatas) {
+    const board = document.getElementById("reputation-board");
+    const players = Object.values(gamedatas.players);
+    const laneSpacingPx = 18;
+
+    players.forEach((player, laneIndex) => {
+      const verticalOffsetPx = (laneIndex - (players.length - 1) / 2) * laneSpacingPx;
+      // Normalize case -- BGA's stored hex casing for a given seat isn't guaranteed to match
+      // gameinfos.jsonc's literal casing byte-for-byte (unverified locally, no vendored
+      // framework to confirm). An unmatched color used to fall through silently: indexOf(-1)
+      // -> a background-position outside 0-100%, which for a `no-repeat` background renders as
+      // fully transparent -- an invisible token with no console error at all (confirmed live:
+      // this is what made a token disappear after a refresh, docs/loaf-remarks.md's Phase 5
+      // entry). Falling back to the first sprite column beats an invisible token -- wrong color
+      // is a visible, debuggable symptom, invisible is not.
+      let colorName = PLAYER_COLOR_HEX_TO_NAME[String(player.color ?? "").toUpperCase()];
+      if (!colorName) {
+        console.warn(`loaf: unrecognized player color "${player.color}" for player ${player.id}, defaulting token sprite`);
+        colorName = PLAYER_COLORS[0];
+      }
+      const tokenDiv = document.createElement("div");
+      tokenDiv.id = `reputation-token-player-${player.id}`;
+      tokenDiv.className = "loaf_reputation-token";
+      tokenDiv.title = `${player.name}: ${player.reputation} reputation`;
+      tokenDiv.style.backgroundPositionX = spritePositionPercent(PLAYER_COLORS.indexOf(colorName), TOKEN_SHEET_COLS);
+      // Stored on the element so notif_reputationChanged can reapply the same fixed lane when
+      // the value (and therefore the vertical center, reputationTrackVerticalCenterPercent)
+      // changes later -- the lane itself never changes, only which region's center it's offset
+      // from.
+      tokenDiv.dataset.laneOffsetPx = verticalOffsetPx;
+      tokenDiv.style.left = `${reputationTrackPositionPercent(player.reputation)}%`;
+      tokenDiv.style.top = `calc(${reputationTrackVerticalCenterPercent(player.reputation)}% + ${verticalOffsetPx}px)`;
+      board.appendChild(tokenDiv);
+    });
+  }
+
+  // Adds a live reputation readout to BGA's own standard player panel (the name/score/flag
+  // box next to the board, not this game's custom #player-tables div) -- `this.bga.playerPanels
+  // .getElement(playerId)` is the typed-framework's replacement for the older
+  // `getPlayerPanelElement`/`this.scoreCtrl` APIs (per en.doc.boardgamearena.com's Studio
+  // Migration Guide: "Returns the div in the player panel you can put your counters & other
+  // indicators in"). Not previously used anywhere in this project -- unverified locally, no
+  // vendored framework to confirm the method actually exists under this exact name on the
+  // typed framework (same class of risk as every other first-use framework API this project has
+  // hit, docs/loaf-phase1-plan.md's "Framework API confidence note"); if this silently no-ops on
+  // Studio, the reputation-board token (setupReputationBoard, above) is still the source of
+  // truth, this is purely an additional readout.
+  setupPlayerPanelReputation(gamedatas) {
+    Object.values(gamedatas.players).forEach((player) => {
+      const panel = this.bga.playerPanels.getElement(player.id);
+      if (!panel) return;
+      panel.insertAdjacentHTML(
+        "beforeend",
+        `<div class="loaf_panel-reputation">${_("Reputation")}: <span id="reputation-panel-player-${player.id}">${player.reputation}</span></div>`,
+      );
+    });
   }
 
   // Positions a round-card element's background on the correct sprite sheet/tile for its
@@ -558,13 +712,27 @@ export class Game {
     this.adjustHandCount(args.player_id, -1);
   }
 
-  // Matches Game.php's `reputationChanged` notification (ResolveRound).
+  // Matches Game.php's `reputationChanged` notification (ResolveRound). Moves the player's
+  // token along the reputation-board track (docs/loaf-phase5-plan.md §5) rather than
+  // overwriting a text node -- CSS `transition` on `.loaf_reputation-token`'s `left` (loaf.css)
+  // animates the move instead of it jumping instantly. Also keeps the standard player-panel
+  // readout (setupPlayerPanelReputation, above) in sync -- two independent displays driven by
+  // the same notification, same as every other dual-display pattern in this codebase.
   async notif_reputationChanged(args) {
-    const element = document.getElementById(
-      `reputation-player-${args.player_id}`,
-    );
-    if (element) {
-      element.textContent = args.reputation;
+    const token = document.getElementById(`reputation-token-player-${args.player_id}`);
+    if (token) {
+      token.style.left = `${reputationTrackPositionPercent(args.reputation)}%`;
+      // Vertical center depends on which region (negative/zero/positive) the value is in
+      // (REPUTATION_TRACK's negVerticalCenter/posVerticalCenter), so a round that crosses a
+      // player over/away from 0 needs `top` recomputed too, not just `left` -- the lane offset
+      // itself (dataset.laneOffsetPx, set once at setup) stays fixed.
+      token.style.top = `calc(${reputationTrackVerticalCenterPercent(args.reputation)}% + ${token.dataset.laneOffsetPx}px)`;
+      token.title = token.title.replace(/-?\d+ reputation$/, `${args.reputation} reputation`);
+    }
+
+    const panelSpan = document.getElementById(`reputation-panel-player-${args.player_id}`);
+    if (panelSpan) {
+      panelSpan.textContent = args.reputation;
     }
   }
 

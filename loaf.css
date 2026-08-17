@@ -107,6 +107,55 @@
     line-height: 1.4;
 }
 
+/* Reputation-track board (docs/loaf-phase5-plan.md §5, Game.js's setupReputationBoard). Sized
+   by aspect-ratio rather than a fixed height so it scales with the interface width while
+   keeping img/board.png's own 740x232 proportions -- reputationTrackPositionPercent's token
+   math is derived as a percentage of board width specifically because that stays correct at
+   any rendered size, not just 740px (the same reasoning as §6's whole-board zoom needing
+   percentage-based positioning, not fixed pixels). */
+#reputation-board {
+    position: relative;
+    width: 100%;
+    max-width: 740px;
+    aspect-ratio: 740 / 232;
+    margin: 0 auto 12px;
+    background-image: url('img/board.png');
+    background-size: 100% 100%;
+}
+
+/* One token per player, positioned by Game.js via inline `left`/`top` (data-driven, so it
+   can't live in this static stylesheet) -- everything placement-independent lives here.
+   `transform: translate(-50%, -50%)` centers the token ON its `left`/`top` point rather than
+   aligning the token's own top-left corner to it, matching how reputationTrackPositionPercent
+   computes a column's *center*, not its edge. `drop-shadow` rather than `border`, uniformly on
+   every color (docs/loaf-phase5-plan.md §3 point 7 -- a CSS border doesn't sit cleanly on this
+   art's irregular illustrated silhouette the way it would on a plain circle, and the board's
+   background shifts between light tan and darker olive across the track, so every color --
+   not just white -- needs separation from both). `transition` on `left`/`top` animates
+   notif_reputationChanged's move instead of the token jumping instantly -- `top` only
+   actually changes when a player's value crosses into/out of the "0" column, since
+   reputationTrackVerticalCenterPercent gives negative/positive values a different vertical
+   center than "0" (Game.js). */
+.loaf_reputation-token {
+    position: absolute;
+    width: 26px;
+    height: 26px;
+    background-image: url('img/tokens.png');
+    background-size: 600% 100%;
+    background-repeat: no-repeat;
+    transform: translate(-50%, -50%);
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+    transition: left 0.4s ease, top 0.4s ease;
+}
+
+/* Reputation readout inserted into BGA's own standard player panel
+   (Game.js's setupPlayerPanelReputation) -- sits below the framework's own score/flag row, so
+   this stays small and muted rather than competing with it. */
+.loaf_panel-reputation {
+    font-size: 12px;
+    opacity: 0.85;
+}
+
 
 /*
     Example of CSS sprites (a black token and a white token, 20x20px each, embedded in the same "tokens.png" 40x20px image):
