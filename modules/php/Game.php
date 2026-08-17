@@ -143,17 +143,32 @@ class Game extends \Bga\GameFramework\Table
         unset($player);
 
         // Own hand values in full; other players only get a hand count (never values), per
-        // the "discard/hand visible only to owner" rule (docs/loaf-open-questions.md Q3). No
-        // played/"committed" count -- not useful information once committed (docs/loaf-remarks.md's
-        // Phase 4 entry).
+        // the "discard/hand visible only to owner" rule (docs/loaf-open-questions.md Q3).
         $result['handCount'] = $this->getCollectionFromDb(
             "SELECT `player_id` AS `id`, COUNT(*) AS `count` FROM `work_card` WHERE `location` = 'hand' GROUP BY `player_id`",
             true
         );
-        $result['myHand'] = $this->getObjectListFromDb(
+        // array_map('intval', ...): getObjectListFromDb returns raw DB strings, uncast -- same
+        // bug class as PlayCards::getHandValues() already guards against (its own comment
+        // explains why: a strict in_array/=== check silently breaks on "3" !== 3), and as the
+        // `players` query's (int) casts above. Matters here specifically because
+        // handCardSpriteIndex() in Game.js does `colorIndex * HAND_CARD_SHEET_COLS + value` --
+        // `+` between a number and an uncast numeric-string *concatenates* instead of adding
+        // (docs/bga-studio-reference.md's "A missed (int) cast..." section), corrupting the
+        // sprite lookup for every hand card once §8's HandStock started doing that arithmetic.
+        $result['myHand'] = array_map('intval', $this->getObjectListFromDb(
             "SELECT `value` FROM `work_card` WHERE `player_id` = $currentPlayerId AND `location` = 'hand' ORDER BY `value`",
             true
-        );
+        ));
+        // WHO has committed a card this round (not what -- that stays hidden until reveal, same
+        // privacy rule as above). Needed so a page refresh mid-round can rebuild the face-down
+        // "committed" card slots (docs/loaf-phase5-plan.md §8) the same way a live
+        // `playerCommitted` notification already does -- same "setup + notification" dual
+        // exposure pattern already used for currentReviewCardId/currentOrderCardId above.
+        $result['committedPlayerIds'] = array_map('intval', $this->getObjectListFromDb(
+            "SELECT DISTINCT `player_id` FROM `work_card` WHERE `location` = 'played'",
+            true
+        ));
 
         $result['currentRound'] = (int) $this->bga->globals->get(GLOBAL_CURRENT_ROUND, 0);
         $result['currentOrderAverage'] = (int) $this->bga->globals->get(GLOBAL_CURRENT_ORDER_AVERAGE, 0);

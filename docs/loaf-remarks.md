@@ -742,3 +742,313 @@ way the strips split the other two halves). Because a token can now change *vert
 per-player lane offset (`docs/loaf-remarks.md`'s original §5 entry) is stored on the element
 itself (`dataset.laneOffsetPx`) precisely so it can be reapplied against a new vertical center
 without needing to re-derive which lane a player occupies from scratch on every notification.
+
+## Phase 5 §8: hand, commit, and reveal (2026-08-17)
+
+Implemented `docs/loaf-phase5-plan.md` §8 — replaced `PlayCards`' status-bar
+`addActionButton`-per-value list with a real `bga-cards` `HandStock`, plus a face-down
+"committed" `SlotStock` per player that flips face-up on reveal. Several judgment calls the
+plan didn't spell out at this level of detail:
+
+- **Every player's committed card is hidden until reveal, including the acting player's own.**
+  A player obviously already knows what they just clicked, so hiding it from themselves too
+  isn't a privacy requirement the way it is for opponents (docs/loaf-open-questions.md Q3) —
+  it's a deliberate UX choice, trading "I can immediately double-check what I played" for a
+  uniform, simpler implementation (every committed slot behaves identically, one code path,
+  no acting-player special case) and a more board-game-like synchronized "everyone flips
+  together" moment at reveal. Easy to reverse later if it reads as annoying in practice — flag
+  this specifically when it's actually played, not just read.
+- **Committed-card identity: a stable `committed_${playerId}` id, not `${color}_${value}`.**
+  A hand card's id is fully known upfront (both color and value), but a committed card starts
+  as a face-down placeholder with `value: null` and only gets its real value at
+  `cardPlayedRevealed` time — using the hand-card id scheme would mean the placeholder and the
+  revealed card have *different* ids, so `updateCardInformations` (the API this depends on
+  entirely to flip in place rather than pop a new element) would silently fail to find and
+  update the existing element. `CardManager.getId` now branches on whether `card.playerId` is
+  present.
+- **No optimistic client-side update on click.** `onCardClick` only stashes the clicked card
+  (`this.game.pendingCommitCard`) and calls `performAction` — it does not itself touch
+  `handStock`. All visible changes happen inside `notif_playerCommitted`, matching the
+  "everything happens in the notification handler, nothing in the click handler" discipline
+  already used everywhere else in this codebase (e.g. boss-pile/pending-card moves). The stash
+  exists only because `playerCommitted` deliberately never carries the committed value (privacy
+  against *other* players), so the acting player's own handler needs another way to know which
+  specific card object to `removeCard()`.
+- **`PlayCards::getArgs()` removed outright**, not just its client-side consumer. Its entire
+  purpose was exposing `handValues` via BGA's `_private` mechanism for the old button list;
+  once the client gets the same data from `getAllDatas()`'s `myHand` instead (already needed to
+  seed the real `HandStock`), the per-state-entry `_private` round-trip became genuinely dead
+  plumbing, not just unused-but-harmless. The private `getHandValues()` helper stays --
+  `actCommitCard`'s validation and `zombie()` both still need it.
+- **`gamedatas.myHand` was missing its `(int)` cast** — caught and fixed *before* it ever
+  shipped broken, not via live debugging this time. `getObjectListFromDb`'s raw string output
+  would have silently corrupted `handCardSpriteIndex()`'s sprite-column arithmetic
+  (`colorIndex * 13 + value` — `+` between a number and an uncast numeric string concatenates,
+  not adds) the moment §8 started actually using `value` numerically instead of just displaying
+  it as button-label text. Third occurrence of this exact bug class in one project session (see
+  the two entries above this one) — worth treating "does this DB-sourced value ever get used in
+  arithmetic/strict-equality, not just displayed as text" as a standing question before wiring
+  up any new feature that touches `gamedatas`, not just when something breaks live.
+- **Async ordering, applied deliberately, not caught live**: `docs/loaf-phase5-plan.md` §8
+  flagged `bga-cards`' own documented caveat (`addCards` is async, `setSelectableCards` isn't)
+  as a known risk before writing any code, given this project has already been burned by the
+  identical setup-vs-activation race once (the Phase 1-2 `MULTIPLE_ACTIVE_PLAYER` saga). Every
+  `addCards`/`addCard` call this feature depends on later is `await`-ed, and `setup()`'s call to
+  `setupHandAndCommitStocks()` is itself awaited too, so `onPlayerActivationChange`'s
+  `setSelectableCards()` can never run against a stock that hasn't finished populating yet, even
+  on a reconnect that lands directly on an already-active `PlayCards` state.
+
+**Known, deliberate gap — not yet wired up**: advanced-effect interactions
+(`discard_choice`, both swap effects, `discard_recycle_lowest`) still only update the
+plain-text hand-count via the pre-existing `adjustHandCount()` calls in their own notification
+handlers (`notif_cardRecycled`/`notif_playerDiscarded`/`notif_cardSwapped`) — none of them
+touch the real `handStock` yet, so in a game with `with_advanced_cards` on, the real HandStock's
+contents can silently drift out of sync with the server's true hand after one of those effects
+fires (a card the player no longer has might still show in their HandStock, or vice versa).
+Deliberately out of scope for §8 itself (`docs/loaf-phase5-plan.md` §14 lists "Advanced-effect
+UI" as §9, a separate later item, "a small delta on top of §8's component") — advanced mode is
+opt-in/default-off, so this doesn't affect a standard game, but §9 needs to wire these three
+notification handlers into real `handStock.removeCard`/`addCard` calls before advanced mode is
+called complete.
+
+**Not yet live-verified at all** — nothing in this entry has been checked in an actual browser,
+unlike every other Phase 5 entry so far. Specifically to check on next deploy: hand cards render
+with correct art and are clickable only while active; a commit correctly removes the clicked
+card and adds a face-down placeholder to the correct committed slot; a page refresh mid-round
+correctly reconstructs face-down placeholders for every already-committed player
+(`committedPlayerIds`); `cardPlayedRevealed` correctly flips the right player's card face-up
+with the right value, timed before the reputation-token move; the next round's `roundStart`
+correctly clears all committed slots; and the specific async-ordering risk flagged above
+actually holds on a live reconnect-mid-round scenario, not just on a fresh game start.
+
+## Phase 5 §8: `Game.setup()` isn't awaited by the framework before state hooks fire (2026-08-17)
+
+First live test threw `Cannot set properties of undefined (setting 'onCardClick')` from
+`PlayCards.onPlayerActivationChange`, on a page load that landed directly on an already-active
+`PlayCards` state. This is the *exact* async-ordering risk flagged in advance in the entry
+above ("bga-cards' own documented `addCards`/`setSelectableCards` caveat") — but the actual
+race turned out to be one level broader than what that guard covered. Awaiting every
+`addCards`/`addCard` call inside `setupHandAndCommitStocks` and awaiting *that* from `setup()`
+only guarantees correct ordering *within* `setup()`'s own execution — it does nothing if the
+*framework itself* doesn't wait for `setup()`'s returned promise before calling
+`onPlayerActivationChange`. The stack trace confirmed exactly that: `completesetup` →
+`realCompleteSetup` → `onPlayerActivationChange` directly, no `Game.setup()` frame anywhere in
+between, meaning the hook fired before `setup()` had even reached the line that assigns
+`this.handStock` — not just before it had cards in it.
+
+Fixed with a `readyPromise` on `Game` (constructor creates it, `setup()`'s last line resolves
+it) that `PlayCards.onPlayerActivationChange` now awaits before touching `this.game.handStock`.
+Full generic write-up in `docs/bga-studio-reference.md`'s new "Error: `Cannot set properties of
+undefined` inside a state hook... on a fresh page load" section and
+`docs/bga-template-upstream-notes.md`, since this is a real, general BGA framework behavior
+(not L'Oaf-specific) and a third independent race on the exact same `onEnteringState`/
+`onPlayerActivationChange` lifecycle this project has now hit bugs on (missing
+`setAllPlayersMultiactive()` in Phase 1, `isCurrentPlayerActive` staleness in Phase 1-2, and now
+this) — worth treating "does any state hook touch something `setup()` builds" as a standing
+question for every future state class, not just `PlayCards`. Checked the other state
+classes' hooks while fixing this: only `PlayCards.onPlayerActivationChange` currently touches a
+`setup()`-built object (`ResolveAdvancedEffect.onPlayerActivationChange` still uses the old
+`addActionButton` list, per this entry's own "known, deliberate gap" note above), so no other
+hook needed the same guard yet -- revisit this when §9 wires ResolveAdvancedEffect into real
+Stocks too.
+
+## Phase 5 §8: hand cards rendered but weren't clickable — `setSelectableCards()` is a no-op without `setSelectionMode()` first (2026-08-17, later same day)
+
+After the `readyPromise` fix above, hand cards rendered correctly (right art, right position,
+confirmed via devtools) but still weren't clickable at all — no console error, no visual
+hover/selectable style, no response to a click, even after a full page refresh (which ruled out
+a live-push timing race, unlike every other bug this session — the refresh test itself is a
+useful diagnostic worth remembering: this project has repeatedly seen "refresh fixes it" mean
+staleness/timing, so "refresh does *not* fix it" is a real signal the bug is a genuine logic
+error, not a race).
+
+Root cause: `PlayCards.onPlayerActivationChange` called `handStock.setSelectableCards()` to
+make cards clickable, following what this session's own freshly-written
+`docs/bga-studio-reference.md` entry claimed was correct — but that entry was itself wrong,
+written from `bga-cards.d.ts`'s doc comments rather than the library's actual behavior (the
+exact same mistake class its neighboring `getCardRotation` entry already warns about, ironically
+right next to where the wrong entry was added). Reading the real source
+(`bga-cards.esm.js`, fetched fresh) shows `setSelectableCards()` opens with `if
+(this.selectionMode === 'none') return;` — a silent no-op, no error, nothing toggled — and a
+freshly-constructed stock's `selectionMode` defaults to `'none'`. `setSelectionMode()` was
+never called anywhere, so every `setSelectableCards()` call this session had *always* been a
+no-op, for both branches (active and inactive).
+
+Fixed by replacing both calls with `handStock.setSelectionMode('single')` /
+`handStock.setSelectionMode('none')` — `setSelectionMode`'s own implementation both leaves
+`'none'` *and* marks the given cards (all of them, since none were passed) selectable in one
+call. `'single'` (not `'multiple'`) since exactly one card is committed per round; nothing in
+this codebase reads the stock's persisted "selection" state directly (only `onCardClick`'s
+per-click argument), so the mode's own selection-tracking behavior beyond enabling clicks is
+unused either way. Both wrong doc entries (`bga-studio-reference.md` and
+`bga-template-upstream-notes.md`) corrected in place rather than left standing, with the
+corrected version explicitly noting what the wrong version claimed and why it was wrong — worth
+being findable later if the same wrong assumption gets made again from reading the `.d.ts`
+alone.
+
+**Worth generalizing, a third time this session**: `.d.ts` doc comments describe *intent*, not
+verified behavior — this project's own `getCardRotation`/sprite-position-divisor entries already
+established "read the real `bga-cards.esm.js` source, don't trust the `.d.ts` comment" as a
+rule for *code*, but this is the first time it bit a piece of *documentation* written from the
+`.d.ts` without that same verification discipline being applied to the doc-writing itself. Any
+future `bga-cards`/`bga-animations`/`bga-zoom` claim added to the reference docs should be
+checked against the real source before being written down, not just cross-referenced against
+the `.d.ts`'s comments.
+
+## Phase 5 §8: selectable-card visual style — a specificity fight against bga-cards' own injected stylesheet (2026-08-17, later same day)
+
+With clicking finally working (the `setSelectionMode` fix above), the *visual* selectable
+indicator (an outline/highlight on a card you can currently commit) still didn't show at all —
+not even a `cursor: pointer` change at first. Ruled out several theories in sequence, each
+backed by direct devtools evidence rather than guessed:
+
+1. **Class not applied at all?** Ruled out — devtools confirmed `bga-cards_selectable-card` was
+   genuinely present on both the `.front`/`.back` side divs of a hand card.
+2. **`outline` clipped by the card's own rounded `overflow: hidden` wrapper?** A reasonable
+   theory at the time (outline paints outside an element's border box; these side divs sit
+   flush inside a clipped ancestor), so tried `box-shadow: inset` instead (paints inside the
+   box, immune to that specific issue, and correctly follows border-radius where `outline`
+   doesn't). Turned out **not** to be the actual cause, though the box-shadow choice was still
+   the right call for unrelated reasons below.
+3. **CSS not deployed at all?** Ruled out via devtools' Styles panel showing `loaf.css:177`'s
+   rule loaded and matching, once actually synced (a real, separate problem hit along the way —
+   the file hadn't been uploaded to Studio yet after the first two CSS edits, wasting a round of
+   debugging before being caught; worth double-checking "did this actually deploy" *before*
+   theorizing about CSS mechanics next time a style change appears to have zero effect).
+4. **Actual root cause**: `bga-cards` injects its own `<style>` tag with a rule targeting the
+   *same* class, `.card-stock .bga-cards_selectable-card { cursor: pointer; outline:
+   var(--bga-cards_selectable-card_outline-size, 5px) dashed ...; }` — two classes, beating this
+   project's single-class `.bga-cards_selectable-card` selector on specificity regardless of
+   source order, confirmed directly in devtools (this project's own rule shown loaded, then
+   struck through by the library's). Separately, also confirmed via devtools that the library
+   forces `--bga-cards_selectable-card_outline-size` to `0px` inline on the `HandStock`
+   container specifically (presumably a deliberate default so an outline doesn't poke out of
+   tightly overlapping fanned cards) — meaning even a same-specificity `outline` rule using that
+   variable's own default would have inherited the forced `0px` and rendered invisible anyway.
+
+Fixed with `!important` on both properties (`cursor`, `box-shadow`) — a deliberate, confirmed-
+necessary exception to the general "avoid `!important`" default, not a lazy first resort; two
+non-`!important` attempts were tried and shown (via devtools) to lose the specificity fight
+first. `box-shadow: inset` (hardcoded, no dependency on the library's zeroed-out CSS variable)
+stays the right property choice independent of the specificity fix, for the two reasons in
+point 2 above.
+
+**Worth generalizing**: when a game's own CSS needs to override a third-party library's default
+component styling (not just add new styling to elements the game itself created), matching or
+exceeding that library's selector specificity is fragile and easy to lose blindly — check
+devtools' Styles panel for a struck-through rule before assuming a CSS change had no effect for
+some more exotic reason. Logged generically in `docs/bga-studio-reference.md`'s `bga-cards`
+section.
+
+**Live-verified fixed (2026-08-17, later same day)**: confirmed after sync — every currently-
+selectable hand card showed the constant orange inset ring the whole time it's this player's
+turn to commit, matching the library's own intended "persistent eligibility indicator" design
+(not a hover-only effect). Functionally correct, but explicitly **not** the interaction the
+user actually wanted once seen live.
+
+**Superseded same day, by explicit request**: wanted a hover-preview instead — lift + colored
+border only while hovering a specific card, returning to normal when hovering a different one
+— explicitly "the same animation as when selected (clicked)," i.e. mirror the library's own
+already-correctly-rendering "selected" (click) state rather than the "selectable" one this
+entry spent several rounds fighting CSS specificity for. Realized the "selected" state can be
+triggered directly from JS via `CardStock.selectCard(card, true)`/`unselectCard(card, true)` on
+`mouseenter`/`mouseleave` (wired in `setupHandCardFrontDiv`, gated to real hand cards only via
+`card.playerId === undefined`, since committed-slot placeholders share the same setup
+function) — `selectionMode: 'single'` means selecting a new card automatically unselects
+whichever was previously selected, so "goes back down when another card is hovered" falls out
+for free with no extra bookkeeping. This let the entire hand-rolled CSS override from the
+entries above be **deleted outright**: `cursor: pointer` already came from the library's own
+default rule for `.bga-cards_selectable-card` all along (only its `outline` half was ever
+neutered), and the lift/highlight is now just the library's own already-correct "selected"
+styling, triggered earlier (on hover) than its normal trigger (an actual click) rather than
+reimplemented. Net simpler than every attempt before it — worth remembering as a general
+instinct: if a library's own existing state already renders the exact visual a user wants,
+triggering that state on a different event beats re-deriving the same look by hand.
+
+This closes out §8's hand-card interaction styling; combined with the earlier `readyPromise`
+and `setSelectionMode` fixes, hand cards now render, preview on hover, and commit correctly
+end to end.
+
+**Follow-up, same day**: committing a card the user was actively hovering produced a visibly
+odd sequence — the clicked card correctly unselects and is removed, but then the *neighboring*
+card (the one that had been sitting to its right) briefly showed the same hover-selected
+border with no interaction from the user. Cause: removing a card reflows the hand's fan layout,
+and whichever card slides into the just-removed card's old screen position ends up under the
+still-stationary mouse cursor — the browser fires a completely genuine `mouseenter` on it, and
+this session's hover handler (docs/loaf-remarks.md's entry above) dutifully selected it, exactly
+as designed for an intentional hover. Fixed by suppressing new hover-selects
+(`this.suppressHandHoverPreview`) for a 500ms window around the removal (matching bga-cards'
+own `.5s` transform transition on hand-stock cards, so the window covers the reflow's own
+settling time) — `mouseleave`/unselect stays unguarded throughout, since clearing a selection is
+always safe. A layout-reflow-driven "phantom" DOM event under a stationary cursor is a general
+risk any time a hover handler is attached to an element in a list that can reorder/shrink out
+from under the mouse — worth remembering as a pattern, not just fixed for this one case.
+
+**Second follow-up, same day**: separately, the committed card visibly "settled back down"
+(lift/border cleared) *before* animating away, rather than disappearing directly from its
+lifted/hovered position — explicitly not wanted once seen live. Root cause: the hover preview
+was reusing bga-cards' own "selected" state (`CardStock.selectCard`/`unselectCard`), and
+`removeCard()` apparently clears that same selected state as part of its own teardown before
+animating the card out, producing the two-step. Fixed by switching the hover preview to a
+plain custom class (`loaf_hand-card-hover`, toggled directly on the card's front div in JS)
+instead of the library's selection mechanism — visually the same lift/border (same
+`card-height / -5` amount, same `blueviolet` as bga-cards' own default, so the look didn't
+change), but nothing tied to `removeCard()`'s own cleanup, so the card now commits straight
+from wherever it was hovering. The reflow/phantom-hover suppression fix above still applies
+unchanged (it guards the *hover trigger*, independent of which mechanism renders the preview).
+Net effect: three iterations to land on "reuse the library's visual, but drive it with
+this codebase's own state" rather than either fighting the library's CSS (§8's earlier
+specificity entry) or fully depending on its own state management (this entry) — the class
+this codebase owns outright turned out to be the version with no surprising side effects from
+either direction.
+
+**Third follow-up, same day**: even the new, entirely-custom `.loaf_hand-card-hover` class had
+its `box-shadow` (though not `transform`) silently overridden once deployed — the *third* time
+this session a `bga-cards`-adjacent style lost a specificity/override fight (after
+`.bga-cards_selectable-card`'s `outline`, and now this). Rather than spend another devtools
+round confirming exactly which library rule wins this time, added `!important` directly,
+consistent with the precedent and reasoning already recorded in this doc's earlier CSS-
+specificity entry. Worth treating "does this project's CSS need `!important` to reliably beat
+`bga-cards`' own injected stylesheet" as close to a standing expectation for *any* new style
+targeting a `bga-cards`-rendered element going forward, not a surprise to re-diagnose from
+scratch each time.
+
+**Fourth follow-up, same day**: once the border showed correctly, clicking a card produced an
+extra, visibly thicker border stacked on top of the hover style — the library's own built-in
+"select on click" behavior (the exact purple flash first noticed several entries above,
+before any of this session's hover work) firing *in addition to* this game's own custom hover
+class. Root cause: `setSelectionMode('single')` (still in place from the earlier
+click-actually-works fix) does two things at once — it's what makes `bga-cards`' default
+`cardClickEventFilter: 'selectable'` actually fire `onCardClick` at all, but it *also* makes
+the library toggle its own "selected" visual state on every click, since that's tied to any
+non-`'none'` `selectionMode`, not something separately opt-in-able. Once this game had its own
+complete, independent hover-preview styling, that second effect became pure unwanted overlap.
+
+Fixed by decoupling the two: `cardClickEventFilter: 'all'` on the `HandStock` makes
+`onCardClick` fire unconditionally, so `PlayCards.onPlayerActivationChange` can gate clicking
+by simply assigning/clearing `handStock.onCardClick` itself, and `selectionMode` never needs to
+leave its default `'none'` at all anymore — meaning the library's own selected-state mechanism
+(and its visual) never activates in the first place. Net simplification over the
+`setSelectionMode('single'/'none')` toggling from the earlier fix, not just a bug fix: one
+fewer piece of library state this codebase needs to manage, and one clear signal ("is
+`onCardClick` currently assigned") for whether commit is available right now.
+`cursor: pointer` had been coming along for free from the library's own
+`.bga-cards_selectable-card` rule while `selectionMode` was still toggled — now that it's never
+set, that rule never applies, so `cursor: pointer` moved into this project's own CSS
+(`#my-hand`-scoped, since the shared `loaf-hand-card-front` class also covers the never-
+clickable committed-slot placeholders).
+
+**Worth generalizing, in hindsight across all four follow-ups today**: `bga-cards`'
+`selectionMode` bundles two genuinely separate concerns (which cards' clicks fire a callback,
+and whether the library shows its own "selected" visual) into one setting, with no way to opt
+into just one half via the mode itself. Once a game wants its own complete visual treatment for
+"clickable"/"chosen" states, `cardClickEventFilter: 'all'` plus manual `onCardClick`
+assignment/clearing is the cleaner foundation to build on from the start, rather than
+`setSelectionMode` plus fighting or duplicating whatever visual side effect comes bundled with
+it.
+
+**Live-verified fixed (2026-08-17, later same day)**: confirmed after sync — clicking now
+shows only this game's own hover/commit styling, no extra library-driven border. This closes
+out the hand-card interaction/styling saga for §8: hover previews correctly (lift + border,
+matching the click look), commits animate away directly from the hovered position with no
+settle-down step, no phantom hover on a reflowed neighbor, and no double-border on click.

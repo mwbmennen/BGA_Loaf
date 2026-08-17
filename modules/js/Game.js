@@ -183,29 +183,49 @@ class PlayCards {
    * On MULTIPLE_ACTIVE_PLAYER states, this is called by the framework once this player's
    * activation status has actually settled -- both on first becoming active and on becoming
    * inactive again (e.g. after committing) -- unlike onEnteringState's isCurrentPlayerActive,
-   * see the comment there. This is the only place action buttons get added.
+   * see the comment there. This is the only place hand cards become clickable.
+   *
+   * Assigning/clearing `onCardClick` alone is enough to gate clicking -- no `selectionMode`
+   * juggling needed (an earlier version used `setSelectionMode('single'/'none')`, since
+   * `bga-cards`' default `cardClickEventFilter: 'selectable'` only fires `onCardClick` for
+   * cards in a populated `selectableCards` list, which itself requires a non-'none'
+   * `selectionMode`). Dropped once that turned out to have an unwanted side effect: any
+   * non-'none' `selectionMode` also makes `bga-cards` toggle its own built-in "selected"
+   * visual state on click, stacking an extra, thicker border on top of this game's own
+   * hover-preview style (loaf.css's `.loaf_hand-card-hover`, confirmed live). Setting
+   * `cardClickEventFilter: 'all'` on the HandStock (setupHandAndCommitStocks) instead makes
+   * `onCardClick` fire on every click regardless of `selectionMode`/`selectableCards` --
+   * `selectionMode` now never leaves its default `'none'`, so the library's own selected-state
+   * mechanism (and its visual) never activates at all, leaving this game's own hover class as
+   * the only thing drawing a border.
+   *
+   * `await this.game.readyPromise` first: confirmed live that the framework can call this hook
+   * before Game.setup() has finished (a fresh page load landing directly on an already-active
+   * PlayCards state) -- without waiting, `this.game.handStock` is still undefined at this
+   * point, not just empty (see readyPromise's own comment in the Game constructor).
    */
-  onPlayerActivationChange(args, isCurrentPlayerActive) {
+  async onPlayerActivationChange(_args, isCurrentPlayerActive) {
+    await this.game.readyPromise;
+    const handStock = this.game.handStock;
     if (isCurrentPlayerActive) {
       this.bga.statusBar.setTitle(_("${you} must commit a work card"));
-
-      const handValues = args.handValues; // returned by PlayCards::getArgs
-      handValues.forEach((value) =>
-        this.bga.statusBar.addActionButton(
-          _("Commit ${value}").replace("${value}", value),
-          () => this.onCardClick(value),
-        ),
-      );
+      handStock.onCardClick = (card) => this.onCardClick(card);
     } else {
       this.bga.statusBar.setTitle(
         _("Waiting for other players to commit a work card"),
       );
+      handStock.onCardClick = null;
     }
   }
 
-  onCardClick(value) {
+  // Stashed so notif_playerCommitted (which fires for the acting player too, same as every
+  // other player) knows exactly which HandStock card to remove -- the notification itself
+  // deliberately never carries the value, for privacy against OTHER players
+  // (docs/loaf-open-questions.md Q3), so it can't be recovered from the notification alone.
+  onCardClick(card) {
+    this.game.pendingCommitCard = card;
     this.bga.actions.performAction("actCommitCard", {
-      value,
+      value: card.value,
     });
   }
 }
@@ -288,6 +308,19 @@ export class Game {
     console.log("loaf constructor");
     this.bga = bga;
 
+    // Confirmed live (2026-08-17): the framework calls a freshly-entered state's own
+    // onEnteringState/onPlayerActivationChange hooks *without* waiting for this Game's own
+    // async setup() to finish -- a real page load landing directly on an already-active
+    // PlayCards state threw `Cannot set properties of undefined (setting 'onCardClick')` from
+    // onPlayerActivationChange, because setup() hadn't yet reached the point of assigning
+    // this.handStock. `readyPromise` resolves once setup() genuinely finishes; any state hook
+    // that touches a setup()-built object (currently only PlayCards.onPlayerActivationChange,
+    // via this.game.handStock) must `await this.game.readyPromise` first rather than assume
+    // setup() has already run just because a hook is firing.
+    this.readyPromise = new Promise((resolve) => {
+      this.markReady = resolve;
+    });
+
     // Declare the State classes
     this.roundStart = new RoundStart(this, bga);
     this.bga.states.register("RoundStart", this.roundStart);
@@ -357,6 +390,7 @@ export class Game {
             </div>
             <div id="reputation-board"></div>
             <div id="player-tables"></div>
+            <div id="my-hand"></div>
         `,
     );
 
@@ -364,12 +398,12 @@ export class Game {
     this.setupReputationBoard(gamedatas);
     this.setupPlayerPanelReputation(gamedatas);
 
-    // Setting up player boards: name + hand card count. Reputation itself now lives on the
-    // reputation-board token (setupReputationBoard, docs/loaf-phase5-plan.md §5) rather than
-    // being duplicated as text here -- own hand values are shown as PlayCards action buttons
-    // rather than here; opponents only ever get a count (docs/loaf-open-questions.md Q3 --
-    // hands/discards are private to their owner). No "Committed" count -- not useful
-    // information (docs/loaf-remarks.md's Phase 4 entry).
+    // Setting up player boards: name, hand card count, and a face-down "committed" card slot
+    // (docs/loaf-phase5-plan.md §8) -- reputation itself lives on the reputation-board token
+    // (setupReputationBoard, §5) rather than being duplicated as text here. Opponents only
+    // ever get a hand *count*, never values (docs/loaf-open-questions.md Q3 -- hands/discards
+    // are private to their owner); the committed slot shows THAT they've played (public, once
+    // committed) without leaking WHAT until cardPlayedRevealed.
     Object.values(gamedatas.players).forEach((player) => {
       const handCount = gamedatas.handCount[player.id] ?? 0;
 
@@ -379,15 +413,19 @@ export class Game {
                 <div id="player-table-${player.id}">
                     <strong>${player.name}</strong>
                     <div>Hand: <span id="hand-count-player-${player.id}">${handCount}</span> card(s)</div>
+                    <div id="committed-card-player-${player.id}" class="loaf_committed-card-slot"></div>
                 </div>
             `,
       );
     });
 
+    await this.setupHandAndCommitStocks(gamedatas);
+
     // Setup game notifications to handle (see "setupNotifications" method below)
     this.setupNotifications();
 
     console.log("Ending game setup");
+    this.markReady();
   }
 
   // Imports and configures the three BGA card/animation/zoom libraries
@@ -436,7 +474,13 @@ export class Game {
       cardWidth: 180,
       cardHeight: 251,
       cardBorderRadius: "8px",
-      getId: (card) => `${card.color}_${card.value}`,
+      // A hand card's id is `${color}_${value}` (both known upfront). A *committed* card
+      // (docs/loaf-phase5-plan.md §8) starts as a face-down placeholder with `value: null` --
+      // its owner's identity (`playerId`) is the only thing known at commit time, and must
+      // stay the SAME id from placeholder through reveal so `updateCardInformations` (called
+      // once the real value arrives via `cardPlayedRevealed`) finds and flips the existing
+      // element instead of silently creating an unrelated second one.
+      getId: (card) => (card.playerId !== undefined ? `committed_${card.playerId}` : `${card.color}_${card.value}`),
       isCardVisible: (card) => card.visible === true,
       setupFrontDiv: (card, div) => this.setupHandCardFrontDiv(card, div),
       setupBackDiv: (card, div) => this.setupHandCardBackDiv(card, div),
@@ -486,6 +530,22 @@ export class Game {
     this.bossAngryStock.addCards(Object.values(gamedatas.bossAngry).map((card) => ({ ...card, side: "review" })));
   }
 
+  // Shared by the reputation-track token (§5) and the hand/committed-card art (§8) -- both
+  // need a player's color as a sprite-sheet column name, not the raw hex `gamedatas` carries.
+  // Normalizes case -- BGA's stored hex casing for a given seat isn't guaranteed to match
+  // gameinfos.jsonc's literal casing byte-for-byte (unverified locally, no vendored framework
+  // to confirm). An unmatched color previously fell through silently into an out-of-range
+  // sprite position that renders fully transparent, with no console error at all (confirmed
+  // live: this is what made a reputation token disappear after a refresh, docs/loaf-remarks.md's
+  // Phase 5 entry) -- falling back to the first sprite column beats that: wrong color is a
+  // visible, debuggable symptom, invisible is not.
+  resolvePlayerColorName(player) {
+    const colorName = PLAYER_COLOR_HEX_TO_NAME[String(player.color ?? "").toUpperCase()];
+    if (colorName) return colorName;
+    console.warn(`loaf: unrecognized player color "${player.color}" for player ${player.id}, defaulting sprite`);
+    return PLAYER_COLORS[0];
+  }
+
   // Builds the reputation-track board (img/board.png as a background) and one token per player
   // on top of it (docs/loaf-phase5-plan.md §5) -- real chef-hat-token art rather than a plain
   // CSS dot (§3 point 7), positioned by reputationTrackPositionPercent's measured column
@@ -501,19 +561,7 @@ export class Game {
 
     players.forEach((player, laneIndex) => {
       const verticalOffsetPx = (laneIndex - (players.length - 1) / 2) * laneSpacingPx;
-      // Normalize case -- BGA's stored hex casing for a given seat isn't guaranteed to match
-      // gameinfos.jsonc's literal casing byte-for-byte (unverified locally, no vendored
-      // framework to confirm). An unmatched color used to fall through silently: indexOf(-1)
-      // -> a background-position outside 0-100%, which for a `no-repeat` background renders as
-      // fully transparent -- an invisible token with no console error at all (confirmed live:
-      // this is what made a token disappear after a refresh, docs/loaf-remarks.md's Phase 5
-      // entry). Falling back to the first sprite column beats an invisible token -- wrong color
-      // is a visible, debuggable symptom, invisible is not.
-      let colorName = PLAYER_COLOR_HEX_TO_NAME[String(player.color ?? "").toUpperCase()];
-      if (!colorName) {
-        console.warn(`loaf: unrecognized player color "${player.color}" for player ${player.id}, defaulting token sprite`);
-        colorName = PLAYER_COLORS[0];
-      }
+      const colorName = this.resolvePlayerColorName(player);
       const tokenDiv = document.createElement("div");
       tokenDiv.id = `reputation-token-player-${player.id}`;
       tokenDiv.className = "loaf_reputation-token";
@@ -528,6 +576,66 @@ export class Game {
       tokenDiv.style.top = `calc(${reputationTrackVerticalCenterPercent(player.reputation)}% + ${verticalOffsetPx}px)`;
       board.appendChild(tokenDiv);
     });
+  }
+
+  // Builds this player's real HandStock (docs/loaf-phase5-plan.md §8), replacing the previous
+  // status-bar addActionButton list, plus one face-down "committed" SlotStock per player --
+  // same "one single-slot SlotStock per logical display area" convention already used for
+  // pendingOrderStock/pendingReviewStock (setupRoundCardStocks, above), just one instance per
+  // player instead of one shared instance, since each player's committed card is independent.
+  // Seeded from gamedatas.committedPlayerIds for the page-refresh/reconnect case -- a live
+  // commit populates the same slot via notif_playerCommitted instead.
+  // Must be `await`-ed by its caller (setup(), below) before that caller returns --
+  // `addCards` is async while `HandStock.setSelectableCards` is not, and PlayCards'
+  // onPlayerActivationChange (Game.js, above) calls `setSelectableCards()` against
+  // `this.game.handStock` as soon as it fires, which can be nearly immediately after setup()
+  // on a reconnect landing directly on an already-active PlayCards state. Without the await,
+  // that race would mark an as-yet-still-empty stock selectable, silently leaving nothing
+  // clickable -- bga-cards' own documented caveat, and the exact same class of setup-vs-
+  // activation race that already cost real debugging time earlier in this project (the
+  // MULTIPLE_ACTIVE_PLAYER lifecycle saga, docs/bga-template-upstream-notes.md).
+  async setupHandAndCommitStocks(gamedatas) {
+    const myColorName = this.resolvePlayerColorName(gamedatas.players[this.bga.players.getCurrentPlayerId()]);
+
+    this.handStock = new this.BgaCards.HandStock(this.handCardsManager, document.getElementById("my-hand"), {
+      sort: (a, b) => a.value - b.value,
+      // 'all' rather than the default 'selectable': fires onCardClick regardless of
+      // selectionMode/selectableCards, so PlayCards.onPlayerActivationChange can gate
+      // clicking purely by assigning/clearing onCardClick itself, never touching
+      // selectionMode -- see that method's own comment for why (avoids bga-cards' own
+      // selected-state visual, which stacks an unwanted extra border on top of this game's
+      // hover-preview style, confirmed live).
+      cardClickEventFilter: "all",
+    });
+    // gamedatas.myHand is a flat array of values (Game.php's getObjectListFromDb(..., true)
+    // single-column shortcut), not an array of objects -- the same shape PlayCards.php's own
+    // getHandValues() already returns server-side.
+    await this.handStock.addCards(gamedatas.myHand.map((value) => ({ color: myColorName, value, visible: true })));
+
+    this.committedCardStocks = {};
+    Object.values(gamedatas.players).forEach((player) => {
+      this.committedCardStocks[player.id] = new this.BgaCards.SlotStock(
+        this.handCardsManager,
+        document.getElementById(`committed-card-player-${player.id}`),
+        { slotsIds: [0], mapCardToSlot: () => 0 },
+      );
+    });
+
+    // gamedatas.committedPlayerIds carries WHO, never WHAT (docs/loaf-open-questions.md Q3) --
+    // every reconstructed placeholder is face-down with `value: null`, identical to what a live
+    // notif_playerCommitted would have added, matching that same handler's own placeholder
+    // shape exactly so a later cardPlayedRevealed's updateCardInformations() call (same id,
+    // `committed_${playerId}`) finds and flips whichever one is actually present.
+    await Promise.all(
+      gamedatas.committedPlayerIds.map((playerId) =>
+        this.committedCardStocks[playerId].addCard({
+          playerId,
+          color: this.resolvePlayerColorName(gamedatas.players[playerId]),
+          value: null,
+          visible: false,
+        }),
+      ),
+    );
   }
 
   // Adds a live reputation readout to BGA's own standard player panel (the name/score/flag
@@ -624,6 +732,24 @@ export class Game {
   // card, from the combined fronts+backs hand-sheet.jpg (docs/loaf-phase5-plan.md §4 step 10).
   setupHandCardFrontDiv(card, div) {
     this.positionHandCardSprite(card.color, card.value, div);
+
+    // Hover preview, real hand cards only (`card.playerId === undefined` -- a committed-slot
+    // placeholder, the only other card shape this same setupFrontDiv renders, always carries
+    // `playerId`; see getId's own branch on it, setupCardsAndZoom). Visually mirrors the same
+    // lift+border look as bga-cards' own "selected" (click) state, but via a plain custom CSS
+    // class (`loaf_hand-card-hover`, loaf.css) rather than the library's own
+    // CardStock.selectCard/unselectCard -- an earlier version used the library's own selection
+    // state directly (simpler, and it does render correctly), but `removeCard()` apparently
+    // clears that same selected state as part of its own teardown, producing a visible
+    // "settles back down, then disappears" two-step on commit instead of animating away
+    // directly from the lifted position (confirmed live, explicitly not wanted). A class this
+    // codebase owns entirely has nothing for removeCard() to clean up first.
+    if (card.playerId === undefined) {
+      div.addEventListener("mouseenter", () => {
+        if (!this.suppressHandHoverPreview) div.classList.add("loaf_hand-card-hover");
+      });
+      div.addEventListener("mouseleave", () => div.classList.remove("loaf_hand-card-hover"));
+    }
   }
 
   // Same sheet, but the color's back tile (13th column, after that color's 12 fronts) --
@@ -691,6 +817,11 @@ export class Game {
   // entirely, not a simple front/back flip) -- correctness over animation finesse for this
   // pass, docs/loaf-phase5-plan.md §7. `pendingReviewStock` is already empty by the time this
   // fires (moved out in notif_roundResolved below), so removeAll() there is a no-op safety net.
+  // Also clears every committed-card slot (§8) -- the previous round's now-revealed cards have
+  // already been visible since cardPlayedRevealed/roundResolved, so this is the moment they'd
+  // otherwise linger through the next round's commit phase; matches the same "clear at the
+  // start of the next round, not immediately after resolution" timing already established for
+  // the pending slots above.
   async notif_roundStart(args) {
     await this.pendingOrderStock.removeAll();
     await this.pendingReviewStock.removeAll();
@@ -701,15 +832,51 @@ export class Game {
       side: "review",
       rotation: 1, // quarter-turns, not degrees -- bga-cards does rotation * 90deg internally
     });
+    await Promise.all(Object.values(this.committedCardStocks).map((stock) => stock.removeAll()));
   }
 
   // Matches Game.php's `playerCommitted` notification (PlayCards::actCommitCard). No card
-  // value is included -- it stays hidden until roundResolved. Committing removes one card
+  // value is included -- it stays hidden until cardPlayedRevealed. Committing removes one card
   // from hand -- update the live count here rather than only on the next page load
   // (previously this handler did nothing at all, so "Hand: N card(s)" silently went stale
   // the moment the game started -- confirmed live).
+  //
+  // Also drives the two visible parts of §8's commit step: removes the real card from this
+  // player's own HandStock (only possible for the acting player -- see onCardClick's own
+  // comment on why the value can't come from this notification), and adds a face-down
+  // placeholder to their committed slot, identical in shape to what setupHandAndCommitStocks
+  // reconstructs from gamedatas.committedPlayerIds on a fresh page load -- same id
+  // (`committed_${playerId}`) either way, so cardPlayedRevealed's updateCardInformations()
+  // finds whichever one is actually present without needing to know which case it was.
   async notif_playerCommitted(args) {
     this.adjustHandCount(args.player_id, -1);
+
+    if (args.player_id === this.bga.players.getCurrentPlayerId() && this.pendingCommitCard) {
+      // Removing a card reflows the hand's fan layout -- whichever neighboring card slides
+      // into the removed card's old screen position ends up under the still-stationary mouse
+      // cursor, firing a genuine mouseenter on it (confirmed live: a brief, spurious hover-
+      // preview border on the card that had been sitting to the right). Suppressing new
+      // hover-previews for a short window around the removal covers that reflow settling;
+      // 500ms matches this library's own `transition: transform .5s` on hand-stock cards
+      // (bga-cards.esm.js), so it lasts at least as long as the reflow's own animation. No
+      // explicit "un-hover" needed before removing -- the committed card's own
+      // `loaf_hand-card-hover` class (setupHandCardFrontDiv) just leaves with the element when
+      // it's removed, which is the whole point (see that method's own comment): it animates
+      // away directly from its lifted/hovered position instead of visibly settling down first.
+      this.suppressHandHoverPreview = true;
+      await this.handStock.removeCard(this.pendingCommitCard);
+      this.pendingCommitCard = null;
+      setTimeout(() => {
+        this.suppressHandHoverPreview = false;
+      }, 500);
+    }
+
+    await this.committedCardStocks[args.player_id].addCard({
+      playerId: args.player_id,
+      color: this.resolvePlayerColorName(this.gamedatas.players[args.player_id]),
+      value: null,
+      visible: false,
+    });
   }
 
   // Matches Game.php's `reputationChanged` notification (ResolveRound). Moves the player's
@@ -760,8 +927,25 @@ export class Game {
   }
 
   // Matches Game.php's `cardPlayedRevealed` notification (ResolveRound) -- what each player
-  // played this round, now open information once the round has resolved. Log-text only.
-  async notif_cardPlayedRevealed(_args) {}
+  // played this round, now open information once the round has resolved
+  // (docs/loaf-phase5-plan.md §8's reveal step). Fires once per player, ahead of any
+  // reputationChanged notification for the same round (server-side call-order guarantee, same
+  // cause-before-effect ordering already established in Phase 4) -- so by the time a token
+  // moves, its owner's committed card has already flipped face-up to explain why.
+  // updateCardInformations() both supplies the real data (the placeholder only ever had
+  // `value: null`) and triggers the flip, matched to the existing placeholder by the same
+  // stable `committed_${playerId}` id (CardManager's getId, setupCardsAndZoom) regardless of
+  // whether that placeholder came from a live notif_playerCommitted or a page-refresh
+  // reconstruction (setupHandAndCommitStocks) -- the two are indistinguishable by the time
+  // this fires, by design.
+  async notif_cardPlayedRevealed(args) {
+    this.handCardsManager.updateCardInformations({
+      playerId: args.player_id,
+      color: this.resolvePlayerColorName(this.gamedatas.players[args.player_id]),
+      value: args.value,
+      visible: true,
+    });
+  }
 
   // Matches Game.php's `reviewEffectApplied` notification (ResolveRound) -- describes the
   // review effect that just actually resolved (as opposed to `reviewCardRevealed`, which

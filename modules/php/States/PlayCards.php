@@ -36,34 +36,14 @@ class PlayCards extends GameState
      * Every player commits one work card from hand, face down. No turn order -- this is
      * fully simultaneous (docs/Loaf-English-rules.md, "Structure of a round").
      *
-     * getArgs() runs once per state entry, server-side, and its return value is broadcast to
-     * every connected player -- there is no "requesting player" context inside it. (An
-     * earlier version of this method called getCurrentPlayerId() here; confirmed live that it
-     * has no meaningful value in this context, not just during setup -- see BGA's own
-     * guidance to never use getCurrentPlayerId() inside an args method.) Each player's own
-     * hand must instead be scoped with BGA's `_private` mechanism, keyed by player id;
-     * `_merge_private` flattens each recipient's own entry into their top-level args on the
-     * client. This only affects what the client receives, though -- actCommitCard() below
-     * doesn't get this data through its injected `$args` at all, and re-fetches instead.
-     */
-    public function getArgs(): array {
-        $playerIds = array_map('intval', $this->game->getObjectListFromDb(
-            'SELECT `player_id` FROM `player`',
-            true
-        ));
-
-        $private = [];
-        foreach ($playerIds as $playerId) {
-            $private[$playerId] = ['handValues' => $this->getHandValues($playerId)];
-        }
-
-        return [
-            '_private' => $private,
-            '_merge_private' => true,
-        ];
-    }
-
-    /**
+     * No getArgs() override here: an earlier version exposed each player's hand values via
+     * BGA's `_private`/`_merge_private` mechanism specifically to build a status-bar
+     * action-button list client-side. Phase 5 §8 replaced that button list with a real
+     * `HandStock` seeded from `getAllDatas()`'s own `myHand` (Game.php) instead -- the same
+     * data by a different, already-existing route -- so a per-state-entry `_private`
+     * round-trip of the same values became redundant. Removed rather than left as unread dead
+     * plumbing.
+     *
      * array_map('intval', ...) matters here: getObjectListFromDb() returns raw DB values as
      * strings, but actCommitCard() compares against this with in_array(..., true) (strict) --
      * without casting, "3" !== 3 and every commit fails with "You do not have that work card
