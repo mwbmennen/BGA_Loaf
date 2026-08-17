@@ -219,6 +219,11 @@ namespace Bga\GameFramework {
             $this->capturedGameStateLabels = $_stateLabels;
         }
 
+        // Real BGA translates $_str to the requesting player's language via the
+        // clienttranslate()-registered dictionary; the stub has no language context, so it's a
+        // passthrough -- good enough for PHPUnit's pure-English assertions.
+        public static function _(string $_str): string { return $_str; }
+
         public function activeNextPlayer(): int|string { return 0; }
 
         public function getPlayerAfter(int $_playerId): int { return 0; }

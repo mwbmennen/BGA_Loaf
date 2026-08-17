@@ -412,14 +412,47 @@ export class Game {
 
     // Zoom tooltip: same sprite-position math, pointing at the higher-resolution sheet, shown
     // at 250x348 (half the source's 500x696 -- downscaled, not upscaled, stays crisp) rather
-    // than full size, so it reads as a "closer look" popup, not a full-screen takeover. Folding
-    // in the resolved review-effect's text (notif_reviewEffectApplied) is a follow-up, not done
-    // here yet -- this tooltip is visual-only for now.
+    // than full size, so it reads as a "closer look" popup, not a full-screen takeover. Next to
+    // it, a text panel built from Game.php's `roundCardDescriptions` (already translated
+    // server-side via self::_() -- plain text here, no client-side translation needed). Only
+    // the text matching the face actually shown (`card.side`) is included -- an order-side
+    // card physically shows only its order face, so its tooltip shouldn't spoil/describe the
+    // review face on the other side, and vice versa.
+    const description = this.gamedatas.roundCardDescriptions[card.type];
+    const descriptionLines = card.side === "order" ? [description.order] : [description.fail, description.success];
+
+    // Match the card's on-board rotation (same `card.rotation` quarter-turns field
+    // getCardRotation reads, above) in the zoom image too -- the pending review card displays
+    // rotated 90deg next to the order card (docs/loaf-phase5-plan.md §7), so a portrait zoom
+    // image would no longer match what's actually on screen. The inner image div keeps its
+    // native 250x348 size and is rotated+centered via transform; the outer container swaps to
+    // the rotated bounding box (348x250) so the layout doesn't clip or misalign, the same
+    // "swap effective width/height for a rotated card" approach bga-cards itself uses.
+    const imageWidth = 250;
+    const imageHeight = 348;
+    const rotationDeg = (card.rotation ?? 0) * 90;
+    const rotated = rotationDeg % 180 !== 0;
+    const containerWidth = rotated ? imageHeight : imageWidth;
+    const containerHeight = rotated ? imageWidth : imageHeight;
+
+    // Review card: text goes below the image (a landscape-rotated image reads better with a
+    // full-width caption underneath than a narrow side column). Order card: text stays beside
+    // the (portrait, unrotated) image, the original layout.
+    const tooltipLayoutClass = card.side === "review" ? "loaf_card-tooltip--stacked" : "loaf_card-tooltip--side-by-side";
+
     this.bga.gameui.addTooltipHtml(
       div.id,
-      `<div style="width:250px;height:348px;background-image:url(${this.bga.images.getImgUrl(zoomSheet)});` +
+      `<div class="loaf_card-tooltip ${tooltipLayoutClass}">` +
+        `<div class="loaf_card-tooltip-image" style="width:${containerWidth}px;height:${containerHeight}px;">` +
+        `<div style="width:${imageWidth}px;height:${imageHeight}px;background-image:url(${this.bga.images.getImgUrl(zoomSheet)});` +
         `background-size:${ROUND_CARD_SHEET_COLS * 100}% ${ROUND_CARD_SHEET_ROWS * 100}%;` +
-        `background-position:${x} ${y};border-radius:8px;"></div>`,
+        `background-position:${x} ${y};border-radius:8px;` +
+        `transform:translate(-50%,-50%) rotate(${rotationDeg}deg);"></div>` +
+        `</div>` +
+        `<div class="loaf_card-tooltip-text">` +
+        descriptionLines.map((line) => `<div>${line}</div>`).join("") +
+        `</div>` +
+        `</div>`,
     );
   }
 

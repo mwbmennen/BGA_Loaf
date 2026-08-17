@@ -1259,6 +1259,15 @@ appropriate translation helper the moment it's written, even if only English is 
 launch — this is what keeps the game open to every language BGA supports without an
 engineering pass later, and costs nothing extra to do upfront.
 
+**Stub `self::_()` for PHPUnit.** The bundled `Table`/framework stub used for local tests
+(commonly `tests/stubs/...`) typically only mocks DB-facing methods (`DbQuery`,
+`getCollectionFromDb`, etc.), not `self::_()` — it goes unnoticed until the first piece of
+server-side-translated, non-notification text (e.g. static game-content descriptions returned
+from `getAllDatas()`, as opposed to a `notify->all()` message) needs it, at which point calling
+it on the stub throws/fails static analysis. Add a trivial identity-passthrough stub
+(`public static function _(string $s): string { return $s; }`) the first time this comes up,
+rather than avoiding `self::_()` to dodge the missing stub.
+
 ---
 
 ## Key Principles to Internalize
@@ -1321,3 +1330,31 @@ cellDiv.ondrop = (e) => {
 };
 ```
 Note also: HTML5 drag-and-drop has no touch support, so treat it as a desktop-only *complement* to click handlers, never a replacement.
+
+---
+
+## A notification's payload can silently diverge from what the client handler reads — verify by reading both sides together
+
+A `notify->all(...)` call in a PHP state and its `notif_xxx` handler in `Game.js` are two
+separate places that both have to agree on the same args shape, with nothing in either file
+enforcing that agreement — PHP doesn't know what keys the client will read, and JS has no
+compile-time check that a key it reads was ever actually sent. Each file can look completely
+correct in isolation while still being wrong together: the PHP side sends a plausible-looking
+payload, the JS side reads a plausible-looking key from `args`, and the mismatch only shows up
+by reading both sides side-by-side (or at runtime, as `undefined` silently flowing through
+whatever the client does with it).
+
+This is worse than a typo'd key name, because it doesn't always fail loudly. If the missing
+field feeds something tolerant of `undefined` (a CSS class list, a conditional render), the bug
+can sit invisible through an entire feature's live-verification pass — it only becomes an
+obvious crash once something *does* dereference the missing value strictly (e.g.
+`someLookupTable[undefined].property`). A first case shipping clean is not proof the payload is
+complete; it may just mean nothing downstream was strict enough yet to notice.
+
+**Mitigations**: when adding or reviewing a notification, grep the client for every `args.foo`
+the handler reads and confirm each one has a matching key in the PHP `notify->all(...)` call
+(not just "a" call with a similar name — the same call, since a game can have multiple
+notifications firing at different points that only partially overlap in payload shape). For
+live verification, don't stop at "does the first instance load" — a bug that only manifests
+from the *second* occurrence of a repeating notification (second round, second turn, second
+resolution) needs at least two occurrences exercised live before calling a feature verified.
