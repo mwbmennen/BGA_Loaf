@@ -19,6 +19,7 @@ declare(strict_types=1);
 namespace Bga\Games\loaf;
 
 use Bga\Games\loaf\Core\EndConditionChecker;
+use Bga\Games\loaf\Core\ReviewEffectDescription;
 use Bga\Games\loaf\Core\RoundCardData;
 use Bga\Games\loaf\States\RoundStart;
 use Bga\GameFramework\Components\Deck;
@@ -169,7 +170,54 @@ class Game extends \Bga\GameFramework\Table
         $result['bossHappyWeight'] = EndConditionChecker::weightedCount(array_column($happyCards, 'type'), 'success');
         $result['bossAngryWeight'] = EndConditionChecker::weightedCount(array_column($angryCards, 'type'), 'fail');
 
+        // Plain-text per-card-type explanations for the hover-zoom tooltip (Game.js's
+        // setupRoundCardFrontDiv) -- static/table-independent, so it's cheap to send every type
+        // rather than filtering to only the ones currently in play (docs/loaf-remarks.md's Phase
+        // 5 entry: these were card-back-agnostic to begin with, no basic/advanced spoiler risk).
+        $result['roundCardDescriptions'] = $this->buildRoundCardDescriptions();
+
         return $result;
+    }
+
+    /**
+     * @return array<string, array{order: string, success: string, fail: string}>
+     */
+    private function buildRoundCardDescriptions(): array
+    {
+        $descriptions = [];
+        foreach (self::$ROUND_CARD_TYPES as $type => $card) {
+            // Framework API confidence note (docs/bga-studio-reference.md "Wrap every
+            // user-facing string..." section flags self::_() vs bare _() as
+            // framework-version-dependent, unverified with no vendored framework locally):
+            // self::_() is assumed to resolve a clienttranslate()-registered string to the
+            // requesting player's language immediately, server-side -- if that's wrong on
+            // Studio, this whole block silently stays English instead of erroring, so verify
+            // live once a second language is actually added.
+            $successTarget = self::_(ReviewEffectDescription::target($card['review']['success']));
+            $successAmount = self::_(ReviewEffectDescription::amount($card['review']['success'], 'success'));
+            $failTarget = self::_(ReviewEffectDescription::target($card['review']['fail']));
+            $failAmount = self::_(ReviewEffectDescription::amount($card['review']['fail'], 'fail'));
+
+            $descriptions[$type] = [
+                'order' => str_replace(
+                    '${amount}',
+                    (string) $card['order']['per_player_average'],
+                    self::_(clienttranslate('Order: worth ${amount} work per player'))
+                ),
+                'success' => str_replace(
+                    ['${target}', '${amount}'],
+                    [$successTarget, $successAmount],
+                    self::_(clienttranslate('On success: ${target}, ${amount}'))
+                ),
+                'fail' => str_replace(
+                    ['${target}', '${amount}'],
+                    [$failTarget, $failAmount],
+                    self::_(clienttranslate('On fail: ${target}, ${amount}'))
+                ),
+            ];
+        }
+
+        return $descriptions;
     }
 
     /**

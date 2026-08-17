@@ -76,6 +76,15 @@ class RoundStart extends GameState
                 // display needs real art, not just the target number.
                 'orderCardId' => $orderCard['id'],
                 'orderCardType' => $orderCard['type'],
+                // Client's notif_roundStart rebuilds pendingReviewStock from scratch every round
+                // (Game.js) and needs these two fields to do it -- 'reviewCardRevealed' above
+                // carries the same reviewCardId/reviewCardType but has no client handler wired to
+                // the stock, so this notification is the only one the client actually consumes for
+                // the pending-review-card display. Omitting them left `card.type` undefined from
+                // round 2 onward, silently wrong before the hover-tooltip feature and a hard
+                // TypeError (`roundCardDescriptions[undefined].fail`) after it -- caught live.
+                'reviewCardId' => $reviewCard['id'],
+                'reviewCardType' => $reviewCard['type'],
             ]
         );
 

@@ -509,3 +509,79 @@ Revisit once that's available; nothing else about Phase 4 depends on it.
 
 Phase 4 is otherwise complete: implementation (§9 steps 1-4, see the two entries above),
 tests, and live verification all done.
+
+## Round-card hover-tooltip explanation text (2026-08-15)
+
+Added a plain-language explanation panel next to the existing hover-zoom card image
+(`Game.js`'s `setupRoundCardFrontDiv`, previously "visual-only" per its own comment). The text
+("Order: worth N work per player" / "On success: ..." / "On fail: ...") is built server-side in
+a new `Game::buildRoundCardDescriptions()`, reusing `ReviewEffectDescription::target()`/
+`amount()` (already existed for the `reviewCardRevealed`/`reviewEffectApplied` notification
+log lines) rather than inventing new phrasing, and sent once for all 24 card types via
+`getAllDatas()`'s `roundCardDescriptions` key — cheap enough that filtering to only the
+in-play basic/advanced subset wasn't worth the extra code, and the text isn't a spoiler risk
+(the rulebook's own effects are public knowledge, unlike hidden state).
+
+The tooltip only shows the text matching the face actually rendered (`card.side`): an
+order-side card's tooltip shows only the order line, a review-side card's tooltip shows only
+the success/fail lines — matching the physical card (each side only shows its own face) rather
+than dumping the full order+review text on every hover regardless of which side is up.
+
+The zoom image itself also mirrors the card's on-board rotation (`card.rotation`, the same
+quarter-turns field `getCardRotation` already reads) rather than always rendering portrait —
+the pending review card displays landscape next to the order card, so its tooltip would
+otherwise show a portrait image that no longer matches what's on screen. Implemented by hand
+(not via bga-cards, since the tooltip HTML is a raw string passed to `addTooltipHtml`, outside
+that library's own card-element machinery): the inner image div keeps its native 250x348 size
+and gets `transform: rotate()` + centering, while the outer container swaps to the rotated
+bounding box (348x250) so the tooltip's layout doesn't clip.
+
+Layout also differs by side: the order card keeps the original side-by-side layout (image
+left, text right), while the review card's text sits *below* the (landscape-rotated) image
+instead — a full-width caption reads better under a wide rotated image than squeezed into a
+narrow side column. Two CSS modifier classes (`loaf_card-tooltip--side-by-side` /
+`--stacked`), picked in JS by `card.side`, not a single one-size-fits-all layout.
+
+This is the first place in this codebase that needed a *non-notification* server-side
+translated string, so it's also the first real usage of `self::_()` (per
+`docs/bga-studio-reference.md`'s translation section) — added a stub for it in
+`tests/stubs/BgaFrameworkStubs.php` (identity passthrough, no language context available in
+tests). **Not live-verified**: whether `self::_()` is actually the right method name on the
+real typed framework (vs. a bare `_()` global, per that section's own
+"framework-version-dependent" caveat) is unconfirmed — if it's wrong, the tooltip still works,
+it just silently never translates. Revisit once a second language is actually added and this
+becomes testable.
+
+## Pre-existing bug surfaced by the tooltip feature: `roundStart` never carried the review card's id/type (2026-08-17)
+
+Live-testing the hover-tooltip feature above hung after round 1 with a client-side fatal
+(`Cannot read properties of undefined (reading 'fail')` in `setupRoundCardFrontDiv`). Root
+cause turned out to be unrelated to the tooltip code itself: `RoundStart.php`'s `roundStart`
+notification (fired every round, per `docs/loaf-phase5-plan.md` §7) never included
+`reviewCardId`/`reviewCardType` — those two fields were only ever sent on the separate
+`reviewCardRevealed` notification, which has no client handler wired to `pendingReviewStock`.
+But `Game.js`'s `notif_roundStart` reads `args.reviewCardId`/`args.reviewCardType` directly to
+rebuild `pendingReviewStock` from scratch every round. Round 1 never hit this because the
+*initial* pending-review card is seeded from `gamedatas.currentReviewCardType` on page load
+(`setupRoundCardStocks`), a completely different code path from the notification handler used
+for every subsequent round.
+
+Before the tooltip feature this was a **silent** bug, not a crash: `card.type` being
+`undefined` just meant the review card's zoom sprite silently rendered at the wrong (or
+blank) position from round 2 onward — easy to miss without a keen eye on the art, and
+apparently never caught across all of Phase 1-4's live verification sessions. The tooltip's
+new `roundCardDescriptions[card.type]` lookup turned the same silent `undefined` into a hard
+`TypeError` that hangs the round, which is what actually got it caught. Fixed by adding
+`reviewCardId`/`reviewCardType` to the `roundStart` notification's args in `RoundStart.php`,
+alongside the `orderCardId`/`orderCardType` fields that were already there correctly (the
+adjacent code comment even said "same reasoning as reviewCardId/reviewCardType above,"
+suggesting this was an oversight rather than a deliberate omission when `reviewCardRevealed`
+was first added in Phase 2).
+
+**Worth generalizing**: a notification's payload silently diverging from what the client
+handler actually reads is a gap at the boundary between two files that both look correct in
+isolation — `RoundStart.php` in isolation has no obvious bug, `Game.js` in isolation has no
+obvious bug, the mismatch only shows up by reading both together. Logged as a generic pattern
+in `docs/bga-studio-reference.md` and `docs/bga-template-upstream-notes.md`: a stricter-typed
+notification-args contract, or at minimum a live smoke test that plays ≥2 rounds instead of
+just verifying round 1 loads, would have caught this earlier.

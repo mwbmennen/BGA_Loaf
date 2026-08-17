@@ -66,6 +66,47 @@
     justify-content: center;
 }
 
+/* Round-card hover-zoom tooltip (Game.js's setupRoundCardFrontDiv): the zoomed card art sits
+   alongside (order cards) or above (review cards -- `--stacked`, since the image is
+   landscape-rotated there and reads better with a full-width caption underneath) a text panel
+   explaining what the card does, built from Game.php's `roundCardDescriptions`. The image
+   container's own width/height are set inline per-instance by Game.js (they swap for a
+   rotated card) -- `position: relative` here is what lets the inner rotated image div center
+   itself inside that container via `position: absolute; top/left: 50%`. */
+.loaf_card-tooltip {
+    display: flex;
+    gap: 12px;
+    max-width: 420px;
+}
+
+.loaf_card-tooltip--side-by-side {
+    align-items: flex-start;
+}
+
+.loaf_card-tooltip--stacked {
+    flex-direction: column;
+    align-items: center;
+}
+
+.loaf_card-tooltip-image {
+    position: relative;
+    flex: 0 0 auto;
+}
+
+.loaf_card-tooltip-image > div {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+}
+
+.loaf_card-tooltip-text {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 14px;
+    line-height: 1.4;
+}
+
 
 /*
     Example of CSS sprites (a black token and a white token, 20x20px each, embedded in the same "tokens.png" 40x20px image):

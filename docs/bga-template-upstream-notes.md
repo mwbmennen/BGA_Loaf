@@ -59,6 +59,15 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   never write a bare English string in game code; BGA's translator platform can't retrofit
   strings it never saw wrapped. Where: `bga-studio-reference.md`, "Wrap every user-facing
   string in BGA's translation functions, from day one".
+- [ ] **Stub `self::_()` on the test framework `Table` mock.** The DB-facing methods
+  (`DbQuery`, `getCollectionFromDb`, ...) tend to get stubbed early since tests hit them
+  immediately; `self::_()` (server-side translation for non-notification text, e.g. static
+  game-content descriptions) doesn't, and goes unnoticed until the first feature that needs
+  it. Add the identity-passthrough stub as soon as any `self::_()` call is written, not just
+  when a test happens to fail. Where: `bga-studio-reference.md`, "Wrap every user-facing
+  string..." section, "Stub `self::_()` for PHPUnit" (added after L'Oaf's round-card
+  hover-tooltip text was the first non-notification server-translated string in that
+  project — see `loaf-remarks.md`'s "Round-card hover-tooltip explanation text" entry).
 - [ ] **Game-log narrative order is `notify->all()` call order, not computation order.** The
   log shows notifications in the order they were *called*, independent of when the underlying
   DB writes happened — but any `${...}` value interpolated into a message must already be known
@@ -403,6 +412,24 @@ etc.) — rewrite around generic examples before adding to the template.
   process/documentation pattern, not code — could become a short checklist addition to
   `new-bga-project-starter-guide.md` ("things no local tool can verify — write them down
   before you deploy") rather than a `bga-studio-reference.md` entry.
+
+- [ ] **A notification's payload can silently diverge from what the client handler reads.**
+  A `notify->all(...)` call's args array and the matching `notif_xxx` handler's `args.foo`
+  reads are two unconnected places that both have to agree on the same shape — nothing
+  enforces it, and each file can look correct in isolation while wrong together. Worse than a
+  typo'd key: if the missing field feeds something tolerant of `undefined`, the bug can pass
+  an entire feature's live-verification pass silently and only surface later as a hard crash
+  once something dereferences it strictly. Where: `bga-studio-reference.md`, "A notification's
+  payload can silently diverge from what the client handler reads" (added after L'Oaf's
+  `RoundStart.php` sent `orderCardId`/`orderCardType` on its `roundStart` notification but
+  forgot the matching `reviewCardId`/`reviewCardType` the client's `notif_roundStart` also
+  needed — silently wrong from round 2 onward for multiple Phase 1-4 live-verification
+  sessions, only caught once a later feature made it crash instead of misrender; see
+  `loaf-remarks.md`'s "Pre-existing bug surfaced by the tooltip feature" entry). Suggested
+  template rule: when reviewing a new/changed notification, grep the client for every `args.*`
+  key the handler reads and confirm each has a matching key in that *same* PHP call; and for
+  live verification, exercise a repeating notification at least twice (not just its first
+  occurrence) before calling it verified.
 
 ## Open question — needs resolving before it's portable
 
