@@ -156,6 +156,58 @@
     opacity: 0.85;
 }
 
+/* Own hand (docs/loaf-phase5-plan.md §8, Game.js's setupHandAndCommitStocks) -- a bga-cards
+   HandStock. Deliberately no fixed width/height here, same "let bga-cards size its own stock"
+   precedent as #pending-order-card/#pending-review-card above; only the surrounding spacing
+   is this stylesheet's job. */
+#my-hand {
+    margin-top: 16px;
+}
+
+/* Hover-preview lift+border on a hand card, toggled in JS (Game.js's setupHandCardFrontDiv) as
+   a plain class rather than through bga-cards' own `selectionMode`/"selected" state machinery
+   -- see docs/loaf-remarks.md's Phase 5 §8 entries for the fuller history (this is the third
+   design tried: a hand-rolled outline/box-shadow override on the library's own
+   `.bga-cards_selectable-card`, then reusing the library's "selected" state directly, both
+   abandoned in turn -- the former lost a specificity fight against the library's own injected
+   stylesheet, the latter caused `removeCard()` to visibly un-lift the card before removing it,
+   and independently also stacked an extra border on click since a non-'none' `selectionMode`
+   toggles the library's own selected-state visual too, confirmed live). `cursor: pointer`
+   lives here now rather than coming from the library's own `.bga-cards_selectable-card` rule,
+   since PlayCards.onPlayerActivationChange (Game.js) no longer ever marks a card "selectable"
+   in the library's sense -- `selectionMode` stays at its default `'none'` permanently now.
+   Transition lives on the type-specific `loaf-hand-card-front` class (always present, set via
+   the `type` passed to handCardsManager, setupCardsAndZoom) rather than on
+   `.loaf_hand-card-hover` itself, so both the hover-in *and* hover-out direction animate, not
+   just one. `translateY` matches bga-cards' own lift amount for its "selected" state
+   (`card-height / -5`, confirmed via its real source) for a consistent feel; `blueviolet`
+   matches its own default "selected" color for the same reason. `#my-hand`-scoped rather than
+   bare `.loaf-hand-card-front`: that class is also shared by the committed-slot placeholder
+   cards (same manager `type`, setupCardsAndZoom), which are never clickable and shouldn't
+   show a pointer cursor. */
+#my-hand .loaf-hand-card-front {
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.loaf_hand-card-hover {
+    transform: translateY(calc(var(--bga-cards_card-height, 251px) / -5)) !important;
+    /* !important confirmed necessary, not a first resort -- box-shadow alone (unlike
+       transform, which worked immediately) was silently overridden, the third time this exact
+       "bga-cards' own injected stylesheet outranks a single-class game selector" pattern has
+       shown up this session (docs/loaf-remarks.md's Phase 5 §8 CSS-specificity entry has the
+       fuller history/rationale for reaching for !important here rather than chasing
+       specificity again). */
+    box-shadow: inset 0 0 0 3px blueviolet !important;
+}
+
+/* Per-player face-down "committed" card slot, one instance embedded in each #player-table-*
+   div (setupHandAndCommitStocks). Small top margin so it doesn't crowd the hand-count line
+   immediately above it; no fixed size, same reasoning as #my-hand above. */
+.loaf_committed-card-slot {
+    margin-top: 8px;
+}
+
 
 /*
     Example of CSS sprites (a black token and a white token, 20x20px each, embedded in the same "tokens.png" 40x20px image):

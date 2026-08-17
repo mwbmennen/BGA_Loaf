@@ -300,6 +300,23 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   `$currentPlayerId`) — all of those were server-side/PHP; this one is purely client-side JS
   timing, and only surfaced once real gameplay looped through multiple rounds rather than a
   single round of manual testing.
+- [ ] **The framework does not `await` `Game.setup()` before calling the current state's
+  lifecycle hooks.** A third, independent race on the same `onEnteringState`/
+  `onPlayerActivationChange` lifecycle as the two entries above, but this one crashes rather
+  than silently misbehaving. Confirmed live (2026-08-17): a page load landing directly on an
+  already-active `MULTIPLE_ACTIVE_PLAYER` state threw `Cannot set properties of undefined`
+  from inside `onPlayerActivationChange`, reading a `bga-cards` `HandStock` that `Game`'s own
+  `async setup(gamedatas)` builds and assigns to `this.<field>` — the stack trace showed the
+  framework's `completesetup`/`realCompleteSetup` calling the state hook directly, no
+  `Game.setup()` frame in between, meaning the hook fired before `setup()`'s assignment ran,
+  not just before it had data. Any state hook that touches a `setup()`-built object (a Stock, a
+  Manager, anything assigned partway through `setup()`'s own body) is exposed to this the
+  moment `setup()` needs to be `async` for any reason (here: `bga-cards`' own
+  `addCards`-before-`setSelectableCards` ordering requirement). Fix: give the Game class a
+  readiness promise resolved on the last line of `setup()`, and `await` it at the top of every
+  exposed hook before touching the object in question. Where: `bga-studio-reference.md` §5,
+  "Error: `Cannot set properties of undefined` inside a state hook... on a fresh page load"
+  (full before/after code) — added while wiring `docs/loaf-phase5-plan.md` §8's `HandStock`.
 - [ ] **A hung "Creating the game table..." / client-side timeout means a DB lock, not slow
   code — `Wipe database`, don't debug the code first.** Confirmed live: table creation hung
   indefinitely (eventually a client-side `Timeout exceeded`, not a PHP error) specifically
@@ -343,7 +360,25 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   normalizes-to-near-zero rotation instead, and the library already swaps a rotated card's own
   effective width/height for you, so don't also hardcode a swapped container size. Added while
   wiring these libraries into L'Oaf's Phase 5 client (`docs/loaf-phase5-plan.md` §4 step 1 and
-  §7, `modules/js/Game.js`'s `setupCardsAndZoom()`/`roundCardsManager`).
+  §7, `modules/js/Game.js`'s `setupCardsAndZoom()`/`roundCardsManager`). (6) A "committed then
+  revealed" card (face-down placeholder → real front data later) needs an identity field
+  that's known at placeholder time and never changes (e.g. an owning player's id), with `getId`
+  branching on its presence — using the same id scheme as an ordinary fully-known card means
+  the placeholder and the revealed version get *different* ids, so `CardManager
+  .updateCardInformations()` (built exactly for this reveal case) silently fails to find and
+  flip the existing element. (7) **Correction to an earlier draft of this same note**:
+  `stock.setSelectableCards()` alone does *not* make a stock's cards clickable —
+  `CardStock.setSelectableCards()`'s real implementation (`bga-cards.esm.js`) opens with `if
+  (this.selectionMode === 'none') return;`, and a freshly-constructed stock defaults to
+  `selectionMode: 'none'`, so the call is a silent no-op (no error, no CSS class, nothing)
+  until `setSelectionMode('single')`/`'multiple'` has been called at least once. The click-to-act
+  pattern is actually: `stock.setSelectionMode('single')` when the action should be available
+  (marks all current cards selectable *and* leaves `'none'`, both in one call),
+  `stock.setSelectionMode('none')` when it shouldn't, plus a one-time `stock.onCardClick =
+  (card) => ...` assignment. Confirmed live (2026-08-17) after cards rendered correctly but were
+  neither highlightable nor clickable with the (wrong) `setSelectableCards()`-only approach.
+  Both (6) and (7) added while building L'Oaf's hand/commit/reveal
+  (`docs/loaf-phase5-plan.md` §8).
 
 ## Needs generalizing before it's portable
 

@@ -757,6 +757,65 @@ instead.
 
 ---
 
+### Error: `Cannot set properties of undefined` inside a state hook (`onEnteringState`/`onPlayerActivationChange`), on a fresh page load
+
+**Symptom:** A page load that lands directly on an already-active state (not a fresh game
+start — a reconnect, or a refresh mid-game) throws a `TypeError` reading/setting a property on
+something built inside `Game`'s own `async setup(gamedatas)`, from inside a state class's
+`onEnteringState` or `onPlayerActivationChange`. Confirmed live (2026-08-17): `Cannot set
+properties of undefined (setting 'onCardClick')`, thrown from a state's
+`onPlayerActivationChange` trying to use a `bga-cards` `HandStock` that `setup()` builds and
+assigns to `this.<field>` — the stack trace shows the framework's own
+`completesetup`/`realCompleteSetup` calling the state hook directly, with no `Game.setup()`
+frame anywhere in between.
+
+**Cause:** The framework does not `await` `Game.setup(gamedatas)`'s returned promise before
+calling the current state's lifecycle hooks. `setup()` being `async` (needed here for
+`bga-cards`' own `addCards`/`addCards`-before-`setSelectableCards` ordering requirement, see
+this section's `bga-cards` entries below) means it returns a promise immediately at its first
+`await` — and the framework proceeds to fire `onEnteringState`/`onPlayerActivationChange` for
+whatever state is already active, without waiting for that promise to settle. Any state hook
+that reads something `setup()` builds (a Stock, a Manager, anything assigned to `this.<field>`
+partway through `setup()`'s own body) can therefore run *before* that assignment has happened
+— not just before it's populated with data, but before the object exists at all, hence
+`undefined` rather than some other stale/empty value.
+
+**Fix:** give `Game` a readiness promise that resolves at the very end of `setup()`, and have
+every state hook that touches a `setup()`-built object `await` it first:
+
+```js
+class Game {
+  constructor(bga) {
+    this.readyPromise = new Promise((resolve) => { this.markReady = resolve; });
+    ...
+  }
+
+  async setup(gamedatas) {
+    ...
+    this.handStock = new BgaCards.HandStock(...);
+    await this.handStock.addCards(...);
+    ...
+    this.markReady(); // last line
+  }
+}
+
+class PlayCards {
+  async onPlayerActivationChange(_args, isCurrentPlayerActive) {
+    await this.game.readyPromise; // don't touch this.game.handStock before this resolves
+    const handStock = this.game.handStock;
+    ...
+  }
+}
+```
+
+Only hooks that actually touch a `setup()`-built object need the guard — a hook that only sets
+status-bar text, for instance, has nothing to race against and can stay untouched. Making the
+hook itself `async` and returning a promise is harmless even if the framework doesn't await
+it; the eventual correct UI state still gets applied once `readyPromise` resolves, just
+possibly a tick later than the hook was originally called.
+
+---
+
 ### Error: Database schema out of sync
 
 **Symptom:** PHP throws an error like `Column 'board_x' not found` or `Table 'board' doesn't exist`.
@@ -1221,6 +1280,113 @@ dimension). Leave the container unsized and let it follow the card.
 
 **Fix:** pass `0`/`1`/`2`/`3` (not `0`/`90`/`180`/`270`) from `getCardRotation`, and don't set
 an explicit size on the container holding a stock with rotated cards.
+
+### A "reveal" card (face-down placeholder → real front data later) needs a stable id that doesn't depend on the data being revealed
+
+A common pattern: a card is visible to everyone as *something committed/face-down* before its
+real identity is known (a played-but-unrevealed card, a drawn-but-unseen card, etc.), then gets
+its real front data at some later point and flips. `CardManager.updateCardInformations(card,
+settings)` is built for exactly this — "Used when a card with just an id (back shown) should be
+revealed, with all data needed to populate the front" — but it works by looking up the
+*existing* card element via `getId(newCardData)` and updating it in place. If the placeholder's
+id and the revealed card's id are computed differently (e.g. a hand card's id is naturally
+`${color}_${value}`, but the placeholder doesn't know `value` yet), the two ids won't match,
+and `updateCardInformations` will silently fail to find the placeholder — typically manifesting
+as either nothing visibly happening, or a second, unrelated element appearing instead of the
+existing one flipping.
+
+**Fix:** give this class of card an identity field that's known at *placeholder* time and never
+changes (e.g. `playerId`, or a server-issued card id), and branch `getId` on its presence:
+```javascript
+getId: (card) => card.playerId !== undefined
+  ? `committed_${card.playerId}`   // stable across placeholder -> revealed
+  : `${card.color}_${card.value}`, // ordinary case, both known upfront
+```
+Then the reveal is just `manager.updateCardInformations({ ...same identity field, ...real front data, visible: true })` — no `removeCard`/`addCard` pair needed, and the existing DOM element's own flip animation runs for free.
+
+### `setSelectableCards()` is a silent no-op while `selectionMode` is still `'none'` — call `setSelectionMode()` instead
+
+**Symptom:** cards render correctly (right art, right position), and `stock.onCardClick = ...`
+is assigned, but clicking a card does nothing at all — no console error, no CSS class change,
+no `performAction` call. Confirmed live (2026-08-17): a `HandStock` populated via `addCards()`,
+with `stock.setSelectableCards()` called on player activation, produced cards that were neither
+visually highlightable nor clickable; devtools confirmed the rendered card element never got
+the `bga-cards_selectable-card` class at all.
+
+**Cause:** an earlier version of this section itself got this wrong, from trusting the
+`.d.ts`'s doc comments over the actual library behavior (the same class of mistake
+`getCardRotation`'s entry above already warns about). Reading the real source
+(`bga-cards.esm.js`) shows `CardStock.setSelectableCards(selectableCards)` opens with:
+```javascript
+setSelectableCards(selectableCards) {
+    if (this.selectionMode === 'none') {
+        return; // silent no-op -- no error, nothing toggled
+    }
+    ...
+}
+```
+A freshly-constructed stock's `selectionMode` defaults to `'none'`. Calling
+`setSelectableCards()` without ever having called `setSelectionMode()` first therefore does
+*nothing*, every time, regardless of arguments — `setSelectableCards()`'s own doc comment gives
+no hint of this early return.
+
+**Fix:** call `stock.setSelectionMode('single')` (or `'multiple'`) instead of
+`setSelectableCards()` to both leave `'none'` *and* mark cards selectable in one call — its own
+implementation marks every current card selectable (or a given subset, as its second argument)
+and only *then* is a direct `setSelectableCards()` call (e.g. later, to narrow the selectable
+set without changing mode) actually live. To disable, call `setSelectionMode('none')`, not
+`setSelectableCards([])` (also a no-op once already in `'none'`, and doesn't undo a
+non-`'none'` mode either — it would leave the mode itself unchanged while just clearing which
+cards are currently marked, still leaving the click-filter's `selectionMode` check satisfied
+for anything selected right after). `stock.onCardClick = (card) => ...` still only needs
+assigning once; `selectionMode` toggling is what actually gates whether it ever fires, not a
+separate, skippable concern as an earlier draft of this entry claimed.
+
+**Addendum, once a game wants its own complete visual for "clickable"/"chosen" states**: the
+`setSelectionMode` approach above bundles two separate concerns into one setting — which
+cards' clicks fire `onCardClick`, *and* whether the library shows its own built-in "selected"
+visual (a border/lift, toggled automatically on click any time `selectionMode !== 'none'`, with
+no way to opt into just the click-firing half). If a game's own CSS already provides a complete
+hover/selected treatment, that library-driven visual becomes unwanted overlap (confirmed live:
+an extra, visibly thicker border stacking on top of a custom hover style). The cleaner
+foundation in that case: set `cardClickEventFilter: 'all'` in the stock's settings (fires
+`onCardClick` on every click, unconditionally — no `selectableCards`/`selectionMode`
+dependency at all), and gate whether clicking does anything by simply assigning/clearing
+`stock.onCardClick` itself. `selectionMode` can then stay at its default `'none'` permanently,
+and the library's own selected-state mechanism never activates.
+
+### Overriding `bga-cards`' own default component styling needs `!important` — its injected stylesheet out-specifies a normal game-CSS selector
+
+**Symptom:** a CSS rule targeting a `bga-cards`-managed class (e.g.
+`.bga-cards_selectable-card`) is confirmed present in the game's own stylesheet and confirmed
+matching the element (right selector, right class on the element), but has zero visible effect
+— not a typo, not a caching issue, not a deployment gap (check those first, they're more common
+and cheaper to rule out, but this entry assumes they're already ruled out).
+
+**Cause:** `bga-cards` injects its own `<style>` tag with rules like `.card-stock
+.bga-cards_selectable-card { cursor: pointer; outline: ...; }` — a *two-class* selector. A
+game's own rule targeting just `.bga-cards_selectable-card` (one class) loses the specificity
+comparison regardless of source order (the game's stylesheet loading after the library's
+injected one does not help — specificity is compared before source order ever matters).
+Confirmed directly in devtools: the game's rule shown loaded from its own file, then struck
+through by the library's higher-specificity one.
+
+Related, compounding gotcha also confirmed live: `HandStock` specifically forces
+`--bga-cards_selectable-card_outline-size` to `0px` inline on its own container element
+(presumably deliberate, so a default outline doesn't visually poke out of tightly overlapping
+fanned cards) — so even a same-or-higher-specificity `outline`-based override that still reads
+`var(--bga-cards_selectable-card_outline-size, 5px)` would inherit that forced `0px` and render
+invisible anyway. A hardcoded value (no `var()`) sidesteps this second issue independently of
+the specificity one.
+
+**Fix:** match the library's selector structure to equal its specificity, or — simpler and more
+future-proof against the library changing its own selectors later — use `!important` on the
+overriding declarations, with a comment explaining *why* (a deliberate, confirmed-necessary
+override of a specific third-party rule, not a first-resort habit). Prefer a property that
+doesn't depend on any of the library's own CSS custom properties if one of those is suspected to
+be forced to an unhelpful value (e.g. `box-shadow: inset ...` instead of `outline`, which also
+has the advantage of correctly following the card's own `border-radius` where `outline` — always
+a plain rectangle — wouldn't).
 
 ---
 
