@@ -585,3 +585,160 @@ obvious bug, the mismatch only shows up by reading both together. Logged as a ge
 in `docs/bga-studio-reference.md` and `docs/bga-template-upstream-notes.md`: a stricter-typed
 notification-args contract, or at minimum a live smoke test that plays ≥2 rounds instead of
 just verifying round 1 loads, would have caught this earlier.
+
+## Board & reputation-track rendering (2026-08-17)
+
+Built `docs/loaf-phase5-plan.md` §5: `img/board.png` as the reputation-track background, one
+real chef-hat token (`img/tokens.png`) per player positioned along it, replacing the old
+per-player "Reputation: N" text line entirely — `notif_reputationChanged` now moves a
+positioned element instead of overwriting a text node, per the plan's own description of this
+step. Several judgment calls, none spelled out by the plan at this level of detail:
+
+- **Track pixel geometry was measured, not guessed.** `img/board.png` (740×232) has no
+  machine-readable layout data — installed Pillow ad hoc and sampled a horizontal scanline
+  across both track halves to find the bright cream divider lines between columns, rather than
+  eyeballing the downscaled thumbnail render. Found 10 equal-width (~31.1px) columns per side
+  (-10..-1 and 1..10) flanking one wider (~72px) "0" column. Recorded as
+  `REPUTATION_TRACK`/`reputationTrackPositionPercent()` in `Game.js`, with the measurement
+  method in a comment so a future re-measurement (if the board art is ever re-exported at a
+  different size) knows how to redo it. **Not live-verified against an actual browser
+  render** — the measurement is only as good as this Pillow analysis; if a token visibly sits
+  off its printed number on Studio, re-check this geometry first.
+- **`player.color` needed an explicit DB column that wasn't being sent.** `getAllDatas()`'s
+  `players` query never selected `player_color` before this — nothing needed it until token art
+  required knowing which of the 6 sprite columns to use. Queried it directly rather than
+  assuming the framework auto-merges `color` into `gamedatas.players` for free, same
+  "unverified default" caution as `RoundStart.php`'s explicit deck-order sort
+  (`docs/loaf-phase1-plan.md`'s "Framework API confidence note") — no vendored framework
+  locally to confirm the automatic-merge behavior either way, and querying it explicitly costs
+  nothing if it turns out to have been redundant.
+- **Same-value tokens get a fixed per-player vertical lane, not collision-detected
+  stacking.** Multiple players can land on the same reputation value at once, and the track's
+  columns are visually narrow — without separation, tokens would sit exactly on top of each
+  other and become indistinguishable. Chose a fixed lane per player (by player order, assigned
+  once at setup) fanned out vertically from board-center, rather than dynamically detecting and
+  resolving collisions on every reputation change — the lane a token occupies never changes
+  once assigned, so a player's token doesn't visually jump between rows as reputation changes,
+  only left/right. Simpler to implement and reason about than recomputing groupings on every
+  `notif_reputationChanged`, at the cost of always reserving vertical space for every player's
+  lane even when no collision is currently happening.
+- **The old "Reputation: N" text line was removed outright, not kept alongside the token.**
+  The plan's own wording for this step is explicit ("now moving a positioned element instead
+  of overwriting text content"), read as intentionally superseding the old text placeholder the
+  way the boss-pile/pending-card text placeholders were already superseded by real art in §7,
+  not merely changing the update *mechanism* while keeping the number visible elsewhere. Kept
+  the reputation number accessible anyway via a `title` tooltip on the token
+  (`"PlayerName: N reputation"`, updated live in `notif_reputationChanged`) — cheap insurance
+  against the same "silent unless you can see it" trap already hit three times in earlier
+  phases (Phase 2's review-card visibility, Phase 3's final-hand-values and tie-break gaps, all
+  logged above) without duplicating a full text line back into `player-tables`.
+
+**Not yet live-verified at all** — nothing in this entry has been checked in an actual browser.
+Specifically to check on next deploy: token x-position actually lines up with its printed
+number at real rendered sizes (not just the measured-from-source-PNG math), token art (alpha
+transparency, correct color per player) renders correctly, the vertical-lane fan-out looks
+reasonable rather than cramped at 6 players, and the `drop-shadow` filter reads against both
+the tan and olive halves of the track as intended.
+
+**Follow-up, same day**: after seeing a live screenshot of BGA's own standard player panel
+(name/score/flag box, not this game's custom board), also added a reputation readout there
+(`setupPlayerPanelReputation` in `Game.js`) via `this.bga.playerPanels.getElement(player.id)`
+— first use of that API in this project, unverified locally (see
+`docs/bga-studio-reference.md`'s new "Adding a custom stat to BGA's standard player panel"
+section for the full write-up and doc source). This is a second, independent readout of the
+same number the board token already shows — deliberately not a replacement for the token,
+since the token is the thing that's actually spatial/at-a-glance, this is just a precise
+number in the one place a player's eye is already looking for their score.
+
+**Live-verified and one geometry bug fixed (2026-08-17, later same day)**: a Studio screenshot
+showed the token sitting visibly left of its printed number, positive side only. Root cause:
+`posLeftEdge`'s original value (403) was taken directly from the very first detected divider
+peak in the Pillow scan, which turned out to be a ~5px outlier — every other divider on both
+halves of the track measured a consistent ~31px apart, but that one specific peak (right next
+to the wider "0" column) measured 35px from its neighbor. Refitting from the 9 *consistent*
+later divider positions instead (`718 - 10*31 = 408`) gives the correct value, confirmed
+against the live screenshot. Also updated `zeroColWidth` (72→77) since the "0" column's right
+edge is the same physical divider as `posLeftEdge`, not a separately-measured value — fixing
+one without the other would reintroduce the same inconsistency one column over.
+`negLeftEdge`/the negative-side spacing needed no correction; that half's divider measurements
+were already internally consistent (no outlier) when originally taken. **Worth generalizing**:
+when a pixel-measurement pipeline produces N samples that should be evenly spaced, trust a
+least-squares/majority fit over any single endpoint sample, even (especially) the ones nearest
+a genuinely-different neighboring region where antialiasing or a differently-colored abutting
+element is more likely to throw off exactly one reading.
+
+## Board & reputation-track rendering: a whole token silently invisible after refresh, two stacked bugs (2026-08-17)
+
+A live screenshot after a page refresh showed only one of two players' reputation tokens on
+the board — the other simply absent, no visible artifact, no browser console error at all
+(`console.log("Ending game setup")` printed cleanly, confirming `setup()` ran to completion for
+both players without throwing). That ruled out a crash and pointed at something computing a
+*silently wrong but valid* value instead. Two separate real bugs, both in code this session
+just wrote, neither one alone fully explaining the symptom without the other:
+
+- **`getAllDatas()`'s `players` query never cast its numeric columns.** `getCollectionFromDb`
+  returns every column as a raw PHP string (driver output, not cast) — this doc already has a
+  fully generic write-up of the exact same bug class in `Game::getPartCounts()`
+  (`docs/bga-studio-reference.md`'s "A missed `(int)` cast on a DB value..." section), but the
+  `players` query added for Phase 5 token art fell into it fresh anyway, because the query
+  itself long predates any numeric use of `reputation`/`score`/`id` — the original per-player
+  text line just interpolated the string into a text node, where string-vs-number is invisible.
+  Only `reputationTrackPositionPercent`'s new `value === 0` *strict* equality check (this file's
+  earlier "Board & reputation-track rendering" entry) actually exposed it: a `"0"` string
+  reputation fails `=== 0` and falls into the positive-value arithmetic branch instead, landing
+  a few percent off within the wide "0" column rather than dead center. Fixed by casting
+  `id`/`score`/`reputation` to `(int)` and `fired` to `(bool)` once in `Game.php`, at the
+  source, matching the established fix pattern rather than adding a defensive `Number()` at
+  every JS call site.
+- **An unmatched `player.color` produced an out-of-range sprite position that renders as fully
+  transparent, not visibly wrong.** `PLAYER_COLOR_HEX_TO_NAME[player.color]` returning
+  `undefined` (colorName not found) fed `PLAYER_COLORS.indexOf(undefined)` = `-1` into
+  `spritePositionPercent`, producing `background-position-x: -20%` — outside the sprite sheet's
+  0-100% range, which for a `background-repeat: no-repeat` element shows nothing at all (no
+  content there to display, just the fully-transparent PNG's own alpha/absence). A DOM element
+  genuinely existed, sized correctly, positioned correctly — just permanently invisible, and
+  nothing about that path throws or logs. Exact root cause of the color mismatch itself is still
+  unconfirmed (case-sensitivity in how BGA stores the hex vs. `gameinfos.jsonc`'s literal
+  casing is the leading suspect, unverified locally, no vendored framework to check either way)
+  — rather than chase that further blind, made the lookup case-insensitive (`.toUpperCase()`
+  before the lookup) and added a fallback to the first sprite column plus a `console.warn` on
+  any future mismatch, so the failure mode changes from *silently invisible* to *visibly wrong
+  color, loudly logged* regardless of what's actually causing a mismatch.
+
+**Worth generalizing, again**: this is the second time in one afternoon that "no exception, no
+visible clue, but something's wrong" turned out to trace back to a raw DB string flowing into
+code that assumed a real type (first the `roundStart` notification gap, now this). Any code
+path that does real comparison/arithmetic/lookup on a `gamedatas`-sourced value — not just
+display it as text — is worth a second look at whether the PHP side actually casts it, not just
+whether the JS logic itself looks right in isolation.
+
+**Live-verified fixed (2026-08-17, later same day)**: both fixes confirmed on Studio — the
+previously-invisible player's token now renders. This closes out §5's live-verification
+checklist: track geometry (both corrections above), token art/color, and the standard
+player-panel reputation readout are all confirmed working across a refresh.
+
+## Board & reputation-track rendering: the board isn't vertically symmetric between halves (2026-08-17, later same day)
+
+A further live screenshot flagged negative-side tokens sitting "a bit low" — specifically,
+overlapping the top edge of the printed `-10..-1` number strip. The original vertical
+placement used one universal `top: 50%` (board-vertical-center) for every token regardless of
+value, on the assumption that both halves' open track area were symmetric around board-center
+the way the horizontal geometry is. Re-measuring with Pillow (same scanline technique as the
+horizontal fix) showed that assumption was wrong: the negative half's number strip sits
+lower-middle with its own biggest open, strip-free area *above* it (y 36-134 of 232, center
+36.6%), while the positive half's strip sits near the top with its open area *below* it (y
+96-194, center 62.5%) — both open areas are exactly 98px tall (confirming a deliberate,
+symmetric board design), just mirrored across the strip rather than across the board's
+physical center. A single "50%" constant happened to clear the positive strip comfortably but
+sat right against the negative one.
+
+Fixed by giving `REPUTATION_TRACK` two additional measured constants
+(`negVerticalCenter`/`posVerticalCenter`) and a new `reputationTrackVerticalCenterPercent(value)`
+alongside the existing horizontal function — "0" keeps true board-center (its own two "0"
+labels sit at the very top/bottom edges, not mid-column, so nothing splits its open area the
+way the strips split the other two halves). Because a token can now change *vertical* region
+(crossing into or out of the "0" column) as well as horizontal position as reputation changes,
+`notif_reputationChanged` needed to start recomputing `top` too, not just `left` — the
+per-player lane offset (`docs/loaf-remarks.md`'s original §5 entry) is stored on the element
+itself (`dataset.laneOffsetPx`) precisely so it can be reapplied against a new vertical center
+without needing to re-derive which lane a player occupies from scratch on every notification.

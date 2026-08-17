@@ -431,6 +431,26 @@ etc.) — rewrite around generic examples before adding to the template.
   live verification, exercise a repeating notification at least twice (not just its first
   occurrence) before calling it verified.
 
+- [ ] **`getCollectionFromDb`/`getObjectListFromDb` return every column as a string — cast
+  numeric columns immediately, at the query site, not defensively at each consumer.** PDO/the
+  DB driver returns raw string values regardless of the SQL column's real type. Harmless as
+  long as every consumer only ever displays a value as text (string vs. number is invisible in
+  a text node) — the bug stays dormant until some later feature does real
+  comparison/arithmetic/lookup on the same field and gets silently wrong results with no
+  exception and no failing test (a numeric-string still passes `<`/`>`/`+`/`-`/`*` most of the
+  time via JS's automatic coercion, which is what makes this so easy to miss — it's usually one
+  specific operator, most often strict `===`, or `+` string-concatenating instead of adding,
+  that actually breaks). Hit twice independently in the same project
+  (`docs/bga-studio-reference.md`'s "A missed `(int)` cast on a DB value..." section, from
+  `Game::getPartCounts()`; then again in `Game.php`'s `players` query once Phase 5's
+  reputation-track token math started doing real arithmetic on `player.reputation` — see
+  `loaf-remarks.md`'s "Board & reputation-track rendering: a whole token silently invisible
+  after refresh" entry). Suggested template rule: whenever a `getCollectionFromDb`/
+  `getObjectListFromDb` call's result flows into `gamedatas` or a notification payload, cast
+  every numeric/boolean column right there, even if the current consumer only displays it as
+  text today — the query site is the one place that knows the column's real type, every future
+  consumer shouldn't have to re-derive it.
+
 ## Open question — needs resolving before it's portable
 
 - [ ] **PHP syntax ceiling: don't assume the newest PHP version.** Caught myself using PHP

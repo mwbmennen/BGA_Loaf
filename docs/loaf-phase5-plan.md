@@ -763,17 +763,21 @@ Same format as Phase 4's §8 — check items off in place as they're confirmed.
    the async/PHP-Deck gotchas (§4 step 12) actually got caught, before they could compound with
    §8's action-handling complexity. Real card art (2 boss piles, 2 pending-card slots, hover
    zoom tooltip) is deployable now — the first point in Phase 5 with something worth looking at.
-3. **Next**: Board & reputation track (§5) — still the plain-DOM placeholder from Phase 1-4;
-   doesn't depend on `bga-cards` at all (tokens aren't cards), so it's independent of what §7
-   just built, just not done yet.
-4. Hand/commit/reveal (§8) — the most involved remaining piece (animation timing,
+3. **Done** — Board & reputation track (§5): `img/board.png` as the track background, real
+   chef-hat token art (`img/tokens.png`) positioned per player via measured pixel geometry
+   rather than the old per-player text line. **Not yet live-verified** — the pixel geometry was
+   measured from the source PNG with Pillow, not confirmed against the actual rendered size in
+   a browser; see `docs/loaf-remarks.md`'s "Board & reputation-track rendering" entry for the
+   judgment calls made (color→sprite mapping, vertical lane stacking for same-value tokens,
+   dropping the old text display).
+4. **Next**: Hand/commit/reveal (§8) — the most involved remaining piece (animation timing,
    privacy-sensitive flip logic, replacing the action-button component); §7 already proved the
    library/asset pipeline works end-to-end, so this is de-risked relative to the original plan.
 5. Advanced-effect UI (§9) — a small delta on top of §8's component.
 6. `console.log`/translation audit (§11) — last, sweeping everything Phase 5 itself just added
    alongside the pre-existing scaffold debug lines.
 7. Sound only if trivial (§10); otherwise skip without regret.
-8. Two explicitly-deferred follow-ups from §7, worth picking up before calling Phase 5 fully
-   done: folding `reviewEffectApplied`'s text into the hover tooltip, and a real `loaf.css`
-   layout pass for the new container divs.
+8. Two explicitly-deferred follow-ups from §7, already picked up: folding `reviewEffectApplied`'s
+   text into the hover tooltip (done) — a real `loaf.css` layout pass for the pending-card
+   container divs is still outstanding.
 9. Deploy, live-verify per §13, update `docs/loaf-remarks.md`.

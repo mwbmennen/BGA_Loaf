@@ -1358,3 +1358,32 @@ notifications firing at different points that only partially overlap in payload 
 live verification, don't stop at "does the first instance load" — a bug that only manifests
 from the *second* occurrence of a repeating notification (second round, second turn, second
 resolution) needs at least two occurrences exercised live before calling a feature verified.
+
+---
+
+## Adding a custom stat to BGA's standard player panel
+
+BGA auto-renders a standard panel per player (name, active-turn indicator, score, flag) above
+the game area — separate from anything a game builds itself inside `gameArea`. To insert a
+custom counter/indicator into that existing panel rather than duplicating player info in a
+custom-built element, per the typed framework's Studio Migration Guide
+(en.doc.boardgamearena.com/BGA_Studio_Migration_Guide):
+
+```javascript
+const panel = this.bga.playerPanels.getElement(player.id); // returns the panel's own div
+panel.insertAdjacentHTML('beforeend', `<div>...</div>`);
+```
+
+`getElement(playerId)` is the typed-framework replacement for the older
+`this.getPlayerPanelElement(playerId)`; `getElementByNo(playerNo)` is the same lookup by seat
+number instead of player ID. For the panel's *built-in* score counter specifically (as opposed
+to a new custom one), `this.bga.playerPanels.getScoreCounter(playerId)` replaces the older
+`this.scoreCtrl[playerId]`; for a new custom counter beyond plain text, the docs point at the
+`ebg/counter` library rather than plain DOM text.
+
+**Unverified locally, like every framework API this project first-uses** — no vendored
+framework to confirm `this.bga.playerPanels` exists under that exact name on this project's
+typed framework (found via the official docs, not guessed, but the docs describe the API in
+general, not this project's specific dependency version). If it silently no-ops, whatever
+built the same information into a custom in-`gameArea` element remains the fallback source of
+truth.
