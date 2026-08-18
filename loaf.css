@@ -35,9 +35,7 @@
            Consequently, don't hesitate to put as many comments as necessary.
 */
 
-
 /* Note: you must not use any @import directive */
-
 
 /********* You can start writing your CSS below this line: **********/
 
@@ -52,18 +50,159 @@
    here would only risk fighting that instead of just letting it size itself.
 */
 #pending-cards {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 24px;
-    margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  margin-bottom: 12px;
 }
 
 #pending-order-card,
 #pending-review-card {
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Boss piles (docs/loaf-phase5-plan.md §7, Game.js's setupRoundCardStocks): each pile is a
+   fixed Boss character card (a plain background-image div, not a bga-cards card -- static
+   flavor art with no game data behind it, img/boss-sheet.jpg) anchored at the pile's inner
+   edge, with filed review cards fanned out behind it in a bga-cards SlotStock -- oldest
+   closest to the boss, newest furthest out, per the physical rulebook's own placement diagram
+   ("place new review cards under existing ones"). Angry fans left, happy fans right, so the
+   two boss cards sit back-to-back in the middle of #boss-piles and neither fan's growth path
+   collides with the other's.
+   Filed cards are rotated (card.rotation: 1, same field/value as the pending-review-card's own
+   rotation) -- confirmed by directly cropping the raw review-card scans (not guessed): the
+   printed success band runs across the raw art's top edge and the fail band across its bottom
+   edge, and rotating 90deg (bga-cards' own rotation handling, already relied on for the
+   pending-review-card) puts the success band on the card's right edge and the fail band on its
+   left edge. That's why a heavily-overlapped happy-pile fan (growing right, mostly covered on
+   its left/boss-facing side) reveals green, and an angry-pile fan (growing left, covered on its
+   right/boss-facing side) reveals red -- no manual image cropping needed, just overlap + z-index.
+   The reveal-strip width below (60px between slots 1-5) settled between two live-tried
+   extremes: 80px read as too spread out, 40px too cramped to tell consecutive cards apart --
+   close to the ~45px measured off the actual scans (the printed band is roughly 18% of the
+   card's 251px rotated on-screen width), but nudged up slightly for legibility. Slot 0 (the
+   oldest card, adjacent to the boss) keeps the tighter 40px gap deliberately -- it's covered
+   only by the boss card itself, not by another filed card, so it doesn't need the extra breathing
+   room the later slots do, and sitting closer there reads better against the boss card. */
+#boss-piles {
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+  margin-bottom: 12px;
+}
+
+.loaf_boss-pile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.loaf_boss-pile-fan {
+  position: relative;
+  width: 540px; /* boss card (180px) + up to 6 filed-card slots (60px reveal each), generous */
+  height: 251px;
+}
+
+.loaf_boss-card {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 180px;
+  height: 251px;
+  border-radius: 8px;
+  z-index: 10;
+}
+
+.loaf_boss-pile--angry .loaf_boss-card {
+  right: 0;
+}
+
+.loaf_boss-pile--happy .loaf_boss-card {
+  left: 0;
+}
+
+/* #boss-happy-pile/#boss-angry-pile (bga-cards' own SlotStock element) is left in normal flow
+   at the top of .loaf_boss-pile-fan, not absolutely positioned itself -- without an explicit
+   height it only grows to fit a *rotated* (180px-tall) card, shorter than the fan's own 251px
+   box, so its own 50% vertical center (what the filed-card slots below center on) sat higher
+   than the boss card's 50% center, confirmed live. Stretching it to the fan's full box makes
+   both centers agree. */
+#boss-happy-pile,
+#boss-angry-pile {
+  width: 100%;
+  height: 100%;
+}
+
+/* Filed-card slots (bga-cards' own SlotStock). Deliberately unsized here, same "let bga-cards
+   size the rotated card, don't fight it with a hardcoded container" precedent as
+   #pending-review-card -- only position/z-index/direction are this stylesheet's job. Higher
+   z-index = closer to the boss = placed earlier, so each new card (appended at the next, lower-
+   z-index, further-out slot) never covers an already-exposed earlier sliver.
+   Targeted via `[data-slot-id]`, not a per-index class -- SlotStock.createSlot() (bga-cards'
+   own source, not just its .d.ts) adds every class passed as `slotClasses` to *every* slot, not
+   one class per slot, so a `.loaf_boss-pile-slot-N` class approach silently collided (every
+   slot got all 6 classes, same-specificity cascade always picked the last one). `data-slot-id`
+   is a real per-slot attribute the library sets individually, confirmed in that same source
+   read. */
+#boss-happy-pile > div,
+#boss-angry-pile > div {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.loaf_boss-pile--angry [data-slot-id="0"] {
+  right: 40px;
+  z-index: 6;
+}
+.loaf_boss-pile--angry [data-slot-id="1"] {
+  right: 120px;
+  z-index: 5;
+}
+.loaf_boss-pile--angry [data-slot-id="2"] {
+  right: 180px;
+  z-index: 4;
+}
+.loaf_boss-pile--angry [data-slot-id="3"] {
+  right: 240px;
+  z-index: 3;
+}
+.loaf_boss-pile--angry [data-slot-id="4"] {
+  right: 300px;
+  z-index: 2;
+}
+.loaf_boss-pile--angry [data-slot-id="5"] {
+  right: 360px;
+  z-index: 1;
+}
+
+.loaf_boss-pile--happy [data-slot-id="0"] {
+  left: 40px;
+  z-index: 6;
+}
+.loaf_boss-pile--happy [data-slot-id="1"] {
+  left: 120px;
+  z-index: 5;
+}
+.loaf_boss-pile--happy [data-slot-id="2"] {
+  left: 180px;
+  z-index: 4;
+}
+.loaf_boss-pile--happy [data-slot-id="3"] {
+  left: 240px;
+  z-index: 3;
+}
+.loaf_boss-pile--happy [data-slot-id="4"] {
+  left: 300px;
+  z-index: 2;
+}
+.loaf_boss-pile--happy [data-slot-id="5"] {
+  left: 360px;
+  z-index: 1;
 }
 
 /* Round-card hover-zoom tooltip (Game.js's setupRoundCardFrontDiv): the zoomed card art sits
@@ -74,37 +213,37 @@
    rotated card) -- `position: relative` here is what lets the inner rotated image div center
    itself inside that container via `position: absolute; top/left: 50%`. */
 .loaf_card-tooltip {
-    display: flex;
-    gap: 12px;
-    max-width: 420px;
+  display: flex;
+  gap: 12px;
+  max-width: 420px;
 }
 
 .loaf_card-tooltip--side-by-side {
-    align-items: flex-start;
+  align-items: flex-start;
 }
 
 .loaf_card-tooltip--stacked {
-    flex-direction: column;
-    align-items: center;
+  flex-direction: column;
+  align-items: center;
 }
 
 .loaf_card-tooltip-image {
-    position: relative;
-    flex: 0 0 auto;
+  position: relative;
+  flex: 0 0 auto;
 }
 
 .loaf_card-tooltip-image > div {
-    position: absolute;
-    top: 50%;
-    left: 50%;
+  position: absolute;
+  top: 50%;
+  left: 50%;
 }
 
 .loaf_card-tooltip-text {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    font-size: 14px;
-    line-height: 1.4;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  line-height: 1.4;
 }
 
 /* Reputation-track board (docs/loaf-phase5-plan.md §5, Game.js's setupReputationBoard). Sized
@@ -114,13 +253,13 @@
    any rendered size, not just 740px (the same reasoning as §6's whole-board zoom needing
    percentage-based positioning, not fixed pixels). */
 #reputation-board {
-    position: relative;
-    width: 100%;
-    max-width: 740px;
-    aspect-ratio: 740 / 232;
-    margin: 0 auto 12px;
-    background-image: url('img/board.png');
-    background-size: 100% 100%;
+  position: relative;
+  width: 100%;
+  max-width: 740px;
+  aspect-ratio: 740 / 232;
+  margin: 0 auto 12px;
+  background-image: url("img/board.png");
+  background-size: 100% 100%;
 }
 
 /* One token per player, positioned by Game.js via inline `left`/`top` (data-driven, so it
@@ -137,23 +276,33 @@
    reputationTrackVerticalCenterPercent gives negative/positive values a different vertical
    center than "0" (Game.js). */
 .loaf_reputation-token {
-    position: absolute;
-    width: 26px;
-    height: 26px;
-    background-image: url('img/tokens.png');
-    background-size: 600% 100%;
-    background-repeat: no-repeat;
-    transform: translate(-50%, -50%);
-    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
-    transition: left 0.4s ease, top 0.4s ease;
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  background-image: url("img/tokens.png");
+  background-size: 600% 100%;
+  background-repeat: no-repeat;
+  transform: translate(-50%, -50%);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+  transition:
+    left 0.4s ease,
+    top 0.4s ease;
 }
 
 /* Reputation readout inserted into BGA's own standard player panel
    (Game.js's setupPlayerPanelReputation) -- sits below the framework's own score/flag row, so
    this stays small and muted rather than competing with it. */
 .loaf_panel-reputation {
-    font-size: 12px;
-    opacity: 0.85;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+/* Hand-count readout inserted into BGA's own standard player panel
+   (Game.js's setupPlayerPanelHandCount) -- same treatment as .loaf_panel-reputation above, just
+   moved out of the old #player-tables board block. */
+.loaf_panel-hand-count {
+  font-size: 12px;
+  opacity: 0.85;
 }
 
 /* Own hand (docs/loaf-phase5-plan.md §8, Game.js's setupHandAndCommitStocks) -- a bga-cards
@@ -161,7 +310,7 @@
    precedent as #pending-order-card/#pending-review-card above; only the surrounding spacing
    is this stylesheet's job. */
 #my-hand {
-    margin-top: 16px;
+  margin-top: 16px;
 }
 
 /* Hover-preview lift+border on a hand card, toggled in JS (Game.js's setupHandCardFrontDiv) as
@@ -188,13 +337,17 @@
    committed-slot placeholder cards (same manager `type`, setupCardsAndZoom), which are never
    clickable and shouldn't show a pointer cursor. */
 #my-hand .loaf-hand-card-front {
-    cursor: pointer;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  cursor: pointer;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .loaf_hand-card-hover {
-    transform: translateY(calc(var(--bga-cards_card-height, 251px) / -5)) !important;
-    /* !important confirmed necessary, not a first resort -- box-shadow alone (unlike
+  transform: translateY(
+    calc(var(--bga-cards_card-height, 251px) / -5)
+  ) !important;
+  /* !important confirmed necessary, not a first resort -- box-shadow alone (unlike
        transform, which worked immediately) was silently overridden, the third time this exact
        "bga-cards' own injected stylesheet outranks a single-class game selector" pattern has
        shown up this session (docs/loaf-remarks.md's Phase 5 §8 CSS-specificity entry has the
@@ -202,7 +355,7 @@
        specificity again). `blueviolet` fallback covers the brief window before
        setupHandAndCommitStocks sets the real custom property, and any future context where
        this class might apply with no player color in scope at all. */
-    box-shadow: inset 0 0 0 6px var(--loaf-my-player-color, blueviolet) !important;
+  box-shadow: inset 0 0 0 6px var(--loaf-my-player-color, blueviolet) !important;
 }
 
 /* Advanced-effect card choice (docs/loaf-phase5-plan.md §9, ResolveAdvancedEffect.js's
@@ -219,8 +372,8 @@
    style targeting a bga-cards-rendered element has lost to the library's own injected
    stylesheet this session). */
 .loaf_hand-card-ineligible {
-    opacity: 0.4 !important;
-    pointer-events: none !important;
+  opacity: 0.4 !important;
+  pointer-events: none !important;
 }
 
 /* The one card a swap effect can make eligible outside the hand entirely: this player's own
@@ -233,32 +386,31 @@
    consistency; `!important` proactively included given every other style targeting a
    bga-cards-rendered element this session has needed it. */
 .loaf_hand-card-eligible-swap {
-    cursor: pointer !important;
-    box-shadow: inset 0 0 0 6px var(--loaf-my-player-color, blueviolet) !important;
+  cursor: pointer !important;
+  box-shadow: inset 0 0 0 6px var(--loaf-my-player-color, blueviolet) !important;
 }
 
 /* Shared row of every player's committed card (setupHandAndCommitStocks), one glanceable
    "who's played, who hasn't" strip -- same flex-row treatment as #pending-cards above, rather
    than each committed slot being scattered inside its own #player-table-* block. */
 #committed-cards {
-    display: flex;
-    justify-content: center;
-    gap: 16px;
-    margin-bottom: 12px;
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin-bottom: 12px;
 }
 
 .loaf_committed-card-entry {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
 }
 
 .loaf_committed-card-name {
-    font-size: 12px;
-    opacity: 0.85;
+  font-size: 12px;
+  opacity: 0.85;
 }
-
 
 /*
     Example of CSS sprites (a black token and a white token, 20x20px each, embedded in the same "tokens.png" 40x20px image):
@@ -277,7 +429,3 @@
         background-repeat: none;
     }
 */
-
-
-
-

@@ -152,4 +152,18 @@ build_hand_zoom_sheet "$IMG_DIR/zoom-hand-2.jpg" red white yellow
 magick "$BOARD_DIR/board.png" -resize "740x" "$IMG_DIR/board.png"
 check_size "$IMG_DIR/board.png"
 
+# --- Boss-card sheet (2 tiles: angry, happy -- the fixed character card each boss pile's fan
+# sits behind, docs/loaf-phase5-plan.md §7). Same 180x251 display tier as the round cards, no
+# separate zoom tier (static flavor art, no per-card effect text worth zooming into) -- this is
+# the 10th img/ file, using the last file-count margin §4 step 6/11 already flagged. ---
+BOSS_FILES=(
+    "$REPO_ROOT/docs/card-scans/angry_boss.jpg"
+    "$REPO_ROOT/docs/card-scans/happy_boss.jpg"
+)
+for f in "${BOSS_FILES[@]}"; do
+    [[ -f "$f" ]] || { echo "  MISSING: $f" >&2; exit 1; }
+done
+montage -font "$MONTAGE_FONT" "${BOSS_FILES[@]}" -tile 2x1 -geometry "${DISPLAY_W}x${DISPLAY_H}+0+0" -quality 90 "$IMG_DIR/boss-sheet.jpg"
+check_size "$IMG_DIR/boss-sheet.jpg"
+
 echo "Done. $(ls "$IMG_DIR" | grep -v README | wc -l | tr -d ' ') sprite/image files in $IMG_DIR."

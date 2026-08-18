@@ -1264,3 +1264,150 @@ reveal correctly. Not fixed here (would need a new piece of server-side state sp
 recording "which value, if any, was publicly discarded via a swap this round" — meaningfully
 more machinery than the live-only case needed) — flagged as a real, if narrow, gap rather than
 silently left for someone to eventually notice.
+
+## Boss-pile fan layout: found real boss-card art, and decoded the rotation from pixels, not guesswork (2026-08-18)
+
+Building `#boss-piles`' real layout (`docs/loaf-phase5-plan.md` §7), the user supplied a
+rulebook screenshot showing the physical mechanic: a Boss character card fixed in place, with
+filed review cards slid mostly underneath it so only a thin "effect band" sliver of each peeks
+out, fanned outward as more cards are filed (oldest closest to the boss and most visible, newest
+joining at the outermost, most-hidden position — confirmed with the user, who corrected an
+initial misreading the other way around).
+
+Two things weren't in the original asset inventory or plan at all:
+
+1. **`docs/card-scans/angry_boss.jpg`/`happy_boss.jpg` exist** — real boss-character card art,
+   same 600×834 RGB JPEG format as the round-card scans, just never listed in
+   `docs/loaf-phase5-plan.md` §3's asset table because nobody had looked for them until this
+   pass. Added to the pipeline as a new 2-tile `img/boss-sheet.jpg` (40KB) — the 10th `img/`
+   file, one over `img/README`'s "typically fewer than 10" guidance; accepted deliberately (see
+   the plan doc's asset-manifest note) rather than contorting an existing sheet to fit two more
+   tiles.
+
+2. **Which edge of a filed card to reveal isn't obvious from the screenshot alone, and guessing
+   would have been a real risk of shipping a visually broken fan.** Rather than assume, cropped
+   the raw `basic_04_review.jpg` scan directly with ImageMagick into top/bottom/left/right
+   strips and looked at each. Result: the printed success (green) band runs full-width across
+   the raw scan's *top* edge, and the fail (red) band across its *bottom* edge — both
+   icon→chef-hats→number, left to right. Rotating the card 90° (exactly what `card.rotation: 1`
+   already does for the pending-review-card, an existing, live-verified piece of this codebase)
+   maps that raw top band to the rotated card's *right* edge and the raw bottom band to its
+   *left* edge. That single fact is what makes the whole fan work: a happy-pile fan growing
+   rightward, covered on its boss-facing (left) side by the boss card and older neighbors,
+   naturally reveals green on the right; an angry-pile fan growing leftward, covered on its
+   boss-facing (right) side, naturally reveals red on the left. No per-card image cropping is
+   needed anywhere — just heavy positional overlap plus a z-index that decreases outward (older/
+   more-boss-adjacent cards painted on top), so each card's already-exposed sliver is never
+   covered by a later one.
+
+Implementation consequence: boss-pile cards were previously deliberately left *unrotated*
+(`docs/loaf-phase5-plan.md` §7's earlier text: "boss-pile cards also have `side: 'review'` but
+must stay unrotated") — that was a reasonable simplification before any fan existed, but is now
+wrong and was changed to `rotation: 1`, matching the pending-review-card. Also swapped
+`bossHappyStock`/`bossAngryStock` from a `BgaCards.LineStock` to a `BgaCards.SlotStock` with 6
+pre-registered, individually-CSS-positioned slots (`loaf_boss-pile-slot-0..5`) — a `LineStock`'s
+flex-gap layout has no way to express per-card overlap and z-index, which the fan fundamentally
+needs. Slot assignment (`pileSlot`, a monotonic per-pile counter) is arrival order, not
+something derivable from the card's own data, so it's assigned by the client at `addCard` time
+rather than computed inside `mapCardToSlot` the way a normal `SlotStock` usage would.
+
+**Live-verified on Studio, three real bugs found and fixed**, not just a clean confirmation:
+
+1. **The fan didn't fan at all — every filed card landed at the same, furthest-out position.**
+   Root cause: `slotClasses: ['loaf_boss-pile-slot-0', ..., '-5']` was passed assuming
+   `slotClasses[i]` maps to `slotsIds[i]` (one class per slot). Adding `!important` to the CSS
+   changed nothing, which was itself the diagnostic clue — the conflict wasn't bga-cards' own
+   stylesheet outranking this one (its actual CSS, fetched and read directly, uses no
+   `!important` anywhere and this file's ID-scoped selectors already had higher specificity
+   regardless). Reading `SlotStock.createSlot()` in the library's real source (not just the
+   `.d.ts`) showed why: `slots[slotId].classList.add(...['slot', ...this.slotClasses])` adds
+   *every* class in `slotClasses` to *every* slot, unconditionally. Every filed card ended up
+   carrying all 6 `loaf_boss-pile-slot-N` classes at once, and since they're equal specificity,
+   the cascade always picked whichever rule appeared last in the stylesheet (`slot-5`) — a
+   collision between this file's own rules, not a fight against the library, which is exactly
+   why `!important` on both sides changed nothing. Fixed by dropping `slotClasses` entirely and
+   targeting the real per-slot attribute the source also revealed:
+   `slots[slotId].dataset.slotId = slotId`, so `loaf.css` now uses `[data-slot-id="N"]`.
+2. **Filed cards sat visibly higher than the boss card.** `#boss-happy-pile`/`#boss-angry-pile`
+   (the `SlotStock` element itself) was left unsized in normal flow inside `.loaf_boss-pile-fan`,
+   so it only grew tall enough to fit a *rotated* (180px-tall) card — shorter than the fan's own
+   251px box — and its own 50% vertical center (what the filed-card slots center on) didn't
+   match the boss card's 50% center. Fixed with an explicit `width/height: 100%` on the pile
+   element so both centers agree.
+3. **Reveal-strip width tuned live through several values**, since "how much of each card should
+   peek out" has no single correct answer independent of actually looking at it: 48px (the
+   as-measured value) felt too cramped once real cards were on screen, 80px too spread out, 60px
+   landed right (between slots 1-5). The very first slot (adjacent to the boss, covered only by
+   the boss card itself rather than by another filed card) got its own smaller 40px value on top
+   of that — it doesn't need the extra breathing room the later, card-on-card slots do.
+
+No Core/PHP changes anywhere in this pass — confirms `docs/loaf-phase5-plan.md` §12's own
+"the Core PHPUnit diff is empty" success criterion held even while chasing a real, multi-layered
+client-side bug.
+
+## Player panel absorbs #player-tables entirely: name, reputation, and hand count all live there now (2026-08-18)
+
+By explicit request: moved the hand-count readout from the custom `#player-tables` board block
+into BGA's own standard player panel (`setupPlayerPanelHandCount`, same
+`this.bga.playerPanels.getElement(playerId)` pattern §5 already established for reputation),
+reusing the exact same element id (`hand-count-player-${playerId}`) the pre-existing
+`adjustHandCount` already targets — only where the span lives moved, not how live updates find
+it. Once hand count was gone, `#player-tables`'s only remaining content was each player's own
+name — pure duplication of what the panel already shows on its own — so removed the block
+entirely (both the container div and the per-player `insertAdjacentHTML` loop) rather than leave
+an empty-feeling shell.
+
+One knock-on fix this required: `notif_playerFired`'s "FIRED" end-game marker was the one other
+thing still targeting `player-table-${playerId}` (an id that no longer exists once the block was
+removed) — redirected to the same player-panel element instead, so the marker doesn't silently
+stop appearing.
+
+**Live-verified**: hand count and reputation both display and update correctly in the panel, no
+leftover empty space where `#player-tables` used to render, FIRED marker confirmed working from
+its new panel location.
+
+## Phase 5 live verification (2026-08-18)
+
+Worked through `docs/loaf-phase5-plan.md` §13's checklist live on Studio, across several
+sessions covering board/reputation (PR #23, already closed out separately), then boss piles,
+hand/commit/reveal, advanced-effect UI, `bga-zoom`, cross-browser rendering, and cleanup in this
+pass. Every checklist item now passes; the real work was in the bugs found along the way, not in
+confirming a clean implementation:
+
+- **Boss-pile fan** (§7): the biggest chunk of this pass. Found real, previously-uncataloged
+  boss-character art (`docs/card-scans/{angry,happy}_boss.jpg`), decoded the physical
+  slide-under-the-boss mechanic by directly cropping the review-card scans rather than guessing
+  (success band on the raw top edge, fail band on the bottom — rotating 90° puts them on the
+  right/left edges respectively), then hit and fixed three real implementation bugs: a
+  `slotClasses`-applies-to-every-slot misunderstanding of `bga-cards`' real `SlotStock` source
+  (not just its `.d.ts`) that silently collapsed the whole fan to one position, a vertical
+  centering mismatch between the boss card and the filed-card slots, and several rounds of
+  live-tuned reveal-strip spacing (settled at 60px for most slots, 40px for the one adjacent to
+  the boss). Full blow-by-blow in the "Boss-pile fan layout" entries above.
+- **Player panel consolidation**: hand count moved from a bespoke `#player-tables` board block
+  into BGA's own standard player panel (alongside reputation), and `#player-tables` removed
+  entirely once it had nothing left but a duplicate name — see the entry above.
+- **Hand/commit/reveal and advanced-effect UI** (§8/§9): both had been implemented but never
+  actually opened in a browser before this pass. Live-tested clean — own hand rendering, commit,
+  opponent privacy, simultaneous reveal (including the specific "live push, not just page load"
+  async-timing risk the plan flagged up front), advanced-effect card eligibility, and mid-round
+  refresh reconstruction all passed with no further fixes needed.
+- **`console.log`/translation audit** (§11): commented out (not deleted) the 6 leftover scaffold
+  debug lines. The translation half of this audit turned out to need a different method than
+  planned — Studio's own testing tables have no submitted translations for a private/unpublished
+  game, so switching UI language wouldn't render anything different from English regardless of
+  wrapping, making a live non-English check meaningless here. Substituted a static grep audit,
+  which caught a real gap: `#pending-cards`/`#boss-piles`' own labels ("Next order card",
+  "Angry boss", etc., from §7's original pass) were unwrapped literals, now fixed.
+- **`bga-zoom`, cross-browser, asset pipeline**: all confirmed clean — zoom controls, whole-board
+  scaling, persistence across reload, card alignment at non-100% zoom, Firefox color rendering
+  (the CMYK-inversion gotcha never surfaced), and every `img/` file confirmed under the 4MB
+  ceiling by exact byte count (`zoom-hand-2.jpg` is the largest at 3,265,044 bytes, ~3.1MB).
+
+**No Core/PHP changes anywhere across this entire live-verification pass** — every fix was
+JS/CSS/asset-pipeline, confirming `docs/loaf-phase5-plan.md` §12's own "the Core PHPUnit diff is
+empty" success criterion held for the phase as a whole, not just individual steps.
+
+Phase 5 is complete: every item in `docs/loaf-phase5-plan.md` §2's scope and §13's live-
+verification checklist is done and checked off. Not pursued: sound (§10, stretch-only, no
+trivial source material ever turned up — skipped without regret, per the plan's own framing).

@@ -29,6 +29,18 @@ const ROUND_CARD_SPRITE_INDEX = Object.fromEntries(
 const ROUND_CARD_SHEET_COLS = 6;
 const ROUND_CARD_SHEET_ROWS = 4;
 
+// The fixed Boss character card each pile's fan sits behind (img/boss-sheet.jpg, 2 tiles,
+// tools/build-sprite.sh) -- order matches that script's BOSS_FILES list exactly.
+const BOSS_SPRITE_INDEX = { angry: 0, happy: 1 };
+const BOSS_SHEET_COLS = 2;
+
+// Max physical cards ever expected in one boss pile: EndConditionChecker::CARDS_TO_END is a
+// *weighted* threshold (5), and every card contributes >=1 weight, so a pile's physical card
+// count can never exceed 5 before the game ends. 6 gives one slot of headroom. Pre-registering
+// a fixed SlotStock (docs/loaf-phase5-plan.md §7's fan) rather than growing it dynamically --
+// same reasoning as pendingOrderStock/pendingReviewStock's fixed single slot.
+const BOSS_PILE_MAX_SLOTS = 6;
+
 // Shared 6-color ordering (green/orange/purple/red/white/yellow) -- matches
 // gameinfos.jsonc's player_colors list and both tools/build-sprite.sh's HAND_FILES and
 // TOKEN_FILES loops, all written from the same §3 point 6 color sampling. Used to index both
@@ -374,7 +386,7 @@ class EndGame {
 
 export class Game {
   constructor(bga) {
-    console.log("loaf constructor");
+    // console.log("loaf constructor"); // Phase 5 §11 cleanup -- commented out, not deleted
     this.bga = bga;
 
     // Confirmed live (2026-08-17): the framework calls a freshly-entered state's own
@@ -409,7 +421,7 @@ export class Game {
     this.bga.states.register("EndGame", this.endGame);
 
     // Uncomment the next line to show debug informations about state changes in the console. Remove before going to production!
-    this.bga.states.logger = console.log;
+    // this.bga.states.logger = console.log; // Phase 5 §11 cleanup -- commented out, not deleted
   }
 
   /*
@@ -426,7 +438,7 @@ export class Game {
     */
 
   async setup(gamedatas) {
-    console.log("Starting game setup");
+    // console.log("Starting game setup"); // Phase 5 §11 cleanup -- commented out, not deleted
     this.gamedatas = gamedatas;
 
     await this.setupCardsAndZoom();
@@ -445,27 +457,32 @@ export class Game {
       `
             <div id="pending-cards">
                 <div>
-                    <div>Next order card</div>
+                    <div>${_("Next order card")}</div>
                     <div id="pending-order-card"></div>
                 </div>
                 <div>
-                    <div>Current review card</div>
+                    <div>${_("Current review card")}</div>
                     <div id="pending-review-card"></div>
                 </div>
             </div>
             <div id="boss-piles">
-                <div>
-                    <div>Happy boss: <span id="boss-happy-count">${bossHappyCount}</span> / 5</div>
-                    <div id="boss-happy-pile"></div>
+                <div class="loaf_boss-pile loaf_boss-pile--angry">
+                    <div>${_("Angry boss")}: <span id="boss-angry-count">${bossAngryCount}</span> / 5</div>
+                    <div class="loaf_boss-pile-fan">
+                        <div id="boss-angry-card" class="loaf_boss-card"></div>
+                        <div id="boss-angry-pile"></div>
+                    </div>
                 </div>
-                <div>
-                    <div>Angry boss: <span id="boss-angry-count">${bossAngryCount}</span> / 5</div>
-                    <div id="boss-angry-pile"></div>
+                <div class="loaf_boss-pile loaf_boss-pile--happy">
+                    <div>${_("Happy boss")}: <span id="boss-happy-count">${bossHappyCount}</span> / 5</div>
+                    <div class="loaf_boss-pile-fan">
+                        <div id="boss-happy-card" class="loaf_boss-card"></div>
+                        <div id="boss-happy-pile"></div>
+                    </div>
                 </div>
             </div>
             <div id="reputation-board"></div>
             <div id="committed-cards"></div>
-            <div id="player-tables"></div>
             <div id="my-hand"></div>
         `,
     );
@@ -473,29 +490,19 @@ export class Game {
     this.setupRoundCardStocks(gamedatas);
     this.setupReputationBoard(gamedatas);
     this.setupPlayerPanelReputation(gamedatas);
+    this.setupPlayerPanelHandCount(gamedatas);
 
-    // Setting up player boards: name + hand card count. Reputation lives on the
-    // reputation-board token (setupReputationBoard, §5); the face-down "committed" card slot
-    // (docs/loaf-phase5-plan.md §8) lives in its own shared #committed-cards row instead of
-    // embedded per player-table, so every player's committed card sits horizontally next to
-    // every other's -- one glanceable row of "who's played, who hasn't" rather than scattered
-    // across each player's own block. Opponents only ever get a hand *count*, never values
+    // The old #player-tables board block (name + hand count) is gone entirely now -- both moved
+    // to BGA's own standard player panel (setupPlayerPanelReputation/setupPlayerPanelHandCount,
+    // above); the panel already shows each player's name itself, so a second, bespoke
+    // board-adjacent name block was pure duplication. The face-down "committed" card slot
+    // (docs/loaf-phase5-plan.md §8) lives in its own shared #committed-cards row -- every
+    // player's committed card sits horizontally next to every other's, one glanceable row of
+    // "who's played, who hasn't". Opponents only ever get a hand *count*, never values
     // (docs/loaf-open-questions.md Q3 -- hands/discards are private to their owner); the
     // committed slot shows THAT they've played (public, once committed) without leaking WHAT
     // until cardPlayedRevealed.
     Object.values(gamedatas.players).forEach((player) => {
-      const handCount = gamedatas.handCount[player.id] ?? 0;
-
-      document.getElementById("player-tables").insertAdjacentHTML(
-        "beforeend",
-        `
-                <div id="player-table-${player.id}">
-                    <strong>${player.name}</strong>
-                    <div>Hand: <span id="hand-count-player-${player.id}">${handCount}</span> card(s)</div>
-                </div>
-            `,
-      );
-
       document.getElementById("committed-cards").insertAdjacentHTML(
         "beforeend",
         `
@@ -512,7 +519,7 @@ export class Game {
     // Setup game notifications to handle (see "setupNotifications" method below)
     this.setupNotifications();
 
-    console.log("Ending game setup");
+    // console.log("Ending game setup"); // Phase 5 §11 cleanup -- commented out, not deleted
     this.markReady();
   }
 
@@ -612,8 +619,48 @@ export class Game {
       slotsIds: [0],
       mapCardToSlot: () => 0,
     });
-    this.bossHappyStock = new this.BgaCards.LineStock(this.roundCardsManager, document.getElementById("boss-happy-pile"));
-    this.bossAngryStock = new this.BgaCards.LineStock(this.roundCardsManager, document.getElementById("boss-angry-pile"));
+    // Boss piles (docs/loaf-phase5-plan.md §7): a fixed Boss character card (plain img, not a
+    // bga-cards card -- it's static flavor art with no game data behind it) anchored at the
+    // pile's inner edge, with filed review cards fanned out from it as a SlotStock of
+    // pre-registered slots (BOSS_PILE_MAX_SLOTS) rather than a LineStock -- a LineStock's flex
+    // layout has no way to express the heavy per-slot overlap + z-index the fan needs. `rotation:
+    // 1` matches the pending-review-card's own rotation: rotating the raw scan puts its printed
+    // success band on the card's right edge and its fail band on the left edge (confirmed by
+    // directly cropping the raw art, not guessed), which is exactly why the happy pile's fan
+    // (right of its boss) reveals green and the angry pile's fan (left of its boss) reveals red
+    // once each card is mostly covered by its boss/older neighbors. mapCardToSlot reads
+    // `card.pileSlot`, an arrival-order index this client assigns (bossHappyNextSlot/
+    // bossAngryNextSlot below) -- SlotStock's own mapCardToSlot can't derive pile position from
+    // the card's own data, only from when it arrived.
+    //
+    // No `slotClasses` here -- confirmed live, then read the library's own source
+    // (bga-cards.esm.js) to find out why: SlotStock.createSlot() does
+    // `slots[slotId].classList.add(...['slot', ...this.slotClasses])`, adding *every* class in
+    // `slotClasses` to *every* slot, not slotClasses[i] to slotsIds[i] as the settings shape
+    // suggests. Every filed card ended up carrying all 6 loaf.css `.loaf_boss-pile-slot-N`
+    // classes, and since they're equal specificity, the last one in the stylesheet always won
+    // regardless of the card's real slot -- adding `!important` to those rules didn't help
+    // because the collision was between this stylesheet's own rules, not a fight against
+    // bga-cards'. The library's source also confirms `slots[slotId].dataset.slotId = slotId` --
+    // a real per-slot attribute -- so loaf.css targets `[data-slot-id="N"]` instead.
+    const slotIds = Array.from({ length: BOSS_PILE_MAX_SLOTS }, (_, i) => i);
+    this.bossHappyStock = new this.BgaCards.SlotStock(this.roundCardsManager, document.getElementById("boss-happy-pile"), {
+      slotsIds: slotIds,
+      mapCardToSlot: (card) => card.pileSlot,
+    });
+    this.bossAngryStock = new this.BgaCards.SlotStock(this.roundCardsManager, document.getElementById("boss-angry-pile"), {
+      slotsIds: slotIds,
+      mapCardToSlot: (card) => card.pileSlot,
+    });
+    this.bossHappyNextSlot = 0;
+    this.bossAngryNextSlot = 0;
+
+    for (const bossType of ["happy", "angry"]) {
+      const bossCardDiv = document.getElementById(`boss-${bossType}-card`);
+      bossCardDiv.style.backgroundImage = `url(${this.bga.images.getImgUrl("boss-sheet.jpg")})`;
+      bossCardDiv.style.backgroundSize = `${BOSS_SHEET_COLS * 100}% 100%`;
+      bossCardDiv.style.backgroundPositionX = spritePositionPercent(BOSS_SPRITE_INDEX[bossType], BOSS_SHEET_COLS);
+    }
 
     this.pendingOrderStock.addCard({ id: gamedatas.currentOrderCardId, type: gamedatas.currentOrderCardType, side: "order" });
     this.pendingReviewStock.addCard({
@@ -625,9 +672,16 @@ export class Game {
     // bossHappy/bossAngry are PHP-Deck-shaped keyed-by-id objects, not arrays -- Object.values()
     // per the documented gotcha (docs/loaf-phase5-plan.md §4 step 12). Every filed card resolved
     // via its review side regardless of which pile it's in (that's how it got filed at all), so
-    // `side: "review"` is fixed here, not per-card.
-    this.bossHappyStock.addCards(Object.values(gamedatas.bossHappy).map((card) => ({ ...card, side: "review" })));
-    this.bossAngryStock.addCards(Object.values(gamedatas.bossAngry).map((card) => ({ ...card, side: "review" })));
+    // `side: "review"` is fixed here, not per-card. Object.values() iteration order on a PHP
+    // Deck's keyed-by-id map matches ascending card id, which matches filing order (ids are
+    // assigned sequentially) -- so assigning pileSlot in that same iteration order reconstructs
+    // the correct oldest-to-newest fan on a page refresh, not just on a live notification.
+    this.bossHappyStock.addCards(
+      Object.values(gamedatas.bossHappy).map((card) => ({ ...card, side: "review", rotation: 1, pileSlot: this.bossHappyNextSlot++ })),
+    );
+    this.bossAngryStock.addCards(
+      Object.values(gamedatas.bossAngry).map((card) => ({ ...card, side: "review", rotation: 1, pileSlot: this.bossAngryNextSlot++ })),
+    );
   }
 
   // Shared by the reputation-track token (§5) and the hand/committed-card art (§8) -- both
@@ -775,6 +829,24 @@ export class Game {
       panel.insertAdjacentHTML(
         "beforeend",
         `<div class="loaf_panel-reputation">${_("Reputation")}: <span id="reputation-panel-player-${player.id}">${player.reputation}</span></div>`,
+      );
+    });
+  }
+
+  // Hand-count readout, same panel/pattern as setupPlayerPanelReputation above -- moved out of
+  // the custom #player-tables board block per the same reasoning (per-player status belongs in
+  // BGA's own standard panel, not a bespoke board-adjacent block). Keeps the exact same element
+  // id (`hand-count-player-${playerId}`) the pre-existing `adjustHandCount` already looks up, so
+  // every notification that changes hand size (commit, recycle, discard) keeps working
+  // unchanged -- only where this span lives in the DOM changed, not how it's targeted.
+  setupPlayerPanelHandCount(gamedatas) {
+    Object.values(gamedatas.players).forEach((player) => {
+      const panel = this.bga.playerPanels.getElement(player.id);
+      if (!panel) return;
+      const handCount = gamedatas.handCount[player.id] ?? 0;
+      panel.insertAdjacentHTML(
+        "beforeend",
+        `<div class="loaf_panel-hand-count">${_("Hand")}: <span id="hand-count-player-${player.id}">${handCount}</span> ${_("card(s)")}</div>`,
       );
     });
   }
@@ -935,12 +1007,12 @@ export class Game {
 
     */
   setupNotifications() {
-    console.log("notifications subscriptions setup");
+    // console.log("notifications subscriptions setup"); // Phase 5 §11 cleanup -- commented out, not deleted
 
     // automatically listen to the notifications, based on the `notif_xxx` function on this class.
     // Uncomment the logger param to see debug information in the console about notifications.
     this.bga.notifications.setupPromiseNotifications({
-      logger: console.log,
+      // logger: console.log, // Phase 5 §11 cleanup -- commented out, not deleted
     });
   }
 
@@ -1058,10 +1130,15 @@ export class Game {
 
     // Moves the actual card (with animation) from the pending-review slot into the pile it
     // just resolved into -- `fromStock` automatically removes it from pendingReviewStock, so
-    // that slot is already empty by the time the next notif_roundStart fires.
+    // that slot is already empty by the time the next notif_roundStart fires. `pileSlot` is
+    // this client's own arrival-order counter (bossHappyNextSlot/bossAngryNextSlot,
+    // setupRoundCardStocks), appended to -- new cards always join the fan at its outermost,
+    // newest slot (docs/loaf-phase5-plan.md §7). `rotation: 1` matches every other filed card
+    // in this pile (same reasoning as setupRoundCardStocks' initial seeding).
     const targetStock = args.bossPile === "happy" ? this.bossHappyStock : this.bossAngryStock;
+    const nextSlotCounterKey = args.bossPile === "happy" ? "bossHappyNextSlot" : "bossAngryNextSlot";
     await targetStock.addCard(
-      { id: args.reviewCardId, type: args.reviewCardType, side: "review" },
+      { id: args.reviewCardId, type: args.reviewCardType, side: "review", rotation: 1, pileSlot: this[nextSlotCounterKey]++ },
       { fromStock: this.pendingReviewStock },
     );
   }
@@ -1196,13 +1273,14 @@ export class Game {
   async notif_endGameBonusApplied(_args) {}
 
   // Matches Game.php's `playerFired` notification (EndGame). Plain-text marker only --
-  // functional, not pretty, same scope as the rest of Phase 1-3's client (real polish is
-  // Phase 5). The BGA ranking screen itself already shows fired players tied at the bottom
-  // via player_score/player_score_aux; this just makes "why" legible on the board too.
+  // functional, not pretty. The BGA ranking screen itself already shows fired players tied at
+  // the bottom via player_score/player_score_aux; this just makes "why" legible too. Targets the
+  // player panel now that #player-tables is gone (this session's boss-pile/player-panel pass) --
+  // same panel setupPlayerPanelReputation/setupPlayerPanelHandCount already write into.
   async notif_playerFired(args) {
-    const element = document.getElementById(`player-table-${args.player_id}`);
-    if (element) {
-      element.insertAdjacentHTML("beforeend", `<div>${_("FIRED")}</div>`);
+    const panel = this.bga.playerPanels.getElement(args.player_id);
+    if (panel) {
+      panel.insertAdjacentHTML("beforeend", `<div>${_("FIRED")}</div>`);
     }
   }
 }
