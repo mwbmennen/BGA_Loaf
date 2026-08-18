@@ -1304,6 +1304,8 @@ getId: (card) => card.playerId !== undefined
 ```
 Then the reveal is just `manager.updateCardInformations({ ...same identity field, ...real front data, visible: true })` — no `removeCard`/`addCard` pair needed, and the existing DOM element's own flip animation runs for free.
 
+**Caution if this same card can later move to a different stock via `addCard(card, { fromStock })`**: confirmed via the real source that `fromStock` requires the object passed to the destination's `addCard` to keep producing the *same* `manager.getId()` result as whatever's currently tracked in `fromStock` — the move is resolved by id lookup, not object identity. That means the moved card keeps whichever identity field this pattern gave it (e.g. `playerId`) even once it's sitting in an entirely different, ordinary stock going forward. If that identity field can repeat (a `playerId` will, the next time that same player triggers the same placeholder-card flow again), two genuinely different cards can end up computing the same id — one now-relocated card still carrying the old scheme, and a fresh placeholder built the normal way. **Fix:** use a value that can never repeat for the whole session (a monotonic counter, not a player/seat id) as this identity field, if any card built with this pattern might ever be moved to another stock via `fromStock` rather than only ever being revealed in place.
+
 ### `setSelectableCards()` is a silent no-op while `selectionMode` is still `'none'` — call `setSelectionMode()` instead
 
 **Symptom:** cards render correctly (right art, right position), and `stock.onCardClick = ...`
@@ -1553,3 +1555,33 @@ typed framework (found via the official docs, not guessed, but the docs describe
 general, not this project's specific dependency version). If it silently no-ops, whatever
 built the same information into a custom in-`gameArea` element remains the fallback source of
 truth.
+
+---
+
+## `notify->player()` for data that's safe to reveal to one specific player but not the whole table
+
+`notify->all(...)`'s args payload is delivered to *every* connected client identically — a
+message template can choose not to *display* a field, but the raw data still reaches every
+browser (visible via devtools/network inspection regardless of the log text). That's fine for
+genuinely public information, but wrong for something that's private to one player yet still
+needs to reach their own client for a UI update (e.g. revealing which specific card a
+deterministic, non-interactive effect drew from that player's own private discard pile back
+into their own private hand — nobody else needs to know, but the affected player's own client
+does, to actually render the card).
+
+`Notify::player(int $playerId, string $type, string $message, array $args = [])` — the
+per-player counterpart to `notify->all()` — solves this: same shape, but delivered (and shown
+in the game log) only to the specified player. Fire it as a *second*, separate notification
+alongside a normal `notify->all()` that covers the public "something happened" log line without
+the private field:
+
+```php
+$this->bga->notify->all('cardRecycled', clienttranslate('${player_name} recycles a card'), [
+    'player_id' => $playerId, 'player_name' => $name, // no `value` here
+]);
+$this->bga->notify->player($playerId, 'cardRecycledValue', clienttranslate('You recycle ${value}'), [
+    'value' => $value,
+]);
+```
+The client then handles `notif_cardRecycledValue` with no `args.player_id` check needed — the
+framework itself already guarantees it only ever arrives for the one player it was sent to.

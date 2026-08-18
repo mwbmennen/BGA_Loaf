@@ -1052,3 +1052,215 @@ shows only this game's own hover/commit styling, no extra library-driven border.
 out the hand-card interaction/styling saga for §8: hover previews correctly (lift + border,
 matching the click look), commits animate away directly from the hovered position with no
 settle-down step, no phantom hover on a reflowed neighbor, and no double-border on click.
+
+## Phase 5 §9: advanced-effect interactive UI, and closing §8's known gap (2026-08-18)
+
+Implemented `docs/loaf-phase5-plan.md` §9 (`ResolveAdvancedEffect` reusing §8's `HandStock`
+instead of a button list) together with the gap §8's PR explicitly deferred (wiring
+`notif_cardRecycled`/`notif_playerDiscarded`/`notif_cardSwapped` into real `handStock`
+mutations, not just the text hand-count) — the two turned out to share enough machinery
+(tracking the acting player's own clicked/played card client-side, since none of these
+notifications carry a value, same privacy discipline as `playerCommitted`) that splitting them
+into separate sessions would have meant re-deriving the same pattern twice.
+
+- **Swap effects' eligible set can include the player's own played card, not just their
+  hand.** `SwapEffectResolver::eligibleDiscards` mixes the played value into its own candidate
+  set server-side (`docs/loaf-phase4-plan.md` §4) — but by the time `ResolveAdvancedEffect`
+  runs, that card physically lives in the player's *committed slot* (already revealed), not
+  their `HandStock`. `discard_choice` never has this case (its own `eligibleValuesFor` is just
+  the hand). Handled by giving the committed-slot card its own eligible/clickable treatment
+  (`loaf_hand-card-eligible-swap`) alongside the hand cards', rather than trying to force it
+  into `HandStock` itself.
+- **`myPlayedCardValue`, a new Game-level field that outlives `pendingCommitCard`.** §8's
+  `pendingCommitCard` gets nulled out the moment `notif_playerCommitted` consumes it — fine for
+  §8 alone, but `notif_cardSwapped` (fired much later, after `cardPlayedRevealed` and possibly
+  an entire `ResolveAdvancedEffect` state) needs to know this player's own played card's value
+  too, to distinguish "discarded their own played card" (hand genuinely unchanged) from "kept
+  the played card, discarded a hand card instead" (a real swap: remove the discarded hand card,
+  add the played card back) — the notification payload can't carry this either. Set once in
+  `PlayCards.onCardClick` (the only place a card's value is ever originally known to the
+  client), reset at the next round's `roundStart`, alongside every other per-round display that
+  handler already clears.
+- **First use of `notify->player()` in this project.** `cardRecycled`'s broadcast notification
+  can't safely carry which card was recycled — discard-pile contents are private per
+  `docs/loaf-open-questions.md` Q3, and a `notify->all()` payload is visible to every connected
+  client regardless of whether the message text references it, unlike a state's `_private`
+  mechanism. Added a second, player-scoped `cardRecycledValue` notification (already stubbed in
+  `tests/stubs/BgaFrameworkStubs.php`, but this is the first real call site) carrying just the
+  value, to exactly the one player it's relevant to. Generic writeup in
+  `docs/bga-studio-reference.md`.
+- **Ineligible hand cards stay visible, dimmed and inert, rather than being hidden** — matches
+  the plan's own explicit instruction (§9), and the same "show the whole hand, explain why only
+  some cards qualify" reasoning as `discard_recycle_lowest`'s earlier visibility fixes.
+  `pointer-events: none` on the same class also transitively disables §8's hover-preview
+  listeners (bound on a descendant element) with no separate JS gating needed for that.
+
+**Not yet live-verified at all** — nothing in this entry has been checked in an actual browser.
+Advanced mode (`with_advanced_cards`) needs a live game to exercise any of this at all.
+Specifically to check on next deploy: `discard_choice` dims the right cards and discards the
+clicked one from the real hand; a swap effect correctly offers both the hand cards *and* the
+player's own committed card as choices, and both outcomes (self-discard vs. genuine swap)
+update the hand correctly; `cardRecycled`'s player-scoped value notification actually adds the
+right card to the right player's hand with no console error (the one piece of this entry
+resting on a genuinely unverified framework API, `notify->player()`); and a page refresh
+mid-`ResolveAdvancedEffect` correctly re-marks eligibility from a fresh `getArgs()` call.
+
+**Two follow-up fixes, same day, from live testing**:
+
+- **`pointer-events: none` on `.loaf_hand-card-ineligible` was silently overridden** —
+  confirmed live: dimmed/ineligible cards still hover-previewed the commit lift/border despite
+  being unclickable. The fourth time this exact session a plain-specificity style targeting a
+  `bga-cards`-rendered element lost to the library's own injected stylesheet (see this doc's
+  earlier CSS-specificity entries for the pattern). Fixed with `!important`, same as every
+  other case.
+- **Hover-preview had no gate for "is this player's hand actually interactive right now" at
+  all** — flagged directly by the user: hovering a card while waiting on other players (or
+  during any state where nothing is clickable) still showed the commit-style lift/border,
+  misleadingly implying an action that wasn't available. The hover listeners themselves are
+  attached once, permanently, at card creation (`setupHandCardFrontDiv`) — they have no
+  built-in sense of the current game state. Added `this.handHoverEnabled` (`Game`-level,
+  defaults falsy) as a second gate alongside the existing reflow-settling
+  `suppressHandHoverPreview` one, set `true`/`false` in exactly the two places a hand card can
+  legitimately become clickable — `PlayCards.onPlayerActivationChange` and
+  `ResolveAdvancedEffect.markEligibility`/`clearEligibility` — mirroring how `onCardClick`
+  itself is already assigned/cleared in those same spots, just for the hover preview instead of
+  the click handler.
+
+**Third follow-up, same day, by request**: made the hover/click border color match the
+viewer's own player color instead of a fixed `blueviolet` for everyone. Implemented as a CSS
+custom property (`--loaf-my-player-color`, set once in `setupHandAndCommitStocks` from
+`gamedatas.players[...].color`, the real hex BGA already tracks) rather than six near-duplicate
+color-specific CSS rules — `.loaf_hand-card-hover`/`.loaf_hand-card-eligible-swap` both
+reference `var(--loaf-my-player-color, blueviolet)` now, one rule working correctly regardless
+of which of the 6 colors this viewer plays, `blueviolet` staying only as a fallback for the
+brief pre-setup window. Border thickness bumped 3px→6px the same day, also by request ("not
+distinctive enough").
+
+## Phase 5 §9: swap effect had no visible sense of an actual swap happening (2026-08-18)
+
+First live trigger of a real swap effect (`advanced_03`-`06`): the discarded hand card left
+correctly, but nothing visibly indicated the played card returning to hand — it just
+reappeared as what looked like an unrelated new card, with no animated connection between the
+committed slot and the hand. Root cause: `notif_cardSwapped`'s original implementation
+`removeCard`'d the played card out of the committed slot, then separately constructed a *new*
+plain object (`{color, value, visible}`) and `addCard`'d it into the hand — functionally
+correct (the right card ends up in the right place with the right value), but visually two
+disconnected operations instead of one.
+
+**Fix, and a real identity bug caught while making it**: `bga-cards`' `addCard(card, {
+fromStock })` animates the *same* card element moving between stocks, but confirmed via its
+real source that this requires the object passed to `addCard` to keep producing the exact same
+`manager.getId()` result as whatever's already tracked in `fromStock` — meaning the played card
+object has to keep its committed-slot-shaped fields (specifically whatever `getId` was keying
+off) even after landing in the hand. The original `getId` scheme keyed committed cards on
+`playerId` alone (`committed_${playerId}`) — reusing the *same* object via `fromStock` would
+therefore leave a card sitting in the hand that still computed its id as
+`committed_${playerId}`, which would collide with this same player's *next* round's own fresh
+placeholder (built with the identical scheme, identical playerId, identical resulting id) —
+two genuinely different cards, one computed id, a real correctness bug rather than just a
+cosmetic one, only surfaced by trying to fix the animation.
+
+Fixed by switching the committed-card id scheme from `playerId`-keyed to a monotonic
+per-session counter (`this.nextCommittedSerial`, `card.committedSerial`) that can never repeat
+regardless of how many times a given player commits across the game — `notif_cardSwapped` now
+does the `fromStock` move directly, both halves (`handStock.removeCard(discardedCard)` and
+`handStock.addCard(playedCard, { fromStock: committedStock })`) run concurrently via
+`Promise.all` so it reads as one swap motion rather than two sequential steps.
+`notif_cardPlayedRevealed`'s own `updateCardInformations` call needed updating too, to look up
+the existing placeholder's already-allocated `committedSerial` rather than reconstructing an id
+from `playerId` alone (the scheme this whole fix moved away from).
+
+**Known, accepted gap**: a card that reaches the hand via this swap path never gets the
+hover-preview listeners `setupHandCardFrontDiv` attaches to ordinary hand cards, since that
+method only ever runs once, at the card's *original* element creation (back when it was still
+a committed-slot placeholder) — `bga-cards` has no "re-run setup for this element" hook to hang
+a fix on cheaply. Purely cosmetic (the card is still fully clickable in any later round, just
+without the hover lift/border specifically) — left as a documented gap rather than adding the
+extra machinery needed to retroactively attach listeners after a `fromStock` move, unless it's
+actually noticed in play.
+
+## Committed cards moved into their own shared horizontal row (2026-08-18, by request)
+
+Each player's face-down "committed" card slot originally lived embedded inside that player's
+own `#player-table-*` block (name + hand count), stacked vertically one player under another.
+By request, pulled it out into a dedicated `#committed-cards` row instead — every player's
+committed card now sits horizontally next to every other's, one glanceable "who's played, who
+hasn't" strip, same flex-row treatment `#pending-cards` already uses. Kept a small player-name
+label above each slot in the new row (`.loaf_committed-card-name`) so ownership doesn't get
+lost now that it's decoupled from the adjacent name in `#player-tables` — `#player-tables`
+itself keeps just name + hand count now. Purely a DOM-location/layout change; nothing about
+`setupHandAndCommitStocks`'s Stock construction, the notification handlers, or the committed
+card's own identity/data changed — the slot's `id` (`committed-card-player-${id}`) is
+unchanged, just its parent container.
+
+## Phase 5 §9: a page refresh mid-round stuck a player's own already-revealed card back behind a face-down back (2026-08-18)
+
+Live-tested a swap effect targeting multiple tied-lowest-reputation players. One player
+(Dumbledore2) refreshed their page while waiting on another tied player to act first, and their
+own committed card — already publicly revealed via `cardPlayedRevealed`, log confirmed
+("Dumbledore2 played 5") — came back showing face-down after the refresh. No console error;
+refreshing again didn't fix it either, which was the key diagnostic: a refresh rebuilds
+everything from fresh server data (`setup()`/`setupHandAndCommitStocks`), so a symptom that
+*survives* a refresh means the bug is in what the server sends or how the client reconstructs
+from it, not a live-notification-handling glitch.
+
+Root cause: `setupHandAndCommitStocks`'s reconstruction path (built for §8, before swap effects
+existed) always seeded every committed placeholder as face-down with `value: null`,
+unconditionally — correct for the common case (committed but not yet resolved), but wrong once
+a round has progressed *past* `cardPlayedRevealed`. The DB has no persisted "revealed" flag —
+`work_card.location = 'played'` covers both "just committed, still secret" and "revealed,
+awaiting the round's own resolution/an advanced effect's resolution" identically — so the
+client had no way to distinguish which case it was reconstructing into.
+
+Fixed with a new global, `GLOBAL_CARDS_REVEALED_THIS_ROUND` (constants.inc.php) — `false` by
+default, set `true` in `ResolveRound.php` right after the `cardPlayedRevealed` notifications
+fire, reset `false` at the top of the next round in `RoundStart.php`. `getAllDatas()` uses it to
+conditionally populate a new `revealedCommittedValues` field (playerId → value, empty unless
+already revealed) alongside the existing `committedPlayerIds` — same "WHO vs WHAT" privacy
+split as every other committed-card exposure in this codebase (docs/loaf-open-questions.md Q3):
+sending values for *unrevealed* played cards would leak them to every other connected client,
+not just the affected player, since `getAllDatas()` has no per-recipient scoping the way a
+state's own `_private`/`notify->player()` mechanisms do. `setupHandAndCommitStocks` now checks
+`revealedCommittedValues[playerId]` per committed player and seeds face-up-with-real-value
+instead of face-down-with-null whenever it's present.
+
+**Worth generalizing**: this is the second time this session a client-side reconstruction path
+(built to mirror one specific live notification) turned out to miss a *later* state transition
+that same data can pass through before the round fully resolves — first `notif_cardSwapped`
+needing to look at `myPlayedCardValue` because a card's story doesn't end at
+`cardPlayedRevealed`, now this. Worth treating "what are *all* the states this piece of
+client-visible data can be in across a round's full lifecycle, not just the state my reference
+notification handles" as a standing question when building any refresh/reconnect reconstruction
+path, not just the most common case.
+
+## Deliberate rules deviation: a swap effect's discarded card is public, not private (2026-08-18)
+
+By explicit request, not a bug fix: a swap effect (`swap_discard_lower_by_at_most`/
+`swap_discard_higher_by_at_least`) discards a card that satisfies its own amount constraint
+("at most X lower"/"at least X higher" than the already-public played value,
+`docs/Loaf-English-rules.md` lines 207-208) — the user wants that discard shown publicly,
+replacing the played card in the shared committed-cards row, specifically so every player can
+verify the resolution was actually valid against the constraint. This is a real, considered
+exception to `docs/loaf-open-questions.md` Q3's "discard piles are private to their owner"
+default, not an oversight — scoped narrowly to swap effects' own discard specifically (not
+`discard_choice`, an ordinary played-card->discard move, or anything else).
+
+Implemented by adding `value` to `ResolveAdvancedEffect.php`'s `cardSwapped` broadcast
+notification (previously deliberately omitted, per the *old* privacy default this decision
+overrides) and rewriting `notif_cardSwapped` so *every* client, not just the acting player's
+own, replaces that player's committed-slot card with the real discarded card, face-up. The
+acting player's own client still separately handles their own hand (removing the discarded
+card, and — for a genuine swap, not the self-discard fallback — animating the played card back
+into hand via `fromStock`, per the entry above); every other client just clears its local view
+of that committed slot and lets the same public `addCard` call at the end repopulate it.
+
+**Known, accepted gap**: `setupHandAndCommitStocks`'s page-refresh reconstruction doesn't know
+about this yet. Once a genuine swap resolves, that player's `work_card` rows leave
+`location = 'played'` entirely (the discarded card moves to `'discard'`, the returned played
+card moves to `'hand'`), so they drop out of `committedPlayerIds` -- a refresh after their swap
+resolves but before the next round's `roundStart` clears everything would show an empty
+committed slot instead of the discarded card, rather than reconstructing the post-swap public
+reveal correctly. Not fixed here (would need a new piece of server-side state specifically
+recording "which value, if any, was publicly discarded via a swap this round" — meaningfully
+more machinery than the live-only case needed) — flagged as a real, if narrow, gap rather than
+silently left for someone to eventually notice.

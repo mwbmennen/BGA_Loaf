@@ -782,9 +782,17 @@ Same format as Phase 4's §8 — check items off in place as they're confirmed.
    acting player's own card, the async-ordering risk flagged in §8's own text handled
    deliberately up front) and the known gap (advanced-effect discard/recycle/swap don't touch
    the real `handStock` yet -- left for §9).
-5. **Next**: Advanced-effect UI (§9) — a small delta on top of §8's component; also needs to
-   close the known gap noted above (wiring `notif_cardRecycled`/`notif_playerDiscarded`/
-   `notif_cardSwapped` into real `handStock` mutations, not just the text hand-count).
+5. **Done, not yet live-verified** — Advanced-effect UI (§9): `ResolveAdvancedEffect` reuses
+   §8's `HandStock` (ineligible cards dimmed/inert in place, `loaf_hand-card-ineligible`)
+   instead of a button list, plus a swap effect's own played card (sitting in the committed
+   slot, not the hand) gets the same eligible/clickable treatment
+   (`loaf_hand-card-eligible-swap`). Also closes §8's own explicitly-deferred gap: `notif_
+   cardRecycled`/`notif_playerDiscarded`/`notif_cardSwapped` now mutate the real `handStock`,
+   not just the text hand-count -- the recycle case needed a new player-scoped `notify->player()`
+   notification (first use in this project) to safely reveal the recycled card's value to only
+   the affected player. See `docs/loaf-remarks.md`'s "Phase 5 §9" entry for the judgment calls
+   and the live-verification checklist (advanced mode needs a live game to exercise at all,
+   nothing here has been checked in a browser yet).
 6. `console.log`/translation audit (§11) — last, sweeping everything Phase 5 itself just added
    alongside the pre-existing scaffold debug lines.
 7. Sound only if trivial (§10); otherwise skip without regret.

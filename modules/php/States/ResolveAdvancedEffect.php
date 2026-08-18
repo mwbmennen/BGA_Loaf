@@ -178,12 +178,21 @@ class ResolveAdvancedEffect extends GameState
             );
         }
 
+        // `value` is deliberately public here -- an intentional, explicit exception to the
+        // usual "discards are private to their owner" rule (docs/loaf-open-questions.md Q3),
+        // by request: a swap effect's discard has to satisfy the effect's own amount
+        // constraint ("at most X lower"/"at least X higher" than the played value, already
+        // public since cardPlayedRevealed), so showing it publicly lets every player verify
+        // the resolution was actually valid. Every other discard in this game (discard_choice,
+        // an ordinary played-card->discard move) stays private -- this one field, this one
+        // notification, deliberately narrow.
         $this->game->bga->notify->all(
             'cardSwapped',
-            clienttranslate('${player_name} takes their played card back and discards another'),
+            clienttranslate('${player_name} takes their played card back and discards ${value}'),
             [
                 'player_id' => $currentPlayerId,
                 'player_name' => $this->game->getPlayerNameById($currentPlayerId),
+                'value' => $discardValue,
             ]
         );
 

@@ -207,6 +207,11 @@ class PlayCards {
   async onPlayerActivationChange(_args, isCurrentPlayerActive) {
     await this.game.readyPromise;
     const handStock = this.game.handStock;
+    // handHoverEnabled gates setupHandCardFrontDiv's hover-preview listeners (Game.js) --
+    // without it, hovering a card while waiting on other players (or during any other state
+    // entirely) still previewed the commit lift/border for an action that wasn't actually
+    // available, confirmed live as misleading.
+    this.game.handHoverEnabled = isCurrentPlayerActive;
     if (isCurrentPlayerActive) {
       this.bga.statusBar.setTitle(_("${you} must commit a work card"));
       handStock.onCardClick = (card) => this.onCardClick(card);
@@ -224,6 +229,11 @@ class PlayCards {
   // (docs/loaf-open-questions.md Q3), so it can't be recovered from the notification alone.
   onCardClick(card) {
     this.game.pendingCommitCard = card;
+    // Persists (unlike pendingCommitCard, nulled out once notif_playerCommitted consumes it)
+    // through the rest of this round -- ResolveAdvancedEffect's swap-effect handling
+    // (notif_cardSwapped) needs to know this player's own played card's value later, and
+    // nothing else client-side tracks it once the real card object leaves this.handStock.
+    this.game.myPlayedCardValue = card.value;
     this.bga.actions.performAction("actCommitCard", {
       value: card.value,
     });
@@ -256,9 +266,14 @@ class ResolveAdvancedEffect {
     this.bga.statusBar.setTitle(_("An advanced card effect is resolving..."));
   }
 
-  onLeavingState(_args, _isCurrentPlayerActive) {}
+  onLeavingState(_args, _isCurrentPlayerActive) {
+    this.clearEligibility();
+  }
 
-  onPlayerActivationChange(args, isCurrentPlayerActive) {
+  // Same setup()-vs-state-hook race as PlayCards.onPlayerActivationChange (Game.js's
+  // readyPromise, this.game.handStock/committedCardStocks are both setup()-built).
+  async onPlayerActivationChange(args, isCurrentPlayerActive) {
+    await this.game.readyPromise;
     this.isSwap = args.effectType !== "discard_choice";
 
     if (isCurrentPlayerActive) {
@@ -267,25 +282,79 @@ class ResolveAdvancedEffect {
           ? _("${you} must take your played card back and discard another")
           : _("${you} must discard a card of your choice from hand"),
       );
-
-      const eligibleValues = args.eligibleValues ?? [];
-      eligibleValues.forEach((value) =>
-        this.bga.statusBar.addActionButton(
-          _("Discard ${value}").replace("${value}", value),
-          () => this.onCardClick(value),
-        ),
-      );
+      this.markEligibility(args.eligibleValues ?? []);
     } else {
       this.bga.statusBar.setTitle(
         _("Waiting for other players to resolve the advanced effect"),
       );
+      this.clearEligibility();
     }
   }
 
-  onCardClick(value) {
+  // Reuses §8's HandStock (docs/loaf-phase5-plan.md §9) instead of a separate button list --
+  // ineligible cards stay visible but dimmed/unclickable in place (`pointer-events: none` in
+  // loaf.css also blocks the hover-preview listeners from §8, no extra gating needed for that)
+  // rather than only ever showing the eligible subset, so the player can see their whole hand
+  // and understand *why* only some cards qualify.
+  //
+  // Swap effects are the one case discard_choice never has to handle: the eligible set can
+  // include the player's own already-revealed played card (SwapEffectResolver::eligibleDiscards
+  // mixes it into the candidate set server-side, docs/loaf-phase4-plan.md §4), which currently
+  // sits in this player's own committed slot, not their hand -- so that card needs the same
+  // eligible/clickable treatment too, via a second, simpler class (no fan/overlap layout to
+  // fight there, so no need to match the hover-preview mechanics hand cards use).
+  markEligibility(eligibleValues) {
+    const { handStock, handCardsManager } = this.game;
+    // See PlayCards.onPlayerActivationChange's own comment on handHoverEnabled -- same gate,
+    // same reasoning, just the other place a hand card can become genuinely clickable.
+    this.game.handHoverEnabled = true;
+    handStock.getCards().forEach((card) => {
+      handCardsManager.getCardElement(card).classList.toggle(
+        "loaf_hand-card-ineligible",
+        !eligibleValues.includes(card.value),
+      );
+    });
+    handStock.onCardClick = (card) => {
+      if (eligibleValues.includes(card.value)) this.onCardClick(card);
+    };
+
+    if (this.isSwap) {
+      const committedStock = this.game.committedCardStocks[this.bga.players.getCurrentPlayerId()];
+      const [playedCard] = committedStock.getCards();
+      if (playedCard && eligibleValues.includes(playedCard.value)) {
+        handCardsManager.getCardElement(playedCard).classList.add("loaf_hand-card-eligible-swap");
+        committedStock.onCardClick = (card) => this.onCardClick(card);
+      }
+    }
+  }
+
+  clearEligibility() {
+    const { handStock, handCardsManager, committedCardStocks } = this.game;
+    if (!handStock) return;
+    this.game.handHoverEnabled = false;
+    handStock.getCards().forEach((card) =>
+      handCardsManager.getCardElement(card).classList.remove("loaf_hand-card-ineligible"),
+    );
+    handStock.onCardClick = null;
+
+    const committedStock = committedCardStocks?.[this.bga.players.getCurrentPlayerId()];
+    if (committedStock) {
+      committedStock.getCards().forEach((card) =>
+        handCardsManager.getCardElement(card).classList.remove("loaf_hand-card-eligible-swap"),
+      );
+      committedStock.onCardClick = null;
+    }
+  }
+
+  // Stashed the same way PlayCards.onCardClick stashes pendingCommitCard -- neither
+  // notif_playerDiscarded nor notif_cardSwapped carries the chosen value (same hand-privacy
+  // discipline against *other* players, docs/loaf-open-questions.md Q3), so the acting
+  // player's own notification handler needs another way to know which card object to move.
+  onCardClick(card) {
+    this.game.pendingAdvancedEffectCard = card;
     this.bga.actions.performAction(
       this.isSwap ? "actSwapDiscard" : "actDiscardChoice",
-      { value },
+      { value: card.value },
     );
   }
 }
@@ -320,6 +389,12 @@ export class Game {
     this.readyPromise = new Promise((resolve) => {
       this.markReady = resolve;
     });
+
+    // Monotonic per-session counter for committed-slot card identities (getId,
+    // setupCardsAndZoom) -- never reused, unlike a playerId-based scheme, so a card that later
+    // moves out of the committed slot into a real hand (a swap effect's fromStock move,
+    // notif_cardSwapped) can never collide with the same player's next round's own placeholder.
+    this.nextCommittedSerial = 0;
 
     // Declare the State classes
     this.roundStart = new RoundStart(this, bga);
@@ -389,6 +464,7 @@ export class Game {
                 </div>
             </div>
             <div id="reputation-board"></div>
+            <div id="committed-cards"></div>
             <div id="player-tables"></div>
             <div id="my-hand"></div>
         `,
@@ -398,12 +474,15 @@ export class Game {
     this.setupReputationBoard(gamedatas);
     this.setupPlayerPanelReputation(gamedatas);
 
-    // Setting up player boards: name, hand card count, and a face-down "committed" card slot
-    // (docs/loaf-phase5-plan.md §8) -- reputation itself lives on the reputation-board token
-    // (setupReputationBoard, §5) rather than being duplicated as text here. Opponents only
-    // ever get a hand *count*, never values (docs/loaf-open-questions.md Q3 -- hands/discards
-    // are private to their owner); the committed slot shows THAT they've played (public, once
-    // committed) without leaking WHAT until cardPlayedRevealed.
+    // Setting up player boards: name + hand card count. Reputation lives on the
+    // reputation-board token (setupReputationBoard, §5); the face-down "committed" card slot
+    // (docs/loaf-phase5-plan.md §8) lives in its own shared #committed-cards row instead of
+    // embedded per player-table, so every player's committed card sits horizontally next to
+    // every other's -- one glanceable row of "who's played, who hasn't" rather than scattered
+    // across each player's own block. Opponents only ever get a hand *count*, never values
+    // (docs/loaf-open-questions.md Q3 -- hands/discards are private to their owner); the
+    // committed slot shows THAT they've played (public, once committed) without leaking WHAT
+    // until cardPlayedRevealed.
     Object.values(gamedatas.players).forEach((player) => {
       const handCount = gamedatas.handCount[player.id] ?? 0;
 
@@ -413,6 +492,15 @@ export class Game {
                 <div id="player-table-${player.id}">
                     <strong>${player.name}</strong>
                     <div>Hand: <span id="hand-count-player-${player.id}">${handCount}</span> card(s)</div>
+                </div>
+            `,
+      );
+
+      document.getElementById("committed-cards").insertAdjacentHTML(
+        "beforeend",
+        `
+                <div class="loaf_committed-card-entry">
+                    <div class="loaf_committed-card-name">${player.name}</div>
                     <div id="committed-card-player-${player.id}" class="loaf_committed-card-slot"></div>
                 </div>
             `,
@@ -476,11 +564,23 @@ export class Game {
       cardBorderRadius: "8px",
       // A hand card's id is `${color}_${value}` (both known upfront). A *committed* card
       // (docs/loaf-phase5-plan.md §8) starts as a face-down placeholder with `value: null` --
-      // its owner's identity (`playerId`) is the only thing known at commit time, and must
-      // stay the SAME id from placeholder through reveal so `updateCardInformations` (called
-      // once the real value arrives via `cardPlayedRevealed`) finds and flips the existing
-      // element instead of silently creating an unrelated second one.
-      getId: (card) => (card.playerId !== undefined ? `committed_${card.playerId}` : `${card.color}_${card.value}`),
+      // `committedSerial` (this.nextCommittedSerial, a monotonic per-session counter) is the
+      // only thing known at commit time, and must stay the SAME id from placeholder through
+      // reveal so `updateCardInformations` (called once the real value arrives via
+      // `cardPlayedRevealed`) finds and flips the existing element instead of silently
+      // creating an unrelated second one.
+      //
+      // Deliberately not keyed on `playerId` (an earlier version was): a swap effect
+      // (docs/loaf-phase5-plan.md §9) can move this *same* card object from the committed slot
+      // into the player's hand (notif_cardSwapped's `fromStock` move) without it ever losing
+      // its `playerId` field -- bga-cards' own `fromStock` lookup requires the object passed to
+      // `addCard` to keep producing the *same* id as what's already in the source stock, so
+      // there's no clean point to "convert" it to the ordinary `${color}_${value}` scheme
+      // afterward. Left with a `playerId`-based id, that same card sitting in hand would
+      // collide with this same player's *next* round's committed placeholder (same playerId,
+      // same computed id, two different cards) -- a monotonic serial can never repeat like
+      // that, whichever stock the card ends up in.
+      getId: (card) => (card.committedSerial !== undefined ? `committed_${card.committedSerial}` : `${card.color}_${card.value}`),
       isCardVisible: (card) => card.visible === true,
       setupFrontDiv: (card, div) => this.setupHandCardFrontDiv(card, div),
       setupBackDiv: (card, div) => this.setupHandCardBackDiv(card, div),
@@ -595,7 +695,15 @@ export class Game {
   // activation race that already cost real debugging time earlier in this project (the
   // MULTIPLE_ACTIVE_PLAYER lifecycle saga, docs/bga-template-upstream-notes.md).
   async setupHandAndCommitStocks(gamedatas) {
-    const myColorName = this.resolvePlayerColorName(gamedatas.players[this.bga.players.getCurrentPlayerId()]);
+    const myPlayer = gamedatas.players[this.bga.players.getCurrentPlayerId()];
+    const myColorName = this.resolvePlayerColorName(myPlayer);
+
+    // CSS custom property, not a class-per-color, so loaf.css's hover/eligible-swap rules
+    // (which need to work identically regardless of which of the 6 colors this viewer plays)
+    // can reference one `var(...)` instead of six near-duplicate color-specific rules. Raw hex
+    // from gamedatas (no "#" prefix, per BGA's own storage convention) rather than
+    // myColorName, which is a sprite-sheet column name ("green"), not a real CSS color value.
+    document.documentElement.style.setProperty("--loaf-my-player-color", `#${myPlayer.color}`);
 
     this.handStock = new this.BgaCards.HandStock(this.handCardsManager, document.getElementById("my-hand"), {
       sort: (a, b) => a.value - b.value,
@@ -621,20 +729,31 @@ export class Game {
       );
     });
 
-    // gamedatas.committedPlayerIds carries WHO, never WHAT (docs/loaf-open-questions.md Q3) --
-    // every reconstructed placeholder is face-down with `value: null`, identical to what a live
-    // notif_playerCommitted would have added, matching that same handler's own placeholder
-    // shape exactly so a later cardPlayedRevealed's updateCardInformations() call (same id,
-    // `committed_${playerId}`) finds and flips whichever one is actually present.
+    // gamedatas.committedPlayerIds carries WHO; gamedatas.revealedCommittedValues carries WHAT
+    // for any of them whose card has *already* been revealed this round (empty object
+    // otherwise -- Game.php only populates it once GLOBAL_CARDS_REVEALED_THIS_ROUND is true,
+    // same privacy rule as docs/loaf-open-questions.md Q3 the rest of this codebase already
+    // follows). Confirmed live this distinction actually matters: an earlier version always
+    // reconstructed every committed card as a face-down `value: null` placeholder
+    // unconditionally, so a page refresh mid-ResolveRound/ResolveAdvancedEffect stuck a
+    // player's own already-publicly-revealed card back behind a face-down back, even for its
+    // own owner, who could no longer see the card they needed to make a swap-effect choice
+    // about. Either way, a later cardPlayedRevealed's updateCardInformations() call finds and
+    // flips whichever shape is actually present (its own no-op if already revealed). `playerId`
+    // is kept for readability/debugging only -- getId (setupCardsAndZoom) keys off
+    // `committedSerial`, not this.
     await Promise.all(
-      gamedatas.committedPlayerIds.map((playerId) =>
-        this.committedCardStocks[playerId].addCard({
+      gamedatas.committedPlayerIds.map((playerId) => {
+        const revealedValue = gamedatas.revealedCommittedValues[playerId];
+        const alreadyRevealed = revealedValue !== undefined;
+        return this.committedCardStocks[playerId].addCard({
           playerId,
+          committedSerial: this.nextCommittedSerial++,
           color: this.resolvePlayerColorName(gamedatas.players[playerId]),
-          value: null,
-          visible: false,
-        }),
-      ),
+          value: alreadyRevealed ? revealedValue : null,
+          visible: alreadyRevealed,
+        });
+      }),
     );
   }
 
@@ -733,20 +852,34 @@ export class Game {
   setupHandCardFrontDiv(card, div) {
     this.positionHandCardSprite(card.color, card.value, div);
 
-    // Hover preview, real hand cards only (`card.playerId === undefined` -- a committed-slot
-    // placeholder, the only other card shape this same setupFrontDiv renders, always carries
-    // `playerId`; see getId's own branch on it, setupCardsAndZoom). Visually mirrors the same
-    // lift+border look as bga-cards' own "selected" (click) state, but via a plain custom CSS
-    // class (`loaf_hand-card-hover`, loaf.css) rather than the library's own
-    // CardStock.selectCard/unselectCard -- an earlier version used the library's own selection
-    // state directly (simpler, and it does render correctly), but `removeCard()` apparently
-    // clears that same selected state as part of its own teardown, producing a visible
-    // "settles back down, then disappears" two-step on commit instead of animating away
-    // directly from the lifted position (confirmed live, explicitly not wanted). A class this
-    // codebase owns entirely has nothing for removeCard() to clean up first.
-    if (card.playerId === undefined) {
+    // Hover preview, real hand cards only (`card.committedSerial === undefined` -- a
+    // committed-slot placeholder, the only other card shape this same setupFrontDiv renders,
+    // always carries `committedSerial`; see getId's own branch on it, setupCardsAndZoom).
+    // Visually mirrors the same lift+border look as bga-cards' own "selected" (click) state,
+    // but via a plain custom CSS class (`loaf_hand-card-hover`, loaf.css) rather than the
+    // library's own CardStock.selectCard/unselectCard -- an earlier version used the library's
+    // own selection state directly (simpler, and it does render correctly), but `removeCard()`
+    // apparently clears that same selected state as part of its own teardown, producing a
+    // visible "settles back down, then disappears" two-step on commit instead of animating
+    // away directly from the lifted position (confirmed live, explicitly not wanted). A class
+    // this codebase owns entirely has nothing for removeCard() to clean up first.
+    //
+    // Known gap: setupFrontDiv only ever runs once, at this element's original creation, so a
+    // card that later moves from the committed slot into hand via a swap effect's `fromStock`
+    // move (notif_cardSwapped) never gets these listeners attached at all -- it's still a
+    // committed-slot-shaped card (committedSerial set) as far as this method is concerned, even
+    // once it's sitting in the real hand. Functionally harmless (still fully clickable in a
+    // later round), just misses the hover-lift preview specifically. Not fixed here; revisit if
+    // it's ever actually noticed in play.
+    if (card.committedSerial === undefined) {
       div.addEventListener("mouseenter", () => {
-        if (!this.suppressHandHoverPreview) div.classList.add("loaf_hand-card-hover");
+        // handHoverEnabled: only true while this player actually has something to do with
+        // their hand right now (PlayCards/ResolveAdvancedEffect's own active branch sets it) --
+        // without this, hovering a card during e.g. another player's turn, or ResolveRound/
+        // EndGame, previewed a lift+border for an action that wasn't actually available,
+        // confirmed live as misleading. suppressHandHoverPreview is the separate, short-lived
+        // reflow-settling guard from the commit-animation fix above; both must allow it.
+        if (this.handHoverEnabled && !this.suppressHandHoverPreview) div.classList.add("loaf_hand-card-hover");
       });
       div.addEventListener("mouseleave", () => div.classList.remove("loaf_hand-card-hover"));
     }
@@ -833,6 +966,12 @@ export class Game {
       rotation: 1, // quarter-turns, not degrees -- bga-cards does rotation * 90deg internally
     });
     await Promise.all(Object.values(this.committedCardStocks).map((stock) => stock.removeAll()));
+    // This player's committed card's own value from the round that just ended -- only ever
+    // meaningful while it's relevant to a possible swap-effect resolution (notif_cardSwapped),
+    // which always finishes before the next roundStart fires. Reset here, alongside every
+    // other per-round display this handler already clears, rather than leaving it stale into
+    // a round where a fresh commit will overwrite it anyway.
+    this.myPlayedCardValue = null;
   }
 
   // Matches Game.php's `playerCommitted` notification (PlayCards::actCommitCard). No card
@@ -873,6 +1012,7 @@ export class Game {
 
     await this.committedCardStocks[args.player_id].addCard({
       playerId: args.player_id,
+      committedSerial: this.nextCommittedSerial++,
       color: this.resolvePlayerColorName(this.gamedatas.players[args.player_id]),
       value: null,
       visible: false,
@@ -934,12 +1074,17 @@ export class Game {
   // moves, its owner's committed card has already flipped face-up to explain why.
   // updateCardInformations() both supplies the real data (the placeholder only ever had
   // `value: null`) and triggers the flip, matched to the existing placeholder by the same
-  // stable `committed_${playerId}` id (CardManager's getId, setupCardsAndZoom) regardless of
-  // whether that placeholder came from a live notif_playerCommitted or a page-refresh
-  // reconstruction (setupHandAndCommitStocks) -- the two are indistinguishable by the time
-  // this fires, by design.
+  // stable id (CardManager's getId, setupCardsAndZoom). That id is keyed on
+  // `committedSerial`, not `playerId` alone (§9's swap-effect fix needed a scheme that can
+  // never repeat, see getId's own comment) -- looked up from the placeholder's own current
+  // card data (committedCardStocks[args.player_id].getCards()) rather than reconstructed here,
+  // since this handler has no other way to know which serial was allocated to it, whether that
+  // placeholder came from a live notif_playerCommitted or a page-refresh reconstruction
+  // (setupHandAndCommitStocks).
   async notif_cardPlayedRevealed(args) {
+    const [placeholder] = this.committedCardStocks[args.player_id].getCards();
     this.handCardsManager.updateCardInformations({
+      committedSerial: placeholder.committedSerial,
       playerId: args.player_id,
       color: this.resolvePlayerColorName(this.gamedatas.players[args.player_id]),
       value: args.value,
@@ -955,9 +1100,20 @@ export class Game {
 
   // Matches Game.php's `cardRecycled` notification (ResolveRound, discard_recycle_lowest). No
   // card value is included -- same hand/discard privacy discipline as notif_playerCommitted.
-  // Recycling moves one card from discard back into hand -- hand count goes up by 1.
+  // Recycling moves one card from discard back into hand -- hand count goes up by 1. The real
+  // HandStock update (for the affected player only) happens separately in
+  // notif_cardRecycledValue below, via a player-scoped notification that safely carries the
+  // value.
   async notif_cardRecycled(args) {
     this.adjustHandCount(args.player_id, 1);
+  }
+
+  // Matches Game.php's player-scoped `cardRecycledValue` notification (ResolveRound) -- only
+  // ever delivered to the one player it recycled a card for, so no `args.player_id` check is
+  // needed here the way every other cross-player notification handler in this file has.
+  async notif_cardRecycledValue(args) {
+    const myColorName = this.resolvePlayerColorName(this.gamedatas.players[this.bga.players.getCurrentPlayerId()]);
+    await this.handStock.addCard({ color: myColorName, value: args.value, visible: true });
   }
 
   // Matches Game.php's `advancedEffectPending` notification (ResolveAdvancedEffect).
@@ -965,15 +1121,74 @@ export class Game {
 
   // Matches Game.php's `playerDiscarded` notification (ResolveAdvancedEffect::actDiscardChoice).
   // Discarding a card of their choice removes one from hand -- hand count goes down by 1.
+  // pendingAdvancedEffectCard (stashed in ResolveAdvancedEffect.onCardClick) is always a real
+  // handStock card here -- discard_choice's eligible set is always exactly the hand
+  // (PlayCards.php's eligibleValuesFor), never the played/committed card the way swap effects
+  // can be.
   async notif_playerDiscarded(args) {
     this.adjustHandCount(args.player_id, -1);
+
+    if (args.player_id === this.bga.players.getCurrentPlayerId() && this.pendingAdvancedEffectCard) {
+      await this.handStock.removeCard(this.pendingAdvancedEffectCard);
+      this.pendingAdvancedEffectCard = null;
+    }
   }
 
   // Matches Game.php's `cardSwapped` notification (ResolveAdvancedEffect::actSwapDiscard). No
   // hand-count update needed -- a swap either returns the played card to hand and discards a
   // different one (net 0 change in hand *size*, only in which specific card is held) or, in
   // the deterministic-fallback case, never touches hand at all.
-  async notif_cardSwapped(_args) {}
+  //
+  // Which case actually happened is determined by comparing the clicked card's value against
+  // `myPlayedCardValue` (set in PlayCards.onCardClick, persists across the round unlike
+  // pendingCommitCard) rather than anything in this notification's own payload -- same privacy
+  // discipline as everywhere else in this file, the server never sends the acting player's own
+  // choice back to them either.
+  // `args.value` is deliberately public here (Game.php's own comment on this notification has
+  // the full reasoning) -- every client, not just the acting player's, replaces that player's
+  // committed-slot card with the actual discarded card, face-up, so everyone can verify the
+  // discard actually satisfies the effect's own amount constraint.
+  async notif_cardSwapped(args) {
+    const committedStock = this.committedCardStocks[args.player_id];
+    const [playedCard] = committedStock.getCards();
+    const isMe = args.player_id === this.bga.players.getCurrentPlayerId();
+
+    if (isMe && this.pendingAdvancedEffectCard) {
+      const discardedCard = this.pendingAdvancedEffectCard;
+      this.pendingAdvancedEffectCard = null;
+
+      if (discardedCard.value === this.myPlayedCardValue) {
+        // Self-discard: the played card stays discarded, nothing returns to hand -- just clear
+        // the stale committed slot (the public replacement below adds the real one back).
+        if (playedCard) await committedStock.removeCard(playedCard);
+      } else {
+        // Genuine swap, my own client: move the *same* played-card element from the committed
+        // slot into my hand (`fromStock`, the same animated-move pattern already used for
+        // boss-pile moves, notif_roundResolved) rather than removeCard-ing it and addCard-ing
+        // an unrelated new card object into hand -- confirmed live that the latter gave no
+        // visible sense of an actual swap happening. Both halves run concurrently so the
+        // discarded card leaving my hand and the played card arriving read as one swap motion.
+        await Promise.all([
+          this.handStock.removeCard(discardedCard),
+          playedCard ? this.handStock.addCard(playedCard, { fromStock: committedStock }) : Promise.resolve(),
+        ]);
+      }
+    } else if (playedCard) {
+      // An opponent's swap, from this client's perspective: just clear this local view of
+      // their committed slot -- this client has no hand of theirs to touch, and the public
+      // replacement below adds the real discarded card back in either way.
+      await committedStock.removeCard(playedCard);
+    }
+
+    const colorName = this.resolvePlayerColorName(this.gamedatas.players[args.player_id]);
+    await committedStock.addCard({
+      playerId: args.player_id,
+      committedSerial: this.nextCommittedSerial++,
+      color: colorName,
+      value: args.value,
+      visible: true,
+    });
+  }
 
   // Matches Game.php's `endGameBonusApplied` notification (EndGame) -- one per
   // (contributing effect, affected player), explaining exactly what end-game bonus/malus

@@ -58,6 +58,13 @@ class ResolveRound extends GameState
                 ]
             );
         }
+        // From this point on, every currently-`played` card is public -- see
+        // GLOBAL_CARDS_REVEALED_THIS_ROUND's own comment (constants.inc.php). Set right after
+        // the reveal notifications above, not before -- a client reconnecting between those two
+        // moments (implausible in practice given both happen in the same request, but cheap to
+        // get the ordering right) should see the same "not yet revealed" placeholder a client
+        // connected throughout would have seen at that instant.
+        $this->game->bga->globals->set(GLOBAL_CARDS_REVEALED_THIS_ROUND, true);
 
         $orderAverage = (int) $this->game->bga->globals->get(GLOBAL_CURRENT_ORDER_AVERAGE, 0);
         $result = RoundResolver::resolve($orderAverage, $playedCards);
@@ -280,6 +287,21 @@ class ResolveRound extends GameState
                     'player_id' => $playerId,
                     'player_name' => $this->game->getPlayerNameById($playerId),
                 ]
+            );
+
+            // Separate player-scoped notification (not folded into the broadcast one above) so
+            // the client can actually render the recycled card in this player's real HandStock
+            // (docs/loaf-phase5-plan.md §9) -- the broadcast notification deliberately omits
+            // `value`, since discard-pile contents are private per docs/loaf-open-questions.md
+            // Q3 and notify->all's payload is visible to every connected client regardless of
+            // whether the message text references it. First use of notify->player() in this
+            // project -- already stubbed in tests/stubs/BgaFrameworkStubs.php but unverified
+            // live, per docs/loaf-phase1-plan.md's "Framework API confidence note".
+            $this->game->bga->notify->player(
+                $playerId,
+                'cardRecycledValue',
+                clienttranslate('You recycle ${value} back into hand'),
+                ['value' => $value]
             );
         }
     }

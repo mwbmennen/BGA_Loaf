@@ -18,6 +18,13 @@ const ST_RESOLVE_ADVANCED_EFFECT = 35;
 const GLOBAL_CURRENT_ROUND = 'current_round';
 const GLOBAL_CURRENT_REVIEW_CARD_ID = 'current_review_card_id';
 const GLOBAL_CURRENT_ORDER_AVERAGE = 'current_order_average';
+// Set true the moment ResolveRound reveals this round's played cards (cardPlayedRevealed),
+// reset false at the start of the next round (RoundStart) -- lets getAllDatas() tell a
+// reconnecting/refreshing client whether currently-`played` work_card rows are still hidden
+// commit placeholders or already-revealed cards, since the DB itself has no persisted
+// "revealed" flag (docs/loaf-remarks.md's Phase 5 §9 "committed card shows face-down after
+// refresh" entry).
+const GLOBAL_CARDS_REVEALED_THIS_ROUND = 'cards_revealed_this_round';
 
 // gameoptions.jsonc option id (100-199 range) -- see Game::setupNewGame().
 const OPTION_ADVANCED_CARDS = 100;
