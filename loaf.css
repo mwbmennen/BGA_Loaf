@@ -180,11 +180,13 @@
    the `type` passed to handCardsManager, setupCardsAndZoom) rather than on
    `.loaf_hand-card-hover` itself, so both the hover-in *and* hover-out direction animate, not
    just one. `translateY` matches bga-cards' own lift amount for its "selected" state
-   (`card-height / -5`, confirmed via its real source) for a consistent feel; `blueviolet`
-   matches its own default "selected" color for the same reason. `#my-hand`-scoped rather than
-   bare `.loaf-hand-card-front`: that class is also shared by the committed-slot placeholder
-   cards (same manager `type`, setupCardsAndZoom), which are never clickable and shouldn't
-   show a pointer cursor. */
+   (`card-height / -5`, confirmed via its real source) for a consistent feel; the border color
+   is this viewer's own player color (`--loaf-my-player-color`, set once in JS from
+   `gamedatas.players[...].color`, setupHandAndCommitStocks) rather than a fixed color, so it
+   reads as "your cards, your color" regardless of which of the 6 colors this viewer plays.
+   `#my-hand`-scoped rather than bare `.loaf-hand-card-front`: that class is also shared by the
+   committed-slot placeholder cards (same manager `type`, setupCardsAndZoom), which are never
+   clickable and shouldn't show a pointer cursor. */
 #my-hand .loaf-hand-card-front {
     cursor: pointer;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
@@ -197,15 +199,64 @@
        "bga-cards' own injected stylesheet outranks a single-class game selector" pattern has
        shown up this session (docs/loaf-remarks.md's Phase 5 §8 CSS-specificity entry has the
        fuller history/rationale for reaching for !important here rather than chasing
-       specificity again). */
-    box-shadow: inset 0 0 0 3px blueviolet !important;
+       specificity again). `blueviolet` fallback covers the brief window before
+       setupHandAndCommitStocks sets the real custom property, and any future context where
+       this class might apply with no player color in scope at all. */
+    box-shadow: inset 0 0 0 6px var(--loaf-my-player-color, blueviolet) !important;
 }
 
-/* Per-player face-down "committed" card slot, one instance embedded in each #player-table-*
-   div (setupHandAndCommitStocks). Small top margin so it doesn't crowd the hand-count line
-   immediately above it; no fixed size, same reasoning as #my-hand above. */
-.loaf_committed-card-slot {
-    margin-top: 8px;
+/* Advanced-effect card choice (docs/loaf-phase5-plan.md §9, ResolveAdvancedEffect.js's
+   markEligibility) -- an ineligible hand card stays visible but visually and functionally
+   disabled, rather than being hidden, so the player can see their whole hand and understand
+   *why* only some cards qualify. `pointer-events: none` also transitively blocks the
+   `.loaf-hand-card-front`-level mouseenter/mouseleave hover-preview listeners from §8 (they're
+   bound below this element in the DOM), so an ineligible card never shows the hover lift
+   either -- no separate gating needed for that in JS. Applied to the outer `.bga-cards_card`
+   element (CardManager.getCardElement), not a `.front`/`.back` side div, so it uniformly dims
+   whichever face is currently showing. `!important` proactively included (confirmed live
+   necessary, not just precautionary -- without it, `pointer-events: none` was silently
+   overridden and ineligible cards still hover-previewed, the fourth time a plain-specificity
+   style targeting a bga-cards-rendered element has lost to the library's own injected
+   stylesheet this session). */
+.loaf_hand-card-ineligible {
+    opacity: 0.4 !important;
+    pointer-events: none !important;
+}
+
+/* The one card a swap effect can make eligible outside the hand entirely: this player's own
+   already-revealed played card, still sitting in their committed slot (ResolveAdvancedEffect.js
+   -- SwapEffectResolver::eligibleDiscards mixes the played value into its own candidate set,
+   discard_choice never has this case). No hover-lift treatment here (unlike hand cards) --
+   there's only ever one committed card, no fan/overlap layout to preview against, so a
+   constant border is enough to signal "you can click this." Same `--loaf-my-player-color`
+   custom property as the hand-card hover style, for the same reason and the same visual
+   consistency; `!important` proactively included given every other style targeting a
+   bga-cards-rendered element this session has needed it. */
+.loaf_hand-card-eligible-swap {
+    cursor: pointer !important;
+    box-shadow: inset 0 0 0 6px var(--loaf-my-player-color, blueviolet) !important;
+}
+
+/* Shared row of every player's committed card (setupHandAndCommitStocks), one glanceable
+   "who's played, who hasn't" strip -- same flex-row treatment as #pending-cards above, rather
+   than each committed slot being scattered inside its own #player-table-* block. */
+#committed-cards {
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    margin-bottom: 12px;
+}
+
+.loaf_committed-card-entry {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.loaf_committed-card-name {
+    font-size: 12px;
+    opacity: 0.85;
 }
 
 

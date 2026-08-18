@@ -33,6 +33,10 @@ class RoundStart extends GameState
             return EndGame::class;
         }
 
+        // Reset before this round's own commits happen -- see GLOBAL_CARDS_REVEALED_THIS_ROUND's
+        // own comment (constants.inc.php) for why getAllDatas() needs this at all.
+        $this->game->bga->globals->set(GLOBAL_CARDS_REVEALED_THIS_ROUND, false);
+
         // Deck component ordering is unverified locally (see docs/loaf-phase1-plan.md's
         // "Framework API confidence note") -- sort by `location_arg` ourselves rather than
         // trust an unconfirmed default row order, assuming ascending `location_arg` = draw

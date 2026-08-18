@@ -169,6 +169,22 @@ class Game extends \Bga\GameFramework\Table
             "SELECT DISTINCT `player_id` FROM `work_card` WHERE `location` = 'played'",
             true
         ));
+        // Empty unless this round's committed cards have already been revealed
+        // (GLOBAL_CARDS_REVEALED_THIS_ROUND, set in ResolveRound.php right after
+        // cardPlayedRevealed fires, reset in RoundStart.php) -- without this, a page refresh
+        // mid-ResolveRound/ResolveAdvancedEffect reconstructed every committed card as a
+        // face-down placeholder unconditionally, even the requesting player's *own* card, even
+        // though it had already been publicly revealed and everyone (including a client that
+        // never refreshed) could already see its real value. Confirmed live: a player's own
+        // committed card stayed stuck face-down after a refresh, mid a swap-effect choice they
+        // needed to actually see the card to make.
+        $result['revealedCommittedValues'] = [];
+        if ((bool) $this->bga->globals->get(GLOBAL_CARDS_REVEALED_THIS_ROUND, false)) {
+            $result['revealedCommittedValues'] = array_map('intval', $this->getCollectionFromDb(
+                "SELECT `player_id` AS `id`, `value` FROM `work_card` WHERE `location` = 'played'",
+                true
+            ));
+        }
 
         $result['currentRound'] = (int) $this->bga->globals->get(GLOBAL_CURRENT_ROUND, 0);
         $result['currentOrderAverage'] = (int) $this->bga->globals->get(GLOBAL_CURRENT_ORDER_AVERAGE, 0);
