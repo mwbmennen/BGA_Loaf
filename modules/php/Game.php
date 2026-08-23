@@ -356,7 +356,7 @@ class Game extends \Bga\GameFramework\Table
         // abort game creation.
         try {
             $this->bga->tableStats->init(['rounds_played', 'ending_boss'], 0);
-            $this->bga->playerStats->init(['final_hand_value', 'final_reputation', 'end_game_bonus'], 0);
+            $this->bga->playerStats->init(['final_score', 'final_hand_value', 'final_reputation', 'reputation_bonus', 'end_game_bonus'], 0);
             $this->bga->playerStats->init(['fired', 'won_tie_break'], false);
         } catch (\Throwable $e) {
             $this->trace('Stats init failed: ' . $e->getMessage());
