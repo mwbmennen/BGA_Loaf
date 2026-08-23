@@ -194,7 +194,8 @@ class EndGame extends \Bga\GameFramework\States\GameState
         // tie correctly via player_score_aux, but shows no reasoning for it. The actual
         // winners/losers grouping is pure logic (ScoringCalculator::tieGroups(),
         // unit-tested); this adapter only turns each group into player names and log text.
-        foreach (ScoringCalculator::tieGroups($scores) as $group) {
+        $tieGroups = ScoringCalculator::tieGroups($scores);
+        foreach ($tieGroups as $group) {
             $winnerNames = implode(', ', array_map(fn($id) => $this->game->getPlayerNameById($id), $group['winners']));
 
             if (empty($group['losers'])) {
@@ -218,6 +219,73 @@ class EndGame extends \Bga\GameFramework\States\GameState
             );
         }
 
+        // Statistics (stats.jsonc): real API is $this->game->bga->tableStats/playerStats, NOT
+        // the flat Table::setStat()/incStat() methods -- those are silently broken on the
+        // current framework generation (docs/bga-studio-reference.md's "Table::incStat()/
+        // setStat() are deprecated" entry, confirmed live). Every call goes through
+        // setStatSafely() -- see its own doc for why each one needs its own try/catch rather
+        // than one shared around the whole batch.
+        $this->setStatSafely(
+            fn() => $this->game->bga->tableStats->set('rounds_played', (int) $this->game->bga->globals->get(GLOBAL_CURRENT_ROUND, 0)),
+            'rounds_played'
+        );
+        // 'ending_boss' is declared as an int stat in stats.jsonc (BGA stats have no string
+        // type) -- 0/1 encoding of $endingBoss, not a raw id.
+        $this->setStatSafely(
+            fn() => $this->game->bga->tableStats->set('ending_boss', $endingBoss === 'angry' ? 1 : 0),
+            'ending_boss'
+        );
+
+        // A group only represents a real tie-break decision (as opposed to the rulebook's
+        // "share the victory" case) when it has losers -- see ScoringCalculator::tieGroups()'s
+        // own doc.
+        $tieBreakWinnerIds = [];
+        foreach ($tieGroups as $group) {
+            if (!empty($group['losers'])) {
+                $tieBreakWinnerIds = [...$tieBreakWinnerIds, ...$group['winners']];
+            }
+        }
+
+        foreach ($scores as $playerId => $scoring) {
+            $this->setStatSafely(
+                fn() => $this->game->bga->playerStats->set('final_hand_value', $handValues[$playerId], $playerId),
+                "final_hand_value/$playerId"
+            );
+            $this->setStatSafely(
+                fn() => $this->game->bga->playerStats->set('final_reputation', $reputations[$playerId], $playerId),
+                "final_reputation/$playerId"
+            );
+            $this->setStatSafely(
+                fn() => $this->game->bga->playerStats->set('end_game_bonus', $bonusPoints[$playerId], $playerId),
+                "end_game_bonus/$playerId"
+            );
+            $this->setStatSafely(
+                fn() => $this->game->bga->playerStats->set('fired', $scoring->fired, $playerId),
+                "fired/$playerId"
+            );
+            $this->setStatSafely(
+                fn() => $this->game->bga->playerStats->set('won_tie_break', in_array($playerId, $tieBreakWinnerIds, true), $playerId),
+                "won_tie_break/$playerId"
+            );
+        }
+
         return ST_END_GAME;
+    }
+
+    /**
+     * Every real call into $this->game->bga->tableStats/playerStats goes through here -- one
+     * try/catch per stat, not one around a whole batch, so a single bad value (or an
+     * unexpected type the live framework rejects) can't silently cancel every stat that would
+     * otherwise have been set after it. See EndGame::onEnteringState()'s stats block for why:
+     * a live incident left an entire second player's stats stuck at their initStat()-time
+     * default because one shared try/catch aborted mid-loop.
+     */
+    private function setStatSafely(callable $set, string $description): void
+    {
+        try {
+            $set();
+        } catch (\Throwable $e) {
+            $this->game->trace("Stats tracking failed ($description): " . $e->getMessage());
+        }
     }
 }

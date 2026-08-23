@@ -349,13 +349,18 @@ class Game extends \Bga\GameFramework\Table
 
         $this->bga->globals->set(GLOBAL_CURRENT_ROUND, 0);
 
-        // Init game statistics.
-        //
-        // NOTE: statistics used in this file must be defined in your `stats.inc.php` file.
-
-        // Dummy content.
-        // $this->tableStats->init('table_teststat1', 0);
-        // $this->playerStats->init('player_teststat1', 0);
+        // Init game statistics (stats.json). Real API is $this->bga->tableStats/playerStats,
+        // NOT the flat Table::initStat()-style scaffold comment this replaced -- see
+        // docs/bga-studio-reference.md's "Table::incStat()/setStat() are deprecated" entry.
+        // Wrapped in try/catch per that entry's defensive pattern: a stats hiccup must never
+        // abort game creation.
+        try {
+            $this->bga->tableStats->init(['rounds_played', 'ending_boss'], 0);
+            $this->bga->playerStats->init(['final_hand_value', 'final_reputation', 'end_game_bonus'], 0);
+            $this->bga->playerStats->init(['fired', 'won_tie_break'], false);
+        } catch (\Throwable $e) {
+            $this->trace('Stats init failed: ' . $e->getMessage());
+        }
 
         return RoundStart::class;
     }
