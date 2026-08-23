@@ -173,11 +173,11 @@ class EndGame extends \Bga\GameFramework\States\GameState
                     'player_name' => $this->game->getPlayerNameById($playerId),
                     'hand' => $handValueLists[$playerId] ?? '',
                     'handTotal' => $handValues[$playerId],
-                    // Derived from the final score rather than duplicating
-                    // ScoringCalculator's reputation-bonus table here -- meaningless for a
-                    // fired player (their score is the shared sentinel, not this sum), so
-                    // only computed/shown on the non-fired branch above.
-                    'bonus' => $scoring->score - $handValues[$playerId] - $bonusPoints[$playerId],
+                    // ScoringCalculator's own reputation-bonus tier lookup, not back-derived
+                    // from the score -- a fired player's score is the shared sentinel and
+                    // doesn't include this term at all, so only shown on the non-fired branch
+                    // above.
+                    'bonus' => ScoringCalculator::reputationBonus($reputations[$playerId]),
                     'reputation' => $reputations[$playerId],
                     // Signed as-is (not forced with a leading '+' like 'bonus' above) since,
                     // unlike the reputation-bonus tiers, this can legitimately be negative --
@@ -248,12 +248,24 @@ class EndGame extends \Bga\GameFramework\States\GameState
 
         foreach ($scores as $playerId => $scoring) {
             $this->setStatSafely(
+                fn() => $this->game->bga->playerStats->set('final_score', $scoring->score, $playerId),
+                "final_score/$playerId"
+            );
+            $this->setStatSafely(
                 fn() => $this->game->bga->playerStats->set('final_hand_value', $handValues[$playerId], $playerId),
                 "final_hand_value/$playerId"
             );
             $this->setStatSafely(
                 fn() => $this->game->bga->playerStats->set('final_reputation', $reputations[$playerId], $playerId),
                 "final_reputation/$playerId"
+            );
+            $this->setStatSafely(
+                fn() => $this->game->bga->playerStats->set(
+                    'reputation_bonus',
+                    ScoringCalculator::reputationBonus($reputations[$playerId]),
+                    $playerId
+                ),
+                "reputation_bonus/$playerId"
             );
             $this->setStatSafely(
                 fn() => $this->game->bga->playerStats->set('end_game_bonus', $bonusPoints[$playerId], $playerId),

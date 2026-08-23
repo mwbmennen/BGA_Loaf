@@ -120,8 +120,12 @@ final class ScoringCalculator
      * the physical board; the rulebook's own transcribed text only says "bonus points if you
      * have a positive reputation value" with no numbers, since the values live on the board
      * component, not in the rules text). 0 or negative reputation scores no bonus.
+     *
+     * Public (not just used internally by score()) so callers like EndGame's stats/log code
+     * can report this same tier value without back-deriving it from a fired player's sentinel
+     * score, which doesn't include it at all.
      */
-    private static function reputationBonus(int $reputation): int
+    public static function reputationBonus(int $reputation): int
     {
         return match (true) {
             $reputation >= 10 => 5,

@@ -15,28 +15,38 @@
 
     // Statistics for each player.
     "player": {
-        "final_hand_value": {
+        "final_score": {
             "id": 20,
+            "name": "Final point value",
+            "type": "int"
+        },
+        "final_hand_value": {
+            "id": 21,
             "name": "Final hand value",
             "type": "int"
         },
         "final_reputation": {
-            "id": 21,
+            "id": 22,
             "name": "Final reputation",
             "type": "int"
         },
+        "reputation_bonus": {
+            "id": 23,
+            "name": "Reputation bonus (from reputation board tier)",
+            "type": "int"
+        },
         "end_game_bonus": {
-            "id": 22,
+            "id": 24,
             "name": "End-game bonus/malus",
             "type": "int"
         },
         "fired": {
-            "id": 23,
+            "id": 25,
             "name": "Fired",
             "type": "bool"
         },
         "won_tie_break": {
-            "id": 24,
+            "id": 26,
             "name": "Won a tie-break",
             "type": "bool"
         }
