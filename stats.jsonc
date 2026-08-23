@@ -1,28 +1,44 @@
-{    
-    // Statistics for the table
-    "table": {},
-    
-    // Statistics for each player
+{
+    // Statistics for the table.
+    "table": {
+        "rounds_played": {
+            "id": 10,
+            "name": "Rounds played",
+            "type": "int"
+        },
+        "ending_boss": {
+            "id": 11,
+            "name": "Boss that ended the game (0 = Happy, 1 = Angry)",
+            "type": "int"
+        }
+    },
+
+    // Statistics for each player.
     "player": {
-      /* 
-      EXAMPLE:
-
-      "turns_number": {
-        "id": 10,
-        "name": "Number of turns",
-        "type": "int"
-      },
-      "player_teststat1": {
-        "id": 11,
-        "name": "player test stat 1",
-        "type": "int"
-      },
-      "player_teststat2": {
-        "id": 12,
-        "name": "player test stat 2",
-        "type": "float"
-      }
-      */
-
+        "final_hand_value": {
+            "id": 20,
+            "name": "Final hand value",
+            "type": "int"
+        },
+        "final_reputation": {
+            "id": 21,
+            "name": "Final reputation",
+            "type": "int"
+        },
+        "end_game_bonus": {
+            "id": 22,
+            "name": "End-game bonus/malus",
+            "type": "int"
+        },
+        "fired": {
+            "id": 23,
+            "name": "Fired",
+            "type": "bool"
+        },
+        "won_tie_break": {
+            "id": 24,
+            "name": "Won a tie-break",
+            "type": "bool"
+        }
     }
 }

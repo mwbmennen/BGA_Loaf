@@ -63,7 +63,7 @@ Don't assume the namespace segment is a lowercase copy of the project slug — v
 ├── gameinfos.inc.php         ← Game metadata (name, players, duration, BGG ID, etc.)
 ├── gameoptions.json          ← Pre-game setup options (board size, variants)
 ├── gamepreferences.json      ← Per-player in-game preferences (UI toggles)
-├── stats.json                ← Statistics tracked per game/player
+├── stats.jsonc                ← Statistics tracked per game/player (NOT stats.json — see §4)
 ├── img/
 │   └── tokens.png            ← All game art gathered into sprite sheets
 ├── sounds/
@@ -251,7 +251,7 @@ Install the **SFTP** extension by Natizyskunk. Then create `.vscode/sftp.json`:
 - `{gamename}.css` — styles
 - `img/` — artwork
 - `dbmodel.sql` — only when schema changes (see below)
-- `gameoptions.json`, `gamepreferences.json`, `stats.json`, `gameinfos.inc.php`
+- `gameoptions.json`, `gamepreferences.json`, `stats.jsonc` (NOT `stats.json`), `gameinfos.inc.php`
 
 **Do not sync:**
 
@@ -267,6 +267,27 @@ BGA does **not** re-run `dbmodel.sql` automatically when you sync it. To apply s
 2. Or write a migration SQL and run it manually via Studio's SQL console
 
 > ⚠️ **Never use trailing `--` comments in `dbmodel.sql`** — put every comment on its own line, never after SQL on the same line. See §5 "CREATE TABLE silently missing columns" below.
+
+### Statistics changes (stats.jsonc — NOT stats.json)
+
+> ⚠️ **The live config file BGA actually reads is `stats.jsonc`** (the Studio-generated scaffold
+> filename, with `//` comments allowed), **not `stats.json`.** This project shipped a
+> `stats.json` file for a while under the wrong assumption that it needed the `.json` extension
+> like `gameoptions.json`/`gamepreferences.json` elsewhere in this same doc — Studio silently
+> ignored it (the "Reload statistics configuration" button kept showing an empty `{"table": [],
+> "player": []}` no matter how many times the file was re-synced) because it was never reading
+> that file in the first place. Confirmed against the sibling Gelati project, whose real,
+> working `stats.jsonc` is the actual current-generation filename. If a stats reload/behavior
+> looks stuck no matter what you edit, check you're editing `stats.jsonc`, not `stats.json`,
+> before anything else.
+
+Unlike `dbmodel.sql`/`gamepreferences.jsonc` (§ above), stats don't need an explicit "Reload
+___ configuration" step in Studio's admin console — confirmed live 2026-08-04 via Gelati: after
+uploading an edited `stats.jsonc`, simply **creating a new table** was enough to pick up the new
+stat definitions. A stat added mid-session won't retroactively appear on a table created before
+the edit (same "fixed at table-creation time" behavior as game options/preferences), but no
+reload button click is required. If a new/changed stat is missing, try a fresh table first
+before assuming a reload step is also needed.
 
 ---
 
@@ -299,6 +320,55 @@ grep -rn "namespace\|use Bga" modules/php/
 
 ---
 
+### Error: "Unexpected error: (table|player) statistic does not exists: N"
+
+```
+Unexpected error: (table) statistic does not exists: 8 (reference: GS1 18/08 16:44:35)
+```
+
+**Cause, in order of likelihood:**
+
+1. **You're calling the deprecated, silently-broken flat `Table::incStat()`/`setStat()` methods** — see "`Table::incStat()`/`setStat()` are deprecated" immediately below. In one confirmed real incident, `setStat('rounds_played', 8)` (round 8, a _table_ stat, no `$playerId` given) crashed with "(table) statistic does not exists: 8" — the "8" was the _value_ being set, not any id from `stats.jsonc`, because the broken method misreads its own arguments.
+2. **You edited `stats.json` instead of `stats.jsonc`** — see §4's "Statistics changes (stats.jsonc — NOT stats.json)" above. BGA never reads `stats.json` at all on the current framework generation, so this looks identical to "forgot to sync" but no amount of re-syncing `stats.json` fixes it.
+3. A new stat was added to `stats.jsonc` but no new table has been created since — see §4 above; unlike most config changes, this doesn't need a "Reload ___ configuration" click, just a fresh table.
+
+**Fix:** Switch to `$this->bga->tableStats`/`$this->bga->playerStats` (cause 1), confirm you're editing `stats.jsonc` (cause 2), and create a new table after syncing (cause 3) — then retry. If this hit mid-game (a stats call reached via a state transition triggered by a player action), the action itself fails but the game state is unchanged (BGA rolls back the transaction on an uncaught error) — just retry the same action once the code/config is fixed.
+
+---
+
+### `Table::incStat()`/`setStat()` are deprecated and silently broken — use `$this->bga->playerStats`/`$this->bga->tableStats` instead
+
+Confirmed live independently in two separate games built from this template (2026-08-04 and 2026-08-18) — worth checking this entry _before_ debugging a first-use stats API from scratch.
+
+The flat, non-namespaced `Table` methods `incStat(string $name, int $increment, ?int $playerId = null)` and `setStat(string $name, int $value, ?int $playerId = null)` — present in Studio's own scaffold-generated PHPUnit stub (`tests/stubs/BgaFrameworkStubs.php`) with no `@deprecated` marker — do not work correctly on the current framework generation. They're easy to trust: the signature looks entirely plausible, and Studio-generated stubs are usually trustworthy elsewhere.
+
+**The actual, current, documented API** (confirmed via BGA's own docs — `Game_statistics:_stats.json` and `Main_game_logic:_Game.php`; despite that BGA doc page's own name, the file this project's Studio scaffold actually reads is `stats.jsonc`, not `stats.json` — see §4 above):
+
+```php
+// Table-wide stats — a SEPARATE object from playerStats, not a $playerId=null overload of it:
+$this->bga->tableStats->init(string|array $nameOrNames, int|float|bool $value): void;
+$this->bga->tableStats->inc(string $name, int|float $delta): void;
+$this->bga->tableStats->set(string $name, int|float|bool $value): void;
+$this->bga->tableStats->get(string $name): int|float|bool;
+
+// Per-player stats:
+$this->bga->playerStats->init(string|array $nameOrNames, int|float|bool $value, bool $updateTableStat = false): void;
+$this->bga->playerStats->inc(string $name, int|float $delta, int $playerId, bool $updateTableStat = false): void;
+$this->bga->playerStats->set(string $name, int|float|bool $value, int $playerId): void;
+$this->bga->playerStats->setAll(string $name, int|float|bool $value): void;
+$this->bga->playerStats->incAll(string $name, int|float $delta): void;
+$this->bga->playerStats->get(string $name, int $playerId): int|float|bool;
+$this->bga->playerStats->getAll(string $name): array;
+```
+
+This project's own `tests/stubs/BgaFrameworkStubs.php` declares `PlayerStats`/`TableStats` with this real shape, and marks the flat `Table::incStat()`/`setStat()` `@deprecated` with an explicit warning — don't let a future edit make it look like plausible evidence for the broken API again.
+
+**Defensive pattern used for every stats call in this project** (see `modules/php/States/EndGame.php`'s end-of-game block and `modules/php/Game.php`'s `setupNewGame()`): wrap each real `tableStats`/`playerStats` call in its own `try`/`catch`, logging via `trace()` on failure, rather than calling it directly from game logic. A stats-tracking failure must never abort the real game action it's attached to — in both incidents above, an unguarded stat call crashed a real player's in-progress action (game state was safe either way, since BGA rolls back the transaction on an uncaught error, but the player still had to retry).
+
+**Takeaway**: don't trust a method's presence in the local PHPUnit stub as evidence it's the _current, non-deprecated_ API — the stub can be scaffold-generated boilerplate that predates a framework migration. When a stats-related (or similarly "looks standard, barely used in this codebase") call is going in for the first time, check BGA's current docs for that specific object/method before trusting a stub signature that nothing has exercised live yet.
+
+---
+
 ### Error: "Declaration of Game::setupNewGame(...) must be compatible with Table::setupNewGame(...)"
 
 ```
@@ -310,14 +380,14 @@ must be compatible with Bga\GameFramework\Table::setupNewGame($players, $options
 `upgradeTableDb()`, `zombieTurn()`, etc.) was declared with type hints that the parent
 `Table` method doesn't have. PHP's override-compatibility rule treats an untyped parent
 parameter as implicitly `mixed`; a child method that narrows it to `array` (or any concrete
-type) is an *incompatible* override, not a safe addition — this is a hard fatal, not a
+type) is an _incompatible_ override, not a safe addition — this is a hard fatal, not a
 warning, and it happens at class-load time, before any of your code runs. Easy to write by
 habit (typing your own parameters is normally good practice) and impossible to catch locally,
 since there's no vendored copy of `Bga\GameFramework\Table` to type-check against — only a
 live Studio deploy surfaces it.
 
 **Fix:** Match the parent signature exactly — no type hints, even though `$players`/`$options`
-are always arrays in practice. Do any type-narrowing/casting *inside* the method body instead:
+are always arrays in practice. Do any type-narrowing/casting _inside_ the method body instead:
 
 ```php
 // Wrong — narrows an untyped parent parameter:
@@ -354,7 +424,7 @@ in modules/php/States/ResolveRound.php
 file, which PHP's autoloader pulls in on demand the first time it's referenced. If nothing
 `require`s the constants file, the constants simply don't exist at runtime, and PHP throws
 "undefined constant" the first time a namespaced file references one unqualified (PHP falls
-back to the *global* namespace for unqualified constants, but only if the constant was
+back to the _global_ namespace for unqualified constants, but only if the constant was
 actually defined somewhere by the time the lookup happens).
 
 **Fix:** `require_once` the constants file from `Game.php`, since `Game.php` is always loaded
@@ -512,7 +582,7 @@ other players...") and even that one active player got no buttons.
 
 **Two independent causes, both required to fully fix this:**
 
-**1. `type: StateType::MULTIPLE_ACTIVE_PLAYER` only declares that the state *permits* several
+**1. `type: StateType::MULTIPLE_ACTIVE_PLAYER` only declares that the state _permits_ several
 simultaneously active players — it doesn't activate anyone.** You must explicitly call
 `$this->game->gamestate->setAllPlayersMultiactive();` in the state's `onEnteringState()`, the
 same way a single-`ACTIVE_PLAYER` state needs an explicit call to select its one active
@@ -552,7 +622,7 @@ public function getArgs(): array {
 }
 ```
 
-**Important correction, confirmed live:** `_merge_private` only affects what the *client*
+**Important correction, confirmed live:** `_merge_private` only affects what the _client_
 receives — it does **not** carry through to an `actXxx()` action handler's injected
 `array $args` parameter. Submitting an action (e.g. clicking a button built from this
 `getArgs()` data) threw `Undefined array key "handValues"` from inside the action handler,
@@ -627,7 +697,7 @@ where a boss-pile card counter that had been working via live notification incre
 non-sequential/associative PHP array serializes to a JS **object** in the JSON payload, not
 an array — and plain objects don't have a `.length` property, only real arrays do. This is
 easy to miss because PHP itself doesn't distinguish the two (`usort()`, `foreach`, `count()`
-all work identically on both), so nothing looks wrong until the *client* tries to treat the
+all work identically on both), so nothing looks wrong until the _client_ tries to treat the
 result as an array.
 
 **Fix:** Use `Object.keys(...).length` client-side instead of `.length` — it works correctly
@@ -659,10 +729,10 @@ as Gelati-specific — it's just BGA's name for "the transport behind every noti
 
 **Symptom:** Product/design wants the game log to read cause-then-effect (e.g. "played card 5"
 before "moves +2 on the reputation track"), but the "effect" value needed for the later-seeming
-message is actually computed *first*, and the "cause" message would like to report a value (like
+message is actually computed _first_, and the "cause" message would like to report a value (like
 a running total) that isn't known until after the effect logic runs.
 
-**Cause:** The log shows notifications in the order `notify->all()` was *called*, completely
+**Cause:** The log shows notifications in the order `notify->all()` was _called_, completely
 independent of when the underlying DB writes/computation happened. It's tempting to assume you
 can freely reorder two `notify->all()` calls without consequence, but any `${...}` value
 interpolated into a message must already be known at the moment you call it — so pulling a
@@ -727,26 +797,28 @@ later activation changes:
 
 ```js
 class PlayCards {
-    // Don't add buttons here -- isCurrentPlayerActive can be stale on a live push.
-    onEnteringState(_args, _isCurrentPlayerActive) {
-        this.bga.statusBar.setTitle(_("Bakers are committing a work card"));
-    }
+  // Don't add buttons here -- isCurrentPlayerActive can be stale on a live push.
+  onEnteringState(_args, _isCurrentPlayerActive) {
+    this.bga.statusBar.setTitle(_("Bakers are committing a work card"));
+  }
 
-    // This is the reliable signal -- called once activation has settled, both on first
-    // becoming active and on becoming inactive again.
-    onPlayerActivationChange(args, isCurrentPlayerActive) {
-        if (isCurrentPlayerActive) {
-            this.bga.statusBar.setTitle(_("${you} must commit a work card"));
-            args.handValues.forEach((value) =>
-                this.bga.statusBar.addActionButton(
-                    _("Commit ${value}").replace("${value}", value),
-                    () => this.onCardClick(value),
-                ),
-            );
-        } else {
-            this.bga.statusBar.setTitle(_("Waiting for other players to commit a work card"));
-        }
+  // This is the reliable signal -- called once activation has settled, both on first
+  // becoming active and on becoming inactive again.
+  onPlayerActivationChange(args, isCurrentPlayerActive) {
+    if (isCurrentPlayerActive) {
+      this.bga.statusBar.setTitle(_("${you} must commit a work card"));
+      args.handValues.forEach((value) =>
+        this.bga.statusBar.addActionButton(
+          _("Commit ${value}").replace("${value}", value),
+          () => this.onCardClick(value),
+        ),
+      );
+    } else {
+      this.bga.statusBar.setTitle(
+        _("Waiting for other players to commit a work card"),
+      );
     }
+  }
 }
 ```
 
@@ -776,7 +848,7 @@ this section's `bga-cards` entries below) means it returns a promise immediately
 `await` — and the framework proceeds to fire `onEnteringState`/`onPlayerActivationChange` for
 whatever state is already active, without waiting for that promise to settle. Any state hook
 that reads something `setup()` builds (a Stock, a Manager, anything assigned to `this.<field>`
-partway through `setup()`'s own body) can therefore run *before* that assignment has happened
+partway through `setup()`'s own body) can therefore run _before_ that assignment has happened
 — not just before it's populated with data, but before the object exists at all, hence
 `undefined` rather than some other stale/empty value.
 
@@ -920,7 +992,7 @@ list with a zero-padded loop instead (`for i in $(seq -f "%02g" 1 64); do ...`),
 what `tools/build-sprite.sh` already does — don't reintroduce the brace-expansion version
 when testing commands ad hoc.
 
-**Third gotcha, confirmed live: `montage` needs `-font` on *every* call, even ones with no
+**Third gotcha, confirmed live: `montage` needs `-font` on _every_ call, even ones with no
 visible label.** `montage` renders a per-tile filename label by default and attempts the
 font lookup regardless of grid size or whether any label ends up legible/visible — on a
 fresh ImageMagick install (`brew install imagemagick`) its own font database can be empty
@@ -1014,8 +1086,8 @@ feature — they show up in a debug menu triggered by a bug icon in the Studio t
 `Practical_debugging`, `Studio_function_reference`, `Testing_by_developer`, and `Studio_FAQ`
 directly (plus web search) for an explicit statement that these are automatically unreachable
 once a game is live/published to real players — found none. The closest related fact cuts the
-other way: BGA's docs separately recommend `getBgaEnvironment() === 'studio'` as something *the
-developer* must add themselves to gate other debug-only code from ever showing up outside
+other way: BGA's docs separately recommend `getBgaEnvironment() === 'studio'` as something _the
+developer_ must add themselves to gate other debug-only code from ever showing up outside
 Studio — which wouldn't need to be a documented pattern if `debug_*` methods were already
 platform-enforced.
 
@@ -1124,7 +1196,7 @@ Concretely: `$this->gamestate->setPlayersMultiactive($players, $next_state, $bEx
 real, documented method — "activate exactly this list of players in a `MULTIPLE_ACTIVE_PLAYER`
 state, nobody else" — genuinely useful any time a multiactive state's target group is a subset
 of all players (e.g. only players meeting some condition need to act), not everyone. It was
-documented only on the *old*-framework page, and for a while this template's stubs listed only
+documented only on the _old_-framework page, and for a while this template's stubs listed only
 `setAllPlayersMultiactive()`/`setPlayerNonMultiactive()` on the new typed `Gamestate` class —
 not because it was confirmed absent, but because nobody had confirmed it present either. **It's
 now confirmed present and working on the typed framework** (exercised live on Studio by L'Oaf's
@@ -1134,7 +1206,7 @@ stubs with a citation — no fallback needed for this specific method anymore.
 **Don't add a method to the stubs on the strength of the old docs alone**, though — that's
 exactly how this project has previously shipped a live fatal error (see `playerScoreAux`'s
 incident history elsewhere in this doc: two guessed signatures both threw before the third was
-confirmed), and it's what nearly happened here too before it got verified live. For any *other*
+confirmed), and it's what nearly happened here too before it got verified live. For any _other_
 unconfirmed method, treat "documented for the old framework" and "confirmed for this template"
 as two different levels of evidence, and fall back to only confirmed primitives until it's
 actually been exercised live:
@@ -1236,7 +1308,7 @@ image_size) * (percent / 100)`. For a sprite sheet displayed at `background-size
 {columns*100}% {rows*100}%` (i.e. `image_size = columns * box_size`), solving for the
 percentage that shifts the image left by exactly `index` tile-widths gives `percent = 100 *
 index / (columns - 1)` — the divisor is `columns - 1`, not `columns`. BGA's own doc example
-divides by a number that happens to equal *that specific example's* `columns - 1` (or
+divides by a number that happens to equal _that specific example's_ `columns - 1` (or
 `rows - 1`) — it is not a "divide by the column count" rule that generalizes to a different
 grid size, and copying it verbatim for a sheet with a different column/row count silently
 crops the wrong tile.
@@ -1273,7 +1345,7 @@ normalizes to a multiple of 360° close to nothing visually different from unrot
 **Also**: `bga-cards` already swaps the rotated card's own effective width/height for you —
 `lying = rotation % 2 === 1`, and when `lying` is true it sets
 `--bga-cards_card-effective-width/height` swapped from the base `cardWidth`/`cardHeight`. Don't
-also hardcode a swapped size on the stock's *container* element to "make room" for the
+also hardcode a swapped size on the stock's _container_ element to "make room" for the
 rotation — that fights the library's own sizing instead of cooperating with it (the unrotated
 `.slot` element's own `min-width`/`min-height` can then mismatch a manually-shrunk container
 dimension). Leave the container unsized and let it follow the card.
@@ -1283,28 +1355,30 @@ an explicit size on the container holding a stock with rotated cards.
 
 ### A "reveal" card (face-down placeholder → real front data later) needs a stable id that doesn't depend on the data being revealed
 
-A common pattern: a card is visible to everyone as *something committed/face-down* before its
+A common pattern: a card is visible to everyone as _something committed/face-down_ before its
 real identity is known (a played-but-unrevealed card, a drawn-but-unseen card, etc.), then gets
 its real front data at some later point and flips. `CardManager.updateCardInformations(card,
 settings)` is built for exactly this — "Used when a card with just an id (back shown) should be
 revealed, with all data needed to populate the front" — but it works by looking up the
-*existing* card element via `getId(newCardData)` and updating it in place. If the placeholder's
+_existing_ card element via `getId(newCardData)` and updating it in place. If the placeholder's
 id and the revealed card's id are computed differently (e.g. a hand card's id is naturally
 `${color}_${value}`, but the placeholder doesn't know `value` yet), the two ids won't match,
 and `updateCardInformations` will silently fail to find the placeholder — typically manifesting
 as either nothing visibly happening, or a second, unrelated element appearing instead of the
 existing one flipping.
 
-**Fix:** give this class of card an identity field that's known at *placeholder* time and never
+**Fix:** give this class of card an identity field that's known at _placeholder_ time and never
 changes (e.g. `playerId`, or a server-issued card id), and branch `getId` on its presence:
+
 ```javascript
 getId: (card) => card.playerId !== undefined
   ? `committed_${card.playerId}`   // stable across placeholder -> revealed
   : `${card.color}_${card.value}`, // ordinary case, both known upfront
 ```
+
 Then the reveal is just `manager.updateCardInformations({ ...same identity field, ...real front data, visible: true })` — no `removeCard`/`addCard` pair needed, and the existing DOM element's own flip animation runs for free.
 
-**Caution if this same card can later move to a different stock via `addCard(card, { fromStock })`**: confirmed via the real source that `fromStock` requires the object passed to the destination's `addCard` to keep producing the *same* `manager.getId()` result as whatever's currently tracked in `fromStock` — the move is resolved by id lookup, not object identity. That means the moved card keeps whichever identity field this pattern gave it (e.g. `playerId`) even once it's sitting in an entirely different, ordinary stock going forward. If that identity field can repeat (a `playerId` will, the next time that same player triggers the same placeholder-card flow again), two genuinely different cards can end up computing the same id — one now-relocated card still carrying the old scheme, and a fresh placeholder built the normal way. **Fix:** use a value that can never repeat for the whole session (a monotonic counter, not a player/seat id) as this identity field, if any card built with this pattern might ever be moved to another stock via `fromStock` rather than only ever being revealed in place.
+**Caution if this same card can later move to a different stock via `addCard(card, { fromStock })`**: confirmed via the real source that `fromStock` requires the object passed to the destination's `addCard` to keep producing the _same_ `manager.getId()` result as whatever's currently tracked in `fromStock` — the move is resolved by id lookup, not object identity. That means the moved card keeps whichever identity field this pattern gave it (e.g. `playerId`) even once it's sitting in an entirely different, ordinary stock going forward. If that identity field can repeat (a `playerId` will, the next time that same player triggers the same placeholder-card flow again), two genuinely different cards can end up computing the same id — one now-relocated card still carrying the old scheme, and a fresh placeholder built the normal way. **Fix:** use a value that can never repeat for the whole session (a monotonic counter, not a player/seat id) as this identity field, if any card built with this pattern might ever be moved to another stock via `fromStock` rather than only ever being revealed in place.
 
 ### `setSelectableCards()` is a silent no-op while `selectionMode` is still `'none'` — call `setSelectionMode()` instead
 
@@ -1319,6 +1393,7 @@ the `bga-cards_selectable-card` class at all.
 `.d.ts`'s doc comments over the actual library behavior (the same class of mistake
 `getCardRotation`'s entry above already warns about). Reading the real source
 (`bga-cards.esm.js`) shows `CardStock.setSelectableCards(selectableCards)` opens with:
+
 ```javascript
 setSelectableCards(selectableCards) {
     if (this.selectionMode === 'none') {
@@ -1327,15 +1402,16 @@ setSelectableCards(selectableCards) {
     ...
 }
 ```
+
 A freshly-constructed stock's `selectionMode` defaults to `'none'`. Calling
 `setSelectableCards()` without ever having called `setSelectionMode()` first therefore does
-*nothing*, every time, regardless of arguments — `setSelectableCards()`'s own doc comment gives
+_nothing_, every time, regardless of arguments — `setSelectableCards()`'s own doc comment gives
 no hint of this early return.
 
 **Fix:** call `stock.setSelectionMode('single')` (or `'multiple'`) instead of
-`setSelectableCards()` to both leave `'none'` *and* mark cards selectable in one call — its own
+`setSelectableCards()` to both leave `'none'` _and_ mark cards selectable in one call — its own
 implementation marks every current card selectable (or a given subset, as its second argument)
-and only *then* is a direct `setSelectableCards()` call (e.g. later, to narrow the selectable
+and only _then_ is a direct `setSelectableCards()` call (e.g. later, to narrow the selectable
 set without changing mode) actually live. To disable, call `setSelectionMode('none')`, not
 `setSelectableCards([])` (also a no-op once already in `'none'`, and doesn't undo a
 non-`'none'` mode either — it would leave the mode itself unchanged while just clearing which
@@ -1346,7 +1422,7 @@ separate, skippable concern as an earlier draft of this entry claimed.
 
 **Addendum, once a game wants its own complete visual for "clickable"/"chosen" states**: the
 `setSelectionMode` approach above bundles two separate concerns into one setting — which
-cards' clicks fire `onCardClick`, *and* whether the library shows its own built-in "selected"
+cards' clicks fire `onCardClick`, _and_ whether the library shows its own built-in "selected"
 visual (a border/lift, toggled automatically on click any time `selectionMode !== 'none'`, with
 no way to opt into just the click-firing half). If a game's own CSS already provides a complete
 hover/selected treatment, that library-driven visual becomes unwanted overlap (confirmed live:
@@ -1366,7 +1442,7 @@ matching the element (right selector, right class on the element), but has zero 
 and cheaper to rule out, but this entry assumes they're already ruled out).
 
 **Cause:** `bga-cards` injects its own `<style>` tag with rules like `.card-stock
-.bga-cards_selectable-card { cursor: pointer; outline: ...; }` — a *two-class* selector. A
+.bga-cards_selectable-card { cursor: pointer; outline: ...; }` — a _two-class_ selector. A
 game's own rule targeting just `.bga-cards_selectable-card` (one class) loses the specificity
 comparison regardless of source order (the game's stylesheet loading after the library's
 injected one does not help — specificity is compared before source order ever matters).
@@ -1383,7 +1459,7 @@ the specificity one.
 
 **Fix:** match the library's selector structure to equal its specificity, or — simpler and more
 future-proof against the library changing its own selectors later — use `!important` on the
-overriding declarations, with a comment explaining *why* (a deliberate, confirmed-necessary
+overriding declarations, with a comment explaining _why_ (a deliberate, confirmed-necessary
 override of a specific third-party rule, not a first-resort habit). Prefer a property that
 doesn't depend on any of the library's own CSS custom properties if one of those is suspected to
 be forced to an unhelpful value (e.g. `box-shadow: inset ...` instead of `outline`, which also
@@ -1456,12 +1532,12 @@ rather than avoiding `self::_()` to dodge the missing stub.
 
 BGA framework methods that surface a value sourced from the DB (`getActivePlayerId()`, `activeNextPlayer()`, `getGameStateValue()`) can return it as a numeric string rather than `int`, regardless of what their own signature (or this project's local stub of them) declares. This produces two different failure modes depending on how the value is used, both only showing up live on BGA Studio's server, never locally:
 
-- Passed straight into one of *our* `strict_types=1` methods with an `int`-typed parameter (`getActivePlayerId()`/`activeNextPlayer()` into an `int $playerId` param) → throws a `TypeError`. Loud and immediate.
+- Passed straight into one of _our_ `strict_types=1` methods with an `int`-typed parameter (`getActivePlayerId()`/`activeNextPlayer()` into an `int $playerId` param) → throws a `TypeError`. Loud and immediate.
 - Compared with strict `===`/`!==` against an int literal (`getGameStateValue(...) === 0`) → the comparison silently and permanently evaluates to the wrong branch. No error at all — just a feature that quietly never activates (Gelati's `canCancelTurn()`/`canCancelExchange()` hit exactly this; see `docs/gelati-remarks.md`, "`canCancelTurn()`/`canCancelExchange()` never showed their buttons on live Studio"). This failure mode is more dangerous specifically because it never surfaces as an error.
 
 **Why this happens, mechanically**: a column being `INT` in `dbmodel.sql` (or a game-state-value's registered id) is a _schema_ type, not a runtime PHP type. PDO (which the framework's DB layer sits on top of) returns query results as PHP strings by default for essentially every column type — standard emulated-prepared-statement behavior, not a bug. This codebase already works around that everywhere _we_ read the DB directly — every method in `Game.php` casts explicitly at the point of fetch (`(int) $row['holder']`, `(int) $this->getUniqueValueFromDb(...)`, `(bool) $this->getUniqueValueFromDb(...)`, etc.) — so the only places this ever surfaces are spots where a _framework_ accessor's return value (not one of our own DB-reading methods) flows directly into a comparison or a `strict_types=1`-typed parameter, with no cast in between. Confirmed empirically for `getActivePlayerId()`/`activeNextPlayer()`, not just inferred: the live TypeError message itself said "string given" for the argument.
 
-**Standing rule going forward**: cast `(int)` at the read site for *any* BGA framework accessor whose value feeds a comparison or a typed parameter — don't trust the local stub's type signature as proof of the real return type.
+**Standing rule going forward**: cast `(int)` at the read site for _any_ BGA framework accessor whose value feeds a comparison or a typed parameter — don't trust the local stub's type signature as proof of the real return type.
 
 ---
 
@@ -1477,19 +1553,20 @@ Fix: cast immediately at the call site, e.g. `$playerId = (int) $this->game->get
 
 ## A missed `(int)` cast on a DB value doesn't just misdisplay — JS silently does string concatenation
 
-`Game::getPartCounts()` (used by both `getAllDatas()` and every `adjustStock()`-driven notification) forwarded `getDoubleKeyCollectionFromDb()`'s raw `count` value uncast into `gamedatas`/notification payloads — a numeric-string, same root cause as the entry above (PDO returns DB values as PHP strings), just one method that had been missed. This one was worse than a `TypeError`, though: it never crashed, it silently rendered wrong. The client's `adjustStock()` does `(this.stocks[pid][cat][variant] || 0) + delta`; JS's `+` operator concatenates instead of adding whenever *either* side is a string, so `"0" + 1` produced the string `"01"` and `"4" + (-1)` produced `"4-1"` — both displayed as-is in the parts-stock table, no error anywhere, only caught by a human noticing the numbers looked odd live on Studio.
+`Game::getPartCounts()` (used by both `getAllDatas()` and every `adjustStock()`-driven notification) forwarded `getDoubleKeyCollectionFromDb()`'s raw `count` value uncast into `gamedatas`/notification payloads — a numeric-string, same root cause as the entry above (PDO returns DB values as PHP strings), just one method that had been missed. This one was worse than a `TypeError`, though: it never crashed, it silently rendered wrong. The client's `adjustStock()` does `(this.stocks[pid][cat][variant] || 0) + delta`; JS's `+` operator concatenates instead of adding whenever _either_ side is a string, so `"0" + 1` produced the string `"01"` and `"4" + (-1)` produced `"4-1"` — both displayed as-is in the parts-stock table, no error anywhere, only caught by a human noticing the numbers looked odd live on Studio.
 
 Lesson: a live-only display bug with no exception and no failing PHPUnit test (the `FakeGame` stub's leaf override stores real PHP ints, so it can't reproduce this) is a strong tell for exactly this class of bug — check every DB-value-returning method for a missing `(int)`/`(bool)` cast before looking anywhere else.
 
-Fix: cast every value when building the return array, not just the array's keys (PHP auto-converts numeric-string *array keys* to real ints on its own, which is why this class of bug only ever hits *values*, never keys). `Game::getPartCounts()` now iterates and casts `(int) $count` explicitly, matching the `(int) $row[...]` pattern already used in `getCells()`/`getCellTileIds()`.
+Fix: cast every value when building the return array, not just the array's keys (PHP auto-converts numeric-string _array keys_ to real ints on its own, which is why this class of bug only ever hits _values_, never keys). `Game::getPartCounts()` now iterates and casts `(int) $count` explicitly, matching the `(int) $row[...]` pattern already used in `getCells()`/`getCellTileIds()`.
 
 ---
 
 ## HTML5 drag-and-drop: `dragover` must call `preventDefault()` or `drop` never fires
 
-Not BGA-specific, but easy to lose an hour to the first time a game adds drag-and-drop tile/piece placement as a complement to click-to-select. Browsers default every element to "not a valid drop target." The `dragover` event fires continuously while a dragged item hovers over an element, and calling `e.preventDefault()` inside that handler is the *only* signal that opts the element in as a drop target — skip it and the `drop` event simply never fires (cursor shows "not-allowed", no error, nothing to debug). `ondrop` then needs its own `e.preventDefault()` too, to stop the browser's default handling of the dropped data (e.g. treating dropped text as a navigation).
+Not BGA-specific, but easy to lose an hour to the first time a game adds drag-and-drop tile/piece placement as a complement to click-to-select. Browsers default every element to "not a valid drop target." The `dragover` event fires continuously while a dragged item hovers over an element, and calling `e.preventDefault()` inside that handler is the _only_ signal that opts the element in as a drop target — skip it and the `drop` event simply never fires (cursor shows "not-allowed", no error, nothing to debug). `ondrop` then needs its own `e.preventDefault()` too, to stop the browser's default handling of the dropped data (e.g. treating dropped text as a navigation).
 
 Pattern used in `modules/js/Game.js` (`renderBoard()`, board cells as drop targets):
+
 ```js
 cellDiv.ondragover = (e) => e.preventDefault();
 cellDiv.ondrop = (e) => {
@@ -1497,7 +1574,8 @@ cellDiv.ondrop = (e) => {
   place();
 };
 ```
-Note also: HTML5 drag-and-drop has no touch support, so treat it as a desktop-only *complement* to click handlers, never a replacement.
+
+Note also: HTML5 drag-and-drop has no touch support, so treat it as a desktop-only _complement_ to click handlers, never a replacement.
 
 ---
 
@@ -1515,7 +1593,7 @@ whatever the client does with it).
 This is worse than a typo'd key name, because it doesn't always fail loudly. If the missing
 field feeds something tolerant of `undefined` (a CSS class list, a conditional render), the bug
 can sit invisible through an entire feature's live-verification pass — it only becomes an
-obvious crash once something *does* dereference the missing value strictly (e.g.
+obvious crash once something _does_ dereference the missing value strictly (e.g.
 `someLookupTable[undefined].property`). A first case shipping clean is not proof the payload is
 complete; it may just mean nothing downstream was strict enough yet to notice.
 
@@ -1524,7 +1602,7 @@ the handler reads and confirm each one has a matching key in the PHP `notify->al
 (not just "a" call with a similar name — the same call, since a game can have multiple
 notifications firing at different points that only partially overlap in payload shape). For
 live verification, don't stop at "does the first instance load" — a bug that only manifests
-from the *second* occurrence of a repeating notification (second round, second turn, second
+from the _second_ occurrence of a repeating notification (second round, second turn, second
 resolution) needs at least two occurrences exercised live before calling a feature verified.
 
 ---
@@ -1539,12 +1617,12 @@ custom-built element, per the typed framework's Studio Migration Guide
 
 ```javascript
 const panel = this.bga.playerPanels.getElement(player.id); // returns the panel's own div
-panel.insertAdjacentHTML('beforeend', `<div>...</div>`);
+panel.insertAdjacentHTML("beforeend", `<div>...</div>`);
 ```
 
 `getElement(playerId)` is the typed-framework replacement for the older
 `this.getPlayerPanelElement(playerId)`; `getElementByNo(playerNo)` is the same lookup by seat
-number instead of player ID. For the panel's *built-in* score counter specifically (as opposed
+number instead of player ID. For the panel's _built-in_ score counter specifically (as opposed
 to a new custom one), `this.bga.playerPanels.getScoreCounter(playerId)` replaces the older
 `this.scoreCtrl[playerId]`; for a new custom counter beyond plain text, the docs point at the
 `ebg/counter` library rather than plain DOM text.
@@ -1560,8 +1638,8 @@ truth.
 
 ## `notify->player()` for data that's safe to reveal to one specific player but not the whole table
 
-`notify->all(...)`'s args payload is delivered to *every* connected client identically — a
-message template can choose not to *display* a field, but the raw data still reaches every
+`notify->all(...)`'s args payload is delivered to _every_ connected client identically — a
+message template can choose not to _display_ a field, but the raw data still reaches every
 browser (visible via devtools/network inspection regardless of the log text). That's fine for
 genuinely public information, but wrong for something that's private to one player yet still
 needs to reach their own client for a UI update (e.g. revealing which specific card a
@@ -1571,7 +1649,7 @@ does, to actually render the card).
 
 `Notify::player(int $playerId, string $type, string $message, array $args = [])` — the
 per-player counterpart to `notify->all()` — solves this: same shape, but delivered (and shown
-in the game log) only to the specified player. Fire it as a *second*, separate notification
+in the game log) only to the specified player. Fire it as a _second_, separate notification
 alongside a normal `notify->all()` that covers the public "something happened" log line without
 the private field:
 
@@ -1583,5 +1661,6 @@ $this->bga->notify->player($playerId, 'cardRecycledValue', clienttranslate('You 
     'value' => $value,
 ]);
 ```
+
 The client then handles `notif_cardRecycledValue` with no `args.player_id` check needed — the
 framework itself already guarantees it only ever arrives for the one player it was sent to.

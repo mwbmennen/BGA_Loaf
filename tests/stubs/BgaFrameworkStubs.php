@@ -72,10 +72,31 @@ namespace Bga\GameFramework\Helpers {
         public function delete(string $_name): void {}
     }
 
+    // Real API per docs/bga-studio-reference.md's "Table::incStat()/setStat() are deprecated"
+    // entry -- confirmed live (BGA's own docs, Game_statistics:_stats.json and
+    // Main_game_logic:_Game.php), NOT the flat Table::incStat()/setStat() methods below, which
+    // are silently broken on the current framework generation.
     class PlayerStats
     {
-        public function init(array $_statNames, int $_defaultValue): void {}
-        public function inc(string $_statName, int $_increment, int $_playerId): void {}
+        /** @param string|string[] $_nameOrNames */
+        public function init(string|array $_nameOrNames, int|float|bool $_value, bool $_updateTableStat = false): void {}
+        public function inc(string $_name, int|float $_delta, int $_playerId, bool $_updateTableStat = false): void {}
+        public function set(string $_name, int|float|bool $_value, int $_playerId): void {}
+        public function setAll(string $_name, int|float|bool $_value): void {}
+        public function incAll(string $_name, int|float $_delta): void {}
+        public function get(string $_name, int $_playerId): int|float|bool { return 0; }
+        public function getAll(string $_name): array { return []; }
+    }
+
+    // Table-wide stats -- a SEPARATE object from PlayerStats above, not a $playerId=null
+    // overload of it. Same confirmed-live source as PlayerStats above.
+    class TableStats
+    {
+        /** @param string|string[] $_nameOrNames */
+        public function init(string|array $_nameOrNames, int|float|bool $_value): void {}
+        public function inc(string $_name, int|float $_delta): void {}
+        public function set(string $_name, int|float|bool $_value): void {}
+        public function get(string $_name): int|float|bool { return 0; }
     }
 
     class PlayerScore
@@ -111,6 +132,7 @@ namespace Bga\GameFramework\Helpers {
     class Bga
     {
         public PlayerStats $playerStats;
+        public TableStats $tableStats;
         public PlayerScore $playerScore;
         // The tiebreak counter -- confirmed live (BGA's own docs, Main_game_logic:_Game.php)
         // to be a second PlayerCounter, updated exactly like playerScore via the same
@@ -128,6 +150,7 @@ namespace Bga\GameFramework\Helpers {
         public function __construct()
         {
             $this->playerStats    = new PlayerStats();
+            $this->tableStats     = new TableStats();
             $this->playerScore    = new PlayerScore();
             $this->playerScoreAux = new PlayerScore();
             $this->tableOptions   = new TableOptions();
@@ -313,8 +336,15 @@ namespace Bga\GameFramework {
         public function notifyPlayer(int $_playerId, string $_type, string $_message, array $_args = []): void {}
 
         // Stats
+        //
+        // @deprecated Silently broken on the current framework generation -- confirmed live
+        // twice (docs/bga-studio-reference.md's "Table::incStat()/setStat() are deprecated"
+        // entry). Present here only because Studio's own scaffold generates this stub with no
+        // warning; use $this->bga->tableStats/$this->bga->playerStats instead. Do NOT call
+        // these from real game code.
         public function incStat(string $_statName, int $_increment, ?int $_playerId = null): void {}
 
+        /** @deprecated see incStat() above */
         public function setStat(string $_statName, int $_value, ?int $_playerId = null): void {}
 
         // Logging
