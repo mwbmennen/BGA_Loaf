@@ -1233,7 +1233,7 @@ client-visible data can be in across a round's full lifecycle, not just the stat
 notification handles" as a standing question when building any refresh/reconnect reconstruction
 path, not just the most common case.
 
-## Deliberate rules deviation: a swap effect's discarded card is public, not private (2026-08-18)
+## Deliberate rules deviation: a swap effect's discarded card is public, not private (2026-08-18, amended 2026-08-24)
 
 By explicit request, not a bug fix: a swap effect (`swap_discard_lower_by_at_most`/
 `swap_discard_higher_by_at_least`) discards a card that satisfies its own amount constraint
@@ -1244,6 +1244,16 @@ verify the resolution was actually valid against the constraint. This is a real,
 exception to `docs/loaf-open-questions.md` Q3's "discard piles are private to their owner"
 default, not an oversight — scoped narrowly to swap effects' own discard specifically (not
 `discard_choice`, an ordinary played-card->discard move, or anything else).
+
+**2026-08-24 amendment**: extended to `discard_choice` too, by the same explicit request ("all
+information should be public, also the discard a card action") — its discarded value is now
+also sent in the `playerDiscarded` notification and shown in the game log
+(`ResolveAdvancedEffect::actDiscardChoice`). Unlike a swap, `discard_choice`'s discard comes
+straight from hand rather than the committed/played slot, so there's no board placeholder to
+visually replace — the reveal is log-text only (`${value}` in the notification's translated
+string), with no other client-side handling needed. `discard_recycle_lowest` and the ordinary
+played-card->discard bulk move at round end remain the only discards that stay private (neither
+is a player-chosen reveal the way `discard_choice`/swap are).
 
 Implemented by adding `value` to `ResolveAdvancedEffect.php`'s `cardSwapped` broadcast
 notification (previously deliberately omitted, per the *old* privacy default this decision
@@ -1411,6 +1421,105 @@ empty" success criterion held for the phase as a whole, not just individual step
 Phase 5 is complete: every item in `docs/loaf-phase5-plan.md` §2's scope and §13's live-
 verification checklist is done and checked off. Not pursued: sound (§10, stretch-only, no
 trivial source material ever turned up — skipped without regret, per the plan's own framing).
+
+## Round transcript trace toggle, and a deferred seed/replay-harness plan (2026-08-24)
+
+Wanted: a way to reproduce a bug found during live playtesting. Designed a full seed-
+persistence + deck-shuffle-replacement + `tools/replay.php` harness (kept, not implemented,
+at `docs/loaf-seed-replay-plan.md` for future reference), then realized it solves the wrong
+problem for the immediate need: BGA's own built-in per-table notification log already
+records everything that actually happened in a round (which review/order card came up via
+`reviewCardRevealed`/`roundStart`, what each player played via `cardPlayedRevealed`,
+resulting deltas via `reputationChanged`) — reproducing an *already-observed* round doesn't
+need the RNG reconstructed at all, just the recorded facts fed into the relevant pure `Core`
+class. A seed only earns its keep for predicting rounds that haven't been drawn yet on a
+live table, or a future bot-balance simulator (à la sibling project Gelati's
+`tools/simulate.php`) — neither of which was the actual ask, so building the deck-shuffle
+replacement (the one piece of that plan with real production risk — bypassing BGA's
+`Deck::shuffle()` for our own `moveCard()`-based permutation) wasn't worth it yet.
+
+What actually shipped instead: `constants.inc.php`'s `DEBUG_LOG_ROUND_TRANSCRIPT` — a
+code-only toggle (not a BGA table option; flip it in source, redeploy, flip back). When
+`true`, `States/ResolveRound.php::onEnteringState()` emits one `$this->trace(...)` JSON line
+per round (review card, side, played values, round total/target/success, resulting
+reputations) and `States/EndGame.php::onEnteringState()` emits one more at game end (per
+player: hand total, reputation, reputation bonus, end-game bonus, score, aux, fired,
+won-tie-break) — both via BGA Studio's own server-side trace log, copy-pasteable directly
+into a debugging session, no scraping BGA's UI, no stored credentials. The round-level line
+doesn't capture the `ResolveAdvancedEffect`-resolved outcome of `discard_choice`/swap effects
+(those finish in a later request/state) — sufficient for round-level
+`RoundResolver`/`ReviewEffectResolver`/`DiscardRecycleResolver` debugging, which covers most
+of the game's logic; the end-game line is a straight readout of `ScoringCalculator`'s own
+output plus the tie-break winners already computed in `EndGame.php`. Closed that gap
+separately: `States/ResolveAdvancedEffect.php::actDiscardChoice()`/`actSwapDiscard()` now
+each emit their own line too (player id, effect type/amount, and for swaps specifically
+which value got returned to hand vs. which got discarded instead, plus whether the
+deterministic "can't improve on it" fallback fired instead of a real swap) — covers
+zombie-triggered discard/swap resolutions for free, since `zombie()` calls the same two
+methods rather than duplicating their logic.
+
+A second, distinct "swap not possible" case surfaced when asked whether it was covered:
+`ResolveRound.php`'s own swap-target loop (lines ~167-183) silently drops any targeted
+player with an empty eligible-discard set from `$needsSwapChoicePlayerIds` — they never
+reach `ResolveAdvancedEffect`/`actSwapDiscard()` at all, so the per-action trace above
+can't see them. Closed by hoisting `$swapTargetPlayerIds` out of the swap-effect `if` block
+and adding `'swapTargetedButIneligible' => array_diff($swapTargetPlayerIds,
+$needsSwapChoicePlayerIds)` to the round-level trace payload — empty whenever the round's
+effect isn't a swap effect, otherwise the list of targeted players whose played card just
+got discarded as normal with no real choice offered.
+
+**Seven more transcript gaps, closed together after being asked to think through what was
+still missing:**
+
+1. Round-result delta detail: the round trace now includes `RoundResolver`'s own
+   `roundResultDelta`/`roundResultAffectedPlayerIds` (who actually got the highest/lowest-
+   played-card swing, ties included), not just the post-everything final `reputations`
+   snapshot -- previously a tie-handling bug would've been invisible without re-deriving it
+   from `playedValues` by hand.
+2. `discard_recycle_lowest` outcome: `resolveDiscardRecycle()` now traces `targetPlayerIds`
+   (everyone targeted) alongside `recycled` (player => value actually recycled) -- a
+   targeted player with an empty discard pile is now visible as "targeted, nothing
+   happened," same distinction as `swapTargetedButIneligible`.
+3. The `reputation` review-effect's own per-player delta: `resolveReputationEffect()` now
+   traces its own `deltas` map, isolated from the round-result delta that already ran before
+   it -- previously only the combined final number was visible.
+4. Zombie vs. human: attempted, then reverted. Added a trailing `bool $isZombie = false`
+   parameter to `actCommitCard()` (`PlayCards.php`) and `actDiscardChoice()`/
+   `actSwapDiscard()` (`ResolveAdvancedEffect.php`), set `true` only by each state's own
+   `zombie()` method. Reverted on request rather than risk it: this would have been the
+   first time a `#[PossibleAction]` method's signature was changed for a debug-only reason,
+   and whether BGA's action dispatcher actually tolerates an extra optional trailing
+   parameter the same way a plain PHP call would was never confirmed live -- not worth
+   the risk of silently breaking every ordinary commit/discard/swap action on a live table
+   for a debug-only convenience. If zombie/human visibility is wanted later, a safer
+   approach would avoid touching `#[PossibleAction]` signatures entirely -- e.g. a short-
+   lived global set immediately before calling into `actCommitCard()`/etc. from `zombie()`
+   and read (then cleared) inside the trace block itself.
+5. Boss-pile weight/running totals: the round trace gained `reviewEffectWeight` (1 or 2,
+   same value already sent in the `roundResolved` notification) and `weightedHappyTotal`/
+   `weightedAngryTotal` (the running `EndConditionChecker` totals after filing this round's
+   card) -- previously you'd have to re-derive why/when the game ends from the whole
+   `reviewCardType`/`side` sequence.
+6. One-time game-setup line: `Game::setupNewGame()` now traces `playerCount` and
+   `advancedCardsEnabled` right after they're known, so a transcript is self-contained
+   instead of requiring the table's config to be remembered separately.
+7. End-game bonus/malus breakdown: `EndGame`'s trace gained `endGameBonusBreakdown`, reusing
+   `EndGameEffectResolver::breakdown()`'s already-computed per-card entries (which card,
+   doubled or not) instead of only the per-player aggregate `endGameBonus` number.
+
+Both `if` checks call a new one-line indirection, `Game::debugTranscriptEnabled(): bool {
+return DEBUG_LOG_ROUND_TRANSCRIPT; }`, rather than referencing the constant directly.
+First attempt was a per-line `// @phpstan-ignore if.alwaysFalse` comment — wrong, because
+`phpstan.neon` bootstraps `constants.inc.php` directly, so PHPStan resolves the constant to
+whichever literal `true`/`false` type it's currently set to and flags the `if` as
+always-true or always-false *depending on the current value* (confirmed by toggling the
+constant both ways locally and re-running `phpstan analyse`) — a hardcoded ignore comment
+only silences one direction and becomes an `ignore.unmatchedIdentifier` error the moment the
+flag gets flipped the other way for real debugging use. Routing through a method with a
+declared `bool` return type sidesteps this: PHPStan doesn't narrow a method call's return
+type down to the literal value of the constant it happens to return, so the `if` stays a
+normal runtime check from PHPStan's point of view regardless of which way the flag is set —
+confirmed clean with `phpstan analyse` at both `true` and `false`.
 
 ## Sprite sheets/board.png built at exactly 1x — pixelate under browser zoom
 

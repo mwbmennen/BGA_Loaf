@@ -51,10 +51,7 @@ class EndGame extends \Bga\GameFramework\States\GameState
         // when checkEnd() already returned non-null against these same piles -- nothing files
         // a card between that check and this state being entered.
 
-        $reputations = array_map('intval', $this->game->getCollectionFromDb(
-            'SELECT `player_id` AS `id`, `player_reputation` FROM `player`',
-            true
-        ));
+        $reputations = $this->game->getAllReputations();
 
         $handValues = array_map('intval', $this->game->getCollectionFromDb(
             "SELECT `player_id` AS `id`, COALESCE(SUM(`value`), 0) AS `total` FROM `work_card` " .
@@ -111,7 +108,8 @@ class EndGame extends \Bga\GameFramework\States\GameState
         // say which card(s) actually caused it or whether a doubler applied. Reuses
         // ReviewEffectDescription::target() so the "why" here matches the exact wording
         // already used for 'reviewCardRevealed'/'reviewEffectApplied' earlier in the game.
-        foreach (EndGameEffectResolver::breakdown($resolvedEffects, $reputations) as $entry) {
+        $endGameBonusBreakdown = EndGameEffectResolver::breakdown($resolvedEffects, $reputations);
+        foreach ($endGameBonusBreakdown as $entry) {
             $this->game->bga->notify->all(
                 'endGameBonusApplied',
                 $entry['doubled']
@@ -244,6 +242,38 @@ class EndGame extends \Bga\GameFramework\States\GameState
             if (!empty($group['losers'])) {
                 $tieBreakWinnerIds = [...$tieBreakWinnerIds, ...$group['winners']];
             }
+        }
+
+        // Same code-only toggle as ResolveRound.php's per-round transcript (constants.inc.php)
+        // -- one JSON line covering the final scoring this state just computed, for the same
+        // "copy-paste into an AI/debugging session" purpose. Everything here already reaches
+        // players via the 'scoreBreakdown'/'endGameBonusApplied'/'tieBreak' notifications above,
+        // just spread across several lines of translated text instead of one structured blob.
+        if ($this->game->debugTranscriptEnabled()) {
+            $playerSummaries = [];
+            foreach ($scores as $playerId => $scoring) {
+                $playerSummaries[$playerId] = [
+                    'handTotal' => $handValues[$playerId],
+                    'reputation' => $reputations[$playerId],
+                    'reputationBonus' => ScoringCalculator::reputationBonus($reputations[$playerId]),
+                    'endGameBonus' => $bonusPoints[$playerId],
+                    'score' => $scoring->score,
+                    'aux' => $scoring->aux,
+                    'fired' => $scoring->fired,
+                    'wonTieBreak' => in_array($playerId, $tieBreakWinnerIds, true),
+                ];
+            }
+            $this->game->traceDebug('END GAME', [
+                'endingBoss' => $endingBoss,
+                'allFired' => $allFired,
+                'players' => $playerSummaries,
+                // Per-player 'endGameBonus' above is already the net of every contributing
+                // end_game_bonus/malus/doubled effect -- this is the itemized version (which
+                // card(s), doubled or not) EndGameEffectResolver::breakdown() already computes
+                // for the 'endGameBonusApplied' notifications above, reused here rather than
+                // recomputed.
+                'endGameBonusBreakdown' => $endGameBonusBreakdown,
+            ]);
         }
 
         foreach ($scores as $playerId => $scoring) {

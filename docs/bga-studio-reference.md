@@ -1061,6 +1061,21 @@ long as the sheet's aspect ratio and grid layout stay the same.
 
 Use `$this->trace()` to write debug output to the Studio server log. **Never use `var_dump()` or `echo`** — they print raw text into the JSON response stream, corrupting it and causing a `JSON_ERROR_SYNTAX` error in the browser.
 
+BGA's `Table` base class provides a family of server-side logging functions, at increasing
+severity — pick the one that routes to where you're actually going to look:
+
+```php
+$this->dump('name_of_variable', $variable); // like var_dump, but safe — debug level, goes to BGA request&SQL logs
+$this->debug($message);                     // debug level, goes to BGA request&SQL logs
+$this->trace($message);                     // info level, goes to BGA request&SQL logs
+$this->warn($message);                      // warning level, goes to BGA unexpected exceptions log
+$this->error($message);                     // error level, goes to BGA unexpected exceptions log
+```
+
+`dump`/`debug`/`trace` all land on the same "BGA request&SQL logs" page (see below) — `warn`
+and `error` go to the separate "unexpected exceptions"/"recent errors from production" feed
+instead, so use those for conditions you'd actually want paged on, not routine debug output.
+
 ```php
 // Correct — goes to server log only:
 $this->trace("My debug value: " . json_encode($someVariable));
@@ -1071,10 +1086,29 @@ var_dump($someVariable);
 
 To view:
 
-1. Open your game in Studio
-2. Click the **wrench icon** (Studio tools) → **Game Server Logs**
-3. Trigger the action that should produce output
+1. Open your table in Studio and trigger the action that should produce output
+2. Scroll to the **bottom of the game area** — there are three links there
+3. Click **"BGA request&SQL logs"** (not the separate "Display recent errors from
+   production" link, which is a Sentry-based prod-only error feed)
 4. Refresh the log
+
+Source: [Tools and tips of BGA Studio](https://en.doc.boardgamearena.com/Tools_and_tips_of_BGA_Studio).
+
+### Filtering your own `trace()` calls out of the Studio log
+
+The "BGA request&SQL logs" page interleaves every SQL query, notification, and framework
+message with your `trace()` output — thousands of lines of noise per test session. To review
+just your own debug output:
+
+1. On the log page, bump "Display N last lines" up (e.g. 5000) so nothing scrolls off, then
+   copy/paste the whole page into a local file (e.g. `docs/logging_01.txt`). There's no
+   API/download link — it has to be saved to a file first before it can be filtered.
+2. Prefix every `trace()` call in your game code with a fixed, distinctive tag (e.g. the game
+   name — `"{GameDisplayName} ROUND: " . json_encode([...])`) so it's grep-able and won't
+   collide with framework log text.
+3. Filter: `grep "{GameDisplayName} " docs/logging_01.txt > docs/logging_01_ours.txt`
+4. Delete the raw dump once you've extracted what you need — it's large and disposable; the
+   filtered file is the one worth keeping around for a debugging session.
 
 ### JS: Browser DevTools
 
