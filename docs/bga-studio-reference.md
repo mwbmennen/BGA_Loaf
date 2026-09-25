@@ -1005,6 +1005,56 @@ label to matter" is not a safe reason to skip the flag. Pass `-font` uncondition
 
 ---
 
+### Sprite sheets/background images pixelate under browser zoom unless built above their CSS display size
+
+**Symptom:** card/board/token art looks crisp at 100% browser zoom but blurs or pixelates as
+soon as the player zooms in (BGA players routinely do — accessibility, high-DPI monitors, just
+reading small text). This is a real BGA Studio recommendation, not a cosmetic nit.
+
+**Cause:** a raster image has a fixed pixel count. If a sprite sheet's source resolution is
+exactly the CSS size it's displayed at (a "1x" build — display box in CSS pixels equals the
+sheet's real pixel dimensions divided by its grid), the browser has no extra pixel data to draw
+from once zoom stretches the display box past 100%; it just upscales-and-blurs the existing
+pixels. This is easy to end up with by accident: a build pipeline that resizes source art
+straight down to the exact on-screen tile size (e.g. `montage ... -geometry
+<CSS-width>x<CSS-height>+0+0`) produces exactly this 1x trap, even though nothing about it looks
+wrong in an unzoomed screenshot.
+
+**Fix:** export sprite sheets/background images at a higher resolution than their CSS display
+size — 2x is a reasonable default, matching typical high-DPI/zoom-to-200% scenarios — and let
+CSS `background-size` (which is percentage- or keyword-based, not raw pixels) scale it down to
+the actual display size:
+
+```css
+.token {
+  width: 100px;
+  height: 100px;
+  background-image: url('tokens.png'); /* real file is e.g. 200px per tile, not 100px */
+  background-size: 600% 100%; /* percentage relative to the element's own box --
+                                   unaffected by the source file's real resolution */
+}
+```
+
+Because `background-size`/`background-position` percentages are relative to the *element's*
+box, not the image's native pixel dimensions, bumping a sprite sheet's build resolution is a
+**pure asset-pipeline change** — no CSS or JS position/size math needs to change at all, as
+long as the sheet's aspect ratio and grid layout stay the same.
+
+**Practical notes from doing this for real:**
+- Check whether source art already has the headroom before re-deriving it — a higher-res scan
+  than what got baked into the current sheet is common if the sheet was ever downsampled for a
+  first pass.
+- Doubling a sprite sheet's linear dimensions roughly quadruples its pixel count, which can push
+  a large sheet (many tiles) over BGA's 4MB per-file limit even though smaller sheets in the
+  same pipeline stay comfortably under it. Don't reach for a smaller resolution multiplier to
+  fix this — drop JPEG `-quality` a few points instead (e.g. 90 → 85) and compare crops; this is
+  usually enough to claw back 30-40% of file size with no visible artifact, since it's a
+  compression trade, not a resolution one.
+- Verify the fix by literally reading the regenerated image file, not just checking its byte
+  size — a corrupted montage grid or a silently-blank tile won't show up in a file-size check.
+
+---
+
 ## 6. Debugging in BGA Studio
 
 ### PHP: Reading the Studio Log

@@ -1520,3 +1520,43 @@ declared `bool` return type sidesteps this: PHPStan doesn't narrow a method call
 type down to the literal value of the constant it happens to return, so the `if` stays a
 normal runtime check from PHPStan's point of view regardless of which way the flag is set —
 confirmed clean with `phpstan analyse` at both `true` and `false`.
+
+## Sprite sheets/board.png built at exactly 1x — pixelate under browser zoom
+
+All the always-visible base art (`order-sheet.jpg`, `review-sheet.jpg`, `hand-sheet.jpg`,
+`boss-sheet.jpg`, `board.png`) turned out to be built at exactly the CSS size they're displayed
+at — `tools/build-sprite.sh`'s `DISPLAY_W`/`DISPLAY_H` (180x251) matched `cardWidth`/
+`cardHeight` in `Game.js`'s `roundCardsManager`/`handCardsManager` exactly, and `board.png` was
+resized straight down to 740px, the same width `#reputation-board`'s CSS displays it at. No zoom
+headroom at all — sharp at 100% browser zoom, blurs above it. Only `tokens.png` (64px tiles
+vs. 26px display, ~2.46x) and the `zoom-*.jpg` hover-tooltip sheets (already deliberately built
+at `ZOOM_W`/`ZOOM_H`, 500x696, per the Phase 5 plan) had any oversampling — this pixelation gap
+was never caught because `docs/loaf-remarks.md`'s own Phase 5 live-verification pass checked
+"card alignment at non-100% zoom" (sprite *position* math), not sharpness.
+
+Fixed by doubling `DISPLAY_W`/`DISPLAY_H` (180x251 → 360x502) and the board resize target
+(740 → 1480) in `tools/build-sprite.sh`, then rerunning it. No CSS/JS changes were needed for
+the resolution bump itself — `background-size`/`background-position` are percentage-based
+(confirmed by grepping for every consumer first), so a higher-res source file just gives the
+browser more real pixels to downscale from at the same on-screen size. Source headroom was
+already there to support it: `docs/card-scans/*` scans are 600x834 (vs. the old 180x251 tiles)
+and `docs/board-scan/board.png` is 3313x1040 (vs. the old 740px-wide export) — this was a
+rebuild from already-available higher-res originals, not a request for new art.
+
+One real complication: `hand-sheet.jpg` (78 tiles, the largest sheet) came out to ~4.4MB at 2x
+and `-quality 90`, over BGA's 4MB/file limit — the other four sheets stayed comfortably under it
+at the same multiplier, since they're far fewer tiles. Fixed by dropping just that one sheet's
+JPEG quality to 85 (measured ~2.8MB, compared the two versions directly and saw no visible
+artifact) rather than shrinking its resolution multiplier below the other sheets' — keeps every
+base sheet at the same 2x zoom headroom instead of leaving hand cards worse off than round
+cards. `zoom-*.jpg` files and `tokens.png` were untouched (their build constants didn't change)
+and `git status` confirmed byte-identical output for them, a cheap sanity check that the
+unrelated parts of the pipeline weren't disturbed.
+
+Also updated a comment in `Game.js`'s `REPUTATION_TRACK` block that said board.png was "740x232
+native" — that was the *reference scale* the pixel measurements were originally taken against
+(everything in that block is consumed as a percentage of `boardWidth`/`boardHeight`, so it
+stays correct regardless of the file's real resolution), not a claim about the current file, and
+was about to go stale/misleading now that the real file is 1480x465. Functionally nothing
+needed to change there — just the comment, so a future reader checking the file's actual
+dimensions doesn't get confused by a mismatch.
