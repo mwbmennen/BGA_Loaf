@@ -30,8 +30,13 @@ MONTAGE_FONT="/System/Library/Fonts/Helvetica.ttc"
 # Round-card tile dimensions: small always-loaded display tier vs. separate zoom-quality tier
 # for the per-card hover tooltip (docs/loaf-phase5-plan.md §4 steps 3-5). Both tiers share the
 # round-card scans' aspect ratio (600x834 sources).
-DISPLAY_W=180
-DISPLAY_H=251
+# DISPLAY_W/H is 2x the actual on-screen CSS size (180x251, Game.js's cardWidth/cardHeight) --
+# background-size is percentage-based, so no CSS/JS changes are needed to consume a higher-res
+# sheet here. The 2x factor gives headroom for browser zoom up to ~200% before the always-visible
+# board/hand art starts upscaling-blurring, without ballooning file size all the way to the
+# ZOOM_W/H tier's own weight (that tier stays intentionally sharper still, for the hover popup).
+DISPLAY_W=360
+DISPLAY_H=502
 ZOOM_W=500
 ZOOM_H=696
 
@@ -122,7 +127,11 @@ done
 for f in "${HAND_FILES[@]}"; do
     [[ -f "$f" ]] || { echo "  MISSING: $f" >&2; exit 1; }
 done
-montage -font "$MONTAGE_FONT" "${HAND_FILES[@]}" -tile 13x6 -geometry "${DISPLAY_W}x${DISPLAY_H}+0+0" -quality 90 "$IMG_DIR/hand-sheet.jpg"
+# quality 85, not the 90 used elsewhere -- at the 2x DISPLAY_W/H tier this sheet's 78 tiles push
+# it over the 4MB BGA limit at 90 (measured ~4.4MB); 85 lands at ~2.8MB with no visible artifacts
+# (compared crops directly), so it's a compression trade, not a resolution one -- doesn't need
+# the same "split into two files" fix the ZOOM_W/H hand sheets already use.
+montage -font "$MONTAGE_FONT" "${HAND_FILES[@]}" -tile 13x6 -geometry "${DISPLAY_W}x${DISPLAY_H}+0+0" -quality 85 "$IMG_DIR/hand-sheet.jpg"
 check_size "$IMG_DIR/hand-sheet.jpg"
 
 # --- Hand-card zoom sheets (fronts only, no backs -- a repeating back pattern has no fine
@@ -146,10 +155,13 @@ build_hand_zoom_sheet() {
 build_hand_zoom_sheet "$IMG_DIR/zoom-hand-1.jpg" green orange purple
 build_hand_zoom_sheet "$IMG_DIR/zoom-hand-2.jpg" red white yellow
 
-# --- Board background (single image, not a sprite sheet -- resized to the actual on-screen
-# render width instead of the 3313px scan; 740 matches gameinfos.jsonc's
-# game_interface_width.min / bga-zoom's autoZoom.expectedWidth, docs/loaf-phase5-plan.md §6) ---
-magick "$BOARD_DIR/board.png" -resize "740x" "$IMG_DIR/board.png"
+# --- Board background (single image, not a sprite sheet -- resized to 2x the actual on-screen
+# render width (740, matching gameinfos.jsonc's game_interface_width.min / bga-zoom's
+# autoZoom.expectedWidth, docs/loaf-phase5-plan.md §6) rather than the raw 3313px scan or a bare
+# 1x. CSS (`background-size: 100% 100%` on `.loaf-board` or equivalent) is percentage-based, so
+# the on-screen size is unaffected -- the 2x factor only adds zoom headroom, same reasoning as
+# DISPLAY_W/H above.) ---
+magick "$BOARD_DIR/board.png" -resize "1480x" "$IMG_DIR/board.png"
 check_size "$IMG_DIR/board.png"
 
 # --- Boss-card sheet (2 tiles: angry, happy -- the fixed character card each boss pile's fan
