@@ -146,12 +146,19 @@ class PlayCards extends GameState
      * Takes a committed card back to hand -- only possible while at least one other player
      * still hasn't committed (once everyone has, this state has already transitioned away, so
      * the action isn't reachable at all; the allPlayersCommitted() check below is
-     * defense-in-depth, not the primary gate).
+     * defense-in-depth, not the primary gate), and only if this table's
+     * OPTION_ALLOW_CANCEL_COMMIT option is on. Checked here, server-side, not just hidden
+     * client-side (PlayCards.js only offers the Cancel button when the option is on) -- the
+     * client-side gate alone wouldn't stop a request crafted directly against the action.
      *
      * @throws UserException
      */
     #[PossibleAction]
     public function actCancelCommit(int $currentPlayerId) {
+        if (!$this->game->cancelCommitAllowed()) {
+            throw new UserException('Cancelling a committed card is not allowed in this game');
+        }
+
         $playedValue = $this->game->getUniqueValueFromDb(
             "SELECT `value` FROM `work_card` WHERE `player_id` = $currentPlayerId AND `location` = 'played'"
         );
