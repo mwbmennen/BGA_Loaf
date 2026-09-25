@@ -182,6 +182,10 @@ class Game extends \Bga\GameFramework\Table
             "SELECT `value` FROM `work_card` WHERE `player_id` = $currentPlayerId AND `location` = 'played'"
         );
         $result['myCommittedValue'] = $myCommittedValue !== null ? (int) $myCommittedValue : null;
+        // Drives which client-side flow PlayCards.js shows (select+Commit-button+later-Cancel
+        // vs. instant-commit-on-click, no take-backs) -- see OPTION_ALLOW_CANCEL_COMMIT's own
+        // comment (constants.inc.php).
+        $result['allowCancelCommit'] = $this->cancelCommitAllowed();
         // Empty unless this round's committed cards have already been revealed
         // (GLOBAL_CARDS_REVEALED_THIS_ROUND, set in ResolveRound.php right after
         // cardPlayedRevealed fires, reset in RoundStart.php) -- without this, a page refresh
@@ -469,5 +473,17 @@ class Game extends \Bga\GameFramework\Table
             'SELECT `player_id` AS `id`, `player_reputation` FROM `player`',
             true
         ));
+    }
+
+    /**
+     * Gate for States/PlayCards.php's actCancelCommit() and the gamedatas.allowCancelCommit
+     * flag PlayCards.js reads to decide which client flow to show -- see
+     * OPTION_ALLOW_CANCEL_COMMIT's own comment (constants.inc.php) for the full reasoning.
+     * `TableOptions::get()` returns `int|string` -- cast before the strict comparison, same
+     * discipline as setupNewGame()'s own OPTION_ADVANCED_CARDS read.
+     */
+    public function cancelCommitAllowed(): bool
+    {
+        return (int) $this->bga->tableOptions->get(OPTION_ALLOW_CANCEL_COMMIT) === 1;
     }
 }

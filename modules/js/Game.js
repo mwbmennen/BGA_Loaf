@@ -254,29 +254,39 @@ class PlayCards {
    * activation status -- see onPlayerActivationChange's own comment for why. Called on every
    * activation settle and every commit/cancel notification, so it's always safe to call
    * unconditionally rather than threading "did anything actually change" through every caller.
+   *
+   * `gamedatas.allowCancelCommit` (Game.php's getAllDatas, OPTION_ALLOW_CANCEL_COMMIT) gates
+   * the Commit/Cancel two-step here purely for UI purposes -- onCardSelect below is what
+   * actually decides whether clicking a card selects it or commits it immediately, this method
+   * just never shows a button the option says shouldn't exist. States/PlayCards.php's
+   * actCancelCommit() enforces the same option server-side too, so this is presentation only,
+   * not the real security gate.
    */
   refreshCommitCancelUI() {
     const myId = this.bga.players.getCurrentPlayerId();
     const iHaveCommitted = this.game.committedPlayerIds.has(myId);
     const handStock = this.game.handStock;
+    const cancelAllowed = this.game.gamedatas.allowCancelCommit;
     this.bga.statusBar.removeActionButtons();
 
     if (!iHaveCommitted) {
       this.bga.statusBar.setTitle(_("${you} must commit a work card"));
       handStock.onCardClick = (card) => this.onCardSelect(card);
-      if (this.game.selectedHandCard) this.showCommitButton(this.game.selectedHandCard);
+      if (cancelAllowed && this.game.selectedHandCard) this.showCommitButton(this.game.selectedHandCard);
     } else {
       handStock.onCardClick = null;
       const allCommitted = this.game.committedPlayerIds.size === Object.keys(this.game.gamedatas.players).length;
       this.bga.statusBar.setTitle(
         allCommitted
           ? _("Everyone has committed -- resolving...")
-          : _("Waiting for other players -- you can still cancel your commitment"),
+          : cancelAllowed
+            ? _("Waiting for other players -- you can still cancel your commitment")
+            : _("Waiting for other players to commit a work card"),
       );
       // allCommitted here means this player's own commit was the very last one -- the state
       // has already transitioned away server-side (States/PlayCards.php's actCommitCard) by
       // the time this client-side check runs, so no Cancel button would be actionable anyway.
-      if (!allCommitted) {
+      if (cancelAllowed && !allCommitted) {
         this.bga.statusBar.addActionButton(_("Cancel"), () => this.onCancel(), {
           color: "alert",
           confirm: _("Take your committed card back to hand?"),
@@ -285,10 +295,17 @@ class PlayCards {
     }
   }
 
-  // Click a card to select it (shows a Commit button, below) without playing it yet -- only
-  // pressing Commit actually calls the server. Clicking the already-selected card again
-  // deselects it; clicking a different card moves the selection.
+  // When the table's "Cancel a committed card" option is on, clicking a card only selects it
+  // (shows a Commit button, below) without playing it yet -- only pressing Commit actually
+  // calls the server, clicking the already-selected card again deselects it, and clicking a
+  // different card moves the selection. When the option is off, there's no take-backs at all --
+  // clicking a card commits it immediately, the same one-click behavior this game had before
+  // the option existed.
   onCardSelect(card) {
+    if (!this.game.gamedatas.allowCancelCommit) {
+      this.onCommit(card);
+      return;
+    }
     if (this.game.selectedHandCard === card) {
       this.clearSelection();
       return;

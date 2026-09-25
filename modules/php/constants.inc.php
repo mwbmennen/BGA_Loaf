@@ -29,6 +29,18 @@ const GLOBAL_CARDS_REVEALED_THIS_ROUND = 'cards_revealed_this_round';
 // gameoptions.jsonc option id (100-199 range) -- see Game::setupNewGame().
 const OPTION_ADVANCED_CARDS = 100;
 
+// gameoptions.jsonc option id -- unlike OPTION_ADVANCED_CARDS (read once at setupNewGame() and
+// baked into deck composition), this one is read throughout play: States/PlayCards.php's
+// actCancelCommit() checks it on every call (via Game::cancelCommitAllowed()), and
+// Game::getAllDatas() exposes it to the client as gamedatas.allowCancelCommit so PlayCards.js
+// knows whether to offer the select-then-Commit-button flow + a later Cancel button, or just
+// revert to committing instantly on click with no take-backs, the same as before this option
+// existed. First use of `tableOptions->get()` outside setupNewGame() in this codebase -- a
+// long-standing, stable BGA API (reads a table's option value at any point in its lifetime, not
+// just setup), lower-risk than most other framework-behavior firsts in this project, but still
+// unverified locally like every first-use API call here.
+const OPTION_ALLOW_CANCEL_COMMIT = 101;
+
 // Code-only toggle (not a BGA table option) -- flip to true locally when you need a
 // copy-pasteable transcript for feeding a live-tested bug to an AI/debugging session, then
 // flip back to false before redeploying. Read via Game::debugTranscriptEnabled(), which

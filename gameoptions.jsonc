@@ -16,5 +16,20 @@
       }
     },
     "default": 0
+  },
+
+  "101": {
+    "name": "Cancel a committed card",
+    "values": {
+      "0": {
+        "name": "Off (no take-backs)",
+        "description": "Clicking a hand card plays it immediately -- once committed, it's locked in for the round."
+      },
+      "1": {
+        "name": "On",
+        "description": "Clicking a card selects it; press Commit to actually play it. Once committed, you can still Cancel and take it back to hand until every player has committed."
+      }
+    },
+    "default": 1
   }
 }
