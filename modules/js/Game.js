@@ -74,9 +74,13 @@ const PLAYER_COLOR_HEX_TO_NAME = {
 };
 const TOKEN_SHEET_COLS = 6;
 
-// Reputation-track pixel geometry, measured directly from img/board.png (740x232 native) with
-// Pillow -- sampling a horizontal scanline for the bright cream divider lines between columns,
-// not guessed from the visual thumbnail. The board has 3 regions left-to-right: 10 equal-width
+// Reputation-track pixel geometry, measured directly from img/board.png at its original 740x232
+// export (boardWidth/boardHeight below are that reference scale, not the current file's actual
+// resolution -- tools/build-sprite.sh now exports board.png at 2x, 1480x465, for zoom headroom,
+// but every value here is consumed as a percentage of boardWidth/boardHeight, so it stays valid
+// regardless of the file's real pixel size) with Pillow -- sampling a horizontal scanline for the
+// bright cream divider lines between columns, not guessed from the visual thumbnail. The board
+// has 3 regions left-to-right: 10 equal-width
 // columns for -10..-1, one wider "0" column, then 10 equal-width columns for 1..10. Measured
 // column width was consistently ~31px across both halves (the board is symmetric by design);
 // the "0" column is roughly 2.3x that.

@@ -379,6 +379,24 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   neither highlightable nor clickable with the (wrong) `setSelectableCards()`-only approach.
   Both (6) and (7) added while building L'Oaf's hand/commit/reveal
   (`docs/loaf-phase5-plan.md` §8).
+- [ ] **Sprite sheets/background images built at exactly 1x pixelate under browser zoom.**
+  Already generically worded, ready to copy essentially verbatim. Where:
+  `bga-studio-reference.md` §5, "Sprite sheets/background images pixelate under browser zoom
+  unless built above their CSS display size" — covers the mechanism (a source image sized
+  exactly to its CSS display box has no headroom once the browser scales that box up under
+  zoom), the fix (export at 2x+ the display size; `background-size`/`background-position` are
+  percentage-based, so this needs zero CSS/JS math changes, purely an asset-pipeline rebuild),
+  and two things only found doing it for real: a build pipeline that resizes straight down to
+  the exact on-screen tile size is an easy, easy-to-miss way to end up at 1x by accident even
+  though it looks fine unzoomed; and doubling a sprite sheet's resolution can push a
+  many-tiled sheet over BGA's 4MB/file limit even when smaller sheets in the same pipeline stay
+  fine at the same multiplier — fix that with a small JPEG quality drop (a compression trade),
+  not a smaller resolution multiplier for just that one sheet. Concrete incident: L'Oaf's base
+  card/board sheets (`order-sheet.jpg`, `review-sheet.jpg`, `hand-sheet.jpg`, `boss-sheet.jpg`,
+  `board.png`) were all built at exactly their CSS display size — only the token sheet and the
+  separately-planned hover-tooltip "zoom" sheets had any oversampling — see `loaf-remarks.md`'s
+  "Sprite sheets/board.png built at exactly 1x" entry for the full fix and the `hand-sheet.jpg`
+  4MB-limit complication.
 
 ## Needs generalizing before it's portable
 
