@@ -1202,6 +1202,11 @@ export class Game {
   // handStock card here -- discard_choice's eligible set is always exactly the hand
   // (PlayCards.php's eligibleValuesFor), never the played/committed card the way swap effects
   // can be.
+  // `args.value` is public now too (docs/loaf-remarks.md's "Deliberate rules deviation" entry,
+  // amended 2026-08-24) -- unlike notif_cardSwapped there's no committed-slot placeholder to
+  // replace with it (the discard comes from hand, not the played card), so it only surfaces via
+  // the `${value}` log-text placeholder BGA substitutes from the notification args; no other
+  // client-side handling needed here.
   async notif_playerDiscarded(args) {
     this.adjustHandCount(args.player_id, -1);
 

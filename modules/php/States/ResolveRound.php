@@ -149,10 +149,7 @@ class ResolveRound extends GameState
             ]
         );
 
-        $currentReputations = array_map('intval', $this->game->getCollectionFromDb(
-            'SELECT `player_id` AS `id`, `player_reputation` FROM `player`',
-            true
-        ));
+        $currentReputations = $this->game->getAllReputations();
 
         // Swap effects ("take their played card back in hand, then discard a card ...") need
         // their played card to stay identifiable and movable, not folded into the general
@@ -165,6 +162,7 @@ class ResolveRound extends GameState
         // fallback ("if they can't, they discard the played card instead"), which is exactly
         // what the ordinary bulk move already does, so they're simply never deferred.
         $needsSwapChoicePlayerIds = [];
+        $swapTargetPlayerIds = [];
         if (in_array($reviewEffect['effect'], self::SWAP_EFFECTS, true)) {
             $swapTargetPlayerIds = TargetGroupResolver::playersInTarget($reviewEffect['target'], $currentReputations);
             foreach ($swapTargetPlayerIds as $playerId) {
@@ -221,14 +219,60 @@ class ResolveRound extends GameState
             "SELECT `card_type` FROM `round_card` WHERE `card_location` = 'review_angry'",
             true
         );
-        $endTrigger = EndConditionChecker::checkEnd(
-            EndConditionChecker::weightedCount($happyCardTypes, 'success'),
-            EndConditionChecker::weightedCount($angryCardTypes, 'fail'),
-        );
+        $weightedHappyTotal = EndConditionChecker::weightedCount($happyCardTypes, 'success');
+        $weightedAngryTotal = EndConditionChecker::weightedCount($angryCardTypes, 'fail');
+        $endTrigger = EndConditionChecker::checkEnd($weightedHappyTotal, $weightedAngryTotal);
         $nextState = $endTrigger !== null ? EndGame::class : RoundStart::class;
 
         $needsInteractiveResolution = $reviewEffect['effect'] === 'discard_choice'
             || !empty($needsSwapChoicePlayerIds);
+
+        // Gated by a code-only constant (constants.inc.php), not a BGA table option -- flip it
+        // on locally to get a copy-pasteable per-round transcript for feeding a live-tested bug
+        // to an AI/debugging session. Written via trace() (Studio's own server-side trace log),
+        // not a notification, so it never reaches player-facing UI. Doesn't capture the
+        // ResolveAdvancedEffect-resolved outcome of discard_choice/swap effects (those finish in
+        // a later request) -- good enough for round-level RoundResolver/ReviewEffectResolver/
+        // DiscardRecycleResolver debugging, which covers most of the game's logic.
+        if ($this->game->debugTranscriptEnabled()) {
+            // $currentReputations (line 152) already equals the final values for every review
+            // effect except 'reputation' -- resolveReputationEffect() is the only thing between
+            // the two points that writes player_reputation (see the switch above), so only
+            // re-query in that one case.
+            $finalReputations = $reviewEffect['effect'] === 'reputation'
+                ? $this->game->getAllReputations()
+                : $currentReputations;
+            $this->game->traceDebug('ROUND ' . (int) $this->game->bga->globals->get(GLOBAL_CURRENT_ROUND), [
+                'reviewCardType' => $reviewCardType,
+                'side' => $side,
+                'playedValues' => $playedCards,
+                'roundTotal' => $result->total,
+                'roundTarget' => $result->target,
+                'roundSuccess' => $result->success,
+                // RoundResolver's own outcome delta and who it actually hit (the
+                // highest/lowest-played-card swing, ties included) -- 'reputations' below is
+                // only the *final* number after this AND any review effect apply, so this is
+                // the only place a tie-handling bug in who got hit would actually be visible.
+                'roundResultDelta' => $result->reputationDelta,
+                'roundResultAffectedPlayerIds' => $result->affectedPlayerIds,
+                // Boss-pile weight this round's card is worth (a counts_as_two card is worth 2
+                // toward EndConditionChecker's trigger, same value sent in 'roundResolved'
+                // above) plus the running weighted totals after filing it, so the game-ending
+                // trigger doesn't have to be re-derived from the whole reviewCardType/side
+                // sequence by hand.
+                'reviewEffectWeight' => $reviewEffect['counts_as_two'] ? 2 : 1,
+                'weightedHappyTotal' => $weightedHappyTotal,
+                'weightedAngryTotal' => $weightedAngryTotal,
+                'reputations' => $finalReputations,
+                'pendingInteractiveEffect' => $needsInteractiveResolution,
+                // Players a swap effect targeted (TargetGroupResolver) who turned out to have
+                // no eligible discard at all -- they never reach ResolveAdvancedEffect, their
+                // played card is just discarded as normal (the deterministic "can't improve on
+                // it" outcome, decided here rather than in actSwapDiscard()). Empty whenever
+                // this round's effect isn't a swap effect.
+                'swapTargetedButIneligible' => array_values(array_diff($swapTargetPlayerIds, $needsSwapChoicePlayerIds)),
+            ]);
+        }
 
         return $needsInteractiveResolution ? ResolveAdvancedEffect::class : $nextState;
     }
@@ -236,9 +280,11 @@ class ResolveRound extends GameState
     private function resolveReputationEffect(array $reviewEffect, array $currentReputations): void
     {
         $effectResult = ReviewEffectResolver::resolve($reviewEffect, $currentReputations);
+        $deltasForTrace = [];
 
         foreach ($effectResult as $playerId => $newReputation) {
             $delta = $newReputation - $currentReputations[$playerId];
+            $deltasForTrace[$playerId] = $delta;
 
             $this->game->DbQuery(
                 "UPDATE `player` SET `player_reputation` = $newReputation WHERE `player_id` = $playerId"
@@ -254,6 +300,17 @@ class ResolveRound extends GameState
                     'reputation' => $newReputation,
                 ]
             );
+        }
+
+        // Separate from the round-level trace's own delta/final-reputation fields -- this is
+        // specifically the review effect's *own* contribution, isolated from the round-result
+        // delta that ran before it, so the two don't have to be untangled from one combined
+        // final number.
+        if (!empty($deltasForTrace)) {
+            $this->game->traceDebug('REVIEW_EFFECT round=' . (int) $this->game->bga->globals->get(GLOBAL_CURRENT_ROUND), [
+                'effect' => 'reputation',
+                'deltas' => $deltasForTrace,
+            ]);
         }
     }
 
@@ -274,6 +331,15 @@ class ResolveRound extends GameState
         }
 
         $recycled = DiscardRecycleResolver::resolve($targetPlayerIds, $discardPiles);
+
+        // Includes $targetPlayerIds (not just $recycled's keys) so a targeted player whose
+        // discard pile happened to be empty -- no card to recycle at all -- is still visible,
+        // same "who was targeted vs. who it actually did something for" distinction as
+        // ResolveRound's own 'swapTargetedButIneligible' field.
+        $this->game->traceDebug('DISCARD_RECYCLE round=' . (int) $this->game->bga->globals->get(GLOBAL_CURRENT_ROUND), [
+            'targetPlayerIds' => $targetPlayerIds,
+            'recycled' => $recycled,
+        ]);
 
         foreach ($recycled as $playerId => $value) {
             $this->game->DbQuery(

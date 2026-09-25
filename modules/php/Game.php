@@ -338,6 +338,15 @@ class Game extends \Bga\GameFramework\Table
         // signal something about this assumption is wrong; investigate immediately rather
         // than shrug off a table that always builds with advanced cards off.
         $advanced_cards_enabled = (int) ($options[OPTION_ADVANCED_CARDS] ?? $options[(string) OPTION_ADVANCED_CARDS] ?? 0) === 1;
+
+        // Same code-only toggle as the per-round/end-game transcripts (constants.inc.php) --
+        // one line so a transcript is self-contained without separately having to remember the
+        // table's config to interpret it.
+        $this->traceDebug('GAME SETUP', [
+            'playerCount' => count($players),
+            'advancedCardsEnabled' => $advanced_cards_enabled,
+        ]);
+
         $card_types = $advanced_cards_enabled
             ? self::$ROUND_CARD_TYPES
             : array_filter(self::$ROUND_CARD_TYPES, fn(array $card) => !$card['advanced']);
@@ -390,4 +399,62 @@ class Game extends \Bga\GameFramework\Table
         $this->cards->moveCard($card['id'], 'hand', $playerId);
     }
     */
+
+    /**
+     * Gate for the debug trace-transcript feature (DEBUG_LOG_ROUND_TRANSCRIPT,
+     * constants.inc.php). Requires `getBgaEnvironment() === 'studio'` in addition to the
+     * constant -- belt-and-suspenders so a local debugging session left flipped `true` by
+     * mistake still can't fire against a real published table; the constant defaulting to
+     * `false` was previously the only thing preventing that.
+     *
+     * `getBgaEnvironment()` itself is unverified live against BGA's framework on this project
+     * (see docs/bga-studio-reference.md's "Debug endpoint access" section) -- it's the pattern
+     * BGA's own docs recommend for gating debug-only code, and the sibling Gelati project uses
+     * it the same way for its `debug_goToState()`/`debug_playOneMove()`, but it hasn't been
+     * confirmed live in Studio for this project's framework version yet. It's stubbed to
+     * return `'studio'` for PHPUnit (tests/stubs/BgaFrameworkStubs.php), so this method can't
+     * be exercised against the real behavior by the test suite either. Before relying on this
+     * as the production safety net: deploy with DEBUG_LOG_ROUND_TRANSCRIPT temporarily `true`,
+     * confirm a trace() call fires (and doesn't fatal) on a real Studio table, and confirm
+     * getBgaEnvironment() indeed returns `'studio'` there (not, say, an empty string or a
+     * different value) -- ideally also confirm it reads differently on a published/live table
+     * if that's feasible to check.
+     */
+    public function debugTranscriptEnabled(): bool
+    {
+        // A bare ignore (no error identifier) so it keeps suppressing PHPStan's
+        // "always true"/"always false" complaint on this literal-valued constant no matter
+        // which way DEBUG_LOG_ROUND_TRANSCRIPT is currently flipped -- confirmed against this
+        // repo's PHPStan 2.2.8/level 5 config that the bare form doesn't need updating per flip
+        // the way an identifier-specific ignore would.
+        // @phpstan-ignore-next-line
+        return DEBUG_LOG_ROUND_TRANSCRIPT && $this->getBgaEnvironment() === 'studio';
+    }
+
+    /**
+     * Shared plumbing for every debug-transcript `trace()` call -- centralizes the
+     * debugTranscriptEnabled() guard, the "L'Oaf " tag prefix, and the json_encode(), so a
+     * future format change (timestamp, redaction, different sink) is a one-place edit instead
+     * of touching every call site (Game.php, States/ResolveRound.php,
+     * States/ResolveAdvancedEffect.php, States/EndGame.php).
+     */
+    public function traceDebug(string $tag, array $data): void
+    {
+        if (!$this->debugTranscriptEnabled()) {
+            return;
+        }
+        $this->trace("L'Oaf $tag: " . json_encode($data));
+    }
+
+    /**
+     * Every player's reputation, keyed by player id -- the exact query that used to be
+     * duplicated across ResolveRound.php, ResolveAdvancedEffect.php, and EndGame.php.
+     */
+    public function getAllReputations(): array
+    {
+        return array_map('intval', $this->getCollectionFromDb(
+            'SELECT `player_id` AS `id`, `player_reputation` FROM `player`',
+            true
+        ));
+    }
 }

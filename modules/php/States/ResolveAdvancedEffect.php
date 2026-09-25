@@ -117,12 +117,25 @@ class ResolveAdvancedEffect extends GameState
             "UPDATE `work_card` SET `location` = 'discard' WHERE `player_id` = $currentPlayerId AND `value` = $value"
         );
 
+        $this->game->traceDebug('DISCARD_CHOICE round=' . (int) $this->game->bga->globals->get(GLOBAL_CURRENT_ROUND), [
+            'playerId' => $currentPlayerId,
+            'discardedFromHand' => $value,
+        ]);
+
+        // `value` is deliberately public here -- same "all discards are public" decision as
+        // `cardSwapped` below (docs/loaf-remarks.md, "Deliberate rules deviation" entry,
+        // amended 2026-08-24 to cover discard_choice too), by explicit request rather than a
+        // privacy oversight. Unlike a swap, there's no committed-slot card to visually replace
+        // (the discard comes straight from hand, not the played card), so the reveal is
+        // log-text only -- the JS handler (notif_playerDiscarded) doesn't need a visual update
+        // beyond the hand-count/removeCard it already does.
         $this->game->bga->notify->all(
             'playerDiscarded',
-            clienttranslate('${player_name} discards a card from hand'),
+            clienttranslate('${player_name} discards ${value} from hand'),
             [
                 'player_id' => $currentPlayerId,
                 'player_name' => $this->game->getPlayerNameById($currentPlayerId),
+                'value' => $value,
             ]
         );
 
@@ -161,11 +174,13 @@ class ResolveAdvancedEffect extends GameState
             throw new UserException('That card is not an eligible discard for this effect');
         }
 
-        if ($discardValue === $playedValue) {
-            // Deterministic fallback ("if they can't, they discard the played card instead") --
-            // in practice unreachable here, since ResolveRound only defers players who already
-            // have a nonempty eligible set, but handled defensively for the same reason
-            // SwapEffectResolver::resolve() supports it at all.
+        // Deterministic fallback ("if they can't, they discard the played card instead") --
+        // in practice unreachable here, since ResolveRound only defers players who already
+        // have a nonempty eligible set, but handled defensively for the same reason
+        // SwapEffectResolver::resolve() supports it at all.
+        $fallbackNoRealSwap = $discardValue === $playedValue;
+
+        if ($fallbackNoRealSwap) {
             $this->game->DbQuery(
                 "UPDATE `work_card` SET `location` = 'discard' WHERE `player_id` = $currentPlayerId AND `value` = $playedValue"
             );
@@ -178,14 +193,26 @@ class ResolveAdvancedEffect extends GameState
             );
         }
 
+        $this->game->traceDebug('SWAP round=' . (int) $this->game->bga->globals->get(GLOBAL_CURRENT_ROUND), [
+            'playerId' => $currentPlayerId,
+            'effect' => $reviewEffect['effect'],
+            'amount' => $reviewEffect['amount'],
+            // The deterministic "can't improve on it" fallback: nothing actually moved
+            // between hand and discard (see the if/else above), the played card just went
+            // straight to discard like an ordinary round -- not a real swap.
+            'fallbackNoRealSwap' => $fallbackNoRealSwap,
+            'playedValueReturnedToHand' => $fallbackNoRealSwap ? null : $playedValue,
+            'discardedValue' => $discardValue,
+        ]);
+
         // `value` is deliberately public here -- an intentional, explicit exception to the
         // usual "discards are private to their owner" rule (docs/loaf-open-questions.md Q3),
         // by request: a swap effect's discard has to satisfy the effect's own amount
         // constraint ("at most X lower"/"at least X higher" than the played value, already
         // public since cardPlayedRevealed), so showing it publicly lets every player verify
-        // the resolution was actually valid. Every other discard in this game (discard_choice,
-        // an ordinary played-card->discard move) stays private -- this one field, this one
-        // notification, deliberately narrow.
+        // the resolution was actually valid. `discard_choice`'s discard is public too now (see
+        // actDiscardChoice above) -- only `discard_recycle_lowest` and an ordinary
+        // played-card->discard bulk move still keep discard-pile contents private.
         $this->game->bga->notify->all(
             'cardSwapped',
             clienttranslate('${player_name} takes their played card back and discards ${value}'),
@@ -211,10 +238,7 @@ class ResolveAdvancedEffect extends GameState
     private function activePlayerIds(array $reviewEffect): array
     {
         if ($reviewEffect['effect'] === 'discard_choice') {
-            $reputations = array_map('intval', $this->game->getCollectionFromDb(
-                'SELECT `player_id` AS `id`, `player_reputation` FROM `player`',
-                true
-            ));
+            $reputations = $this->game->getAllReputations();
             $targetPlayerIds = TargetGroupResolver::playersInTarget($reviewEffect['target'], $reputations);
 
             return array_values(array_filter(
