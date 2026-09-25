@@ -197,9 +197,15 @@ class PlayCards {
 
   /**
    * On MULTIPLE_ACTIVE_PLAYER states, this is called by the framework once this player's
-   * activation status has actually settled -- both on first becoming active and on becoming
-   * inactive again (e.g. after committing) -- unlike onEnteringState's isCurrentPlayerActive,
+   * activation status has actually settled -- unlike onEnteringState's isCurrentPlayerActive,
    * see the comment there. This is the only place hand cards become clickable.
+   *
+   * Under the commit/cancel redesign (States/PlayCards.php), nobody is deactivated
+   * individually anymore -- everyone stays active for the whole state, only deactivated
+   * together once every player has committed (at which point this state is already being
+   * left). So `isCurrentPlayerActive` alone no longer distinguishes "must commit" from
+   * "committed, waiting" the way it used to when committing itself deactivated you --
+   * refreshCommitCancelUI() below reads `this.game.committedPlayerIds` for that instead.
    *
    * Assigning/clearing `onCardClick` alone is enough to gate clicking -- no `selectionMode`
    * juggling needed (an earlier version used `setSelectionMode('single'/'none')`, since
@@ -212,8 +218,11 @@ class PlayCards {
    * `cardClickEventFilter: 'all'` on the HandStock (setupHandAndCommitStocks) instead makes
    * `onCardClick` fire on every click regardless of `selectionMode`/`selectableCards` --
    * `selectionMode` now never leaves its default `'none'`, so the library's own selected-state
-   * mechanism (and its visual) never activates at all, leaving this game's own hover class as
-   * the only thing drawing a border.
+   * mechanism (and its visual) never activates at all. The new pending-selection border below
+   * (`.loaf_hand-card-selected-pending-commit`) is this game's own class, toggled directly,
+   * same idiom as `.loaf_hand-card-ineligible`/`.loaf_hand-card-eligible-swap`
+   * (ResolveAdvancedEffect, below) -- deliberately not `selectionMode` either, for the same
+   * reason.
    *
    * `await this.game.readyPromise` first: confirmed live that the framework can call this hook
    * before Game.setup() has finished (a fresh page load landing directly on an already-active
@@ -222,37 +231,112 @@ class PlayCards {
    */
   async onPlayerActivationChange(_args, isCurrentPlayerActive) {
     await this.game.readyPromise;
-    const handStock = this.game.handStock;
     // handHoverEnabled gates setupHandCardFrontDiv's hover-preview listeners (Game.js) --
     // without it, hovering a card while waiting on other players (or during any other state
     // entirely) still previewed the commit lift/border for an action that wasn't actually
     // available, confirmed live as misleading.
     this.game.handHoverEnabled = isCurrentPlayerActive;
     if (isCurrentPlayerActive) {
-      this.bga.statusBar.setTitle(_("${you} must commit a work card"));
-      handStock.onCardClick = (card) => this.onCardClick(card);
+      this.refreshCommitCancelUI();
     } else {
       this.bga.statusBar.setTitle(
         _("Waiting for other players to commit a work card"),
       );
-      handStock.onCardClick = null;
+      this.game.handStock.onCardClick = null;
+      this.bga.statusBar.removeActionButtons();
     }
+  }
+
+  /**
+   * Single source of truth for this state's status-bar title/buttons and hand clickability,
+   * driven by `this.game.committedPlayerIds` (kept in sync by notif_playerCommitted/
+   * notif_playerCancelledCommit, seeded from gamedatas on setup/refresh) rather than
+   * activation status -- see onPlayerActivationChange's own comment for why. Called on every
+   * activation settle and every commit/cancel notification, so it's always safe to call
+   * unconditionally rather than threading "did anything actually change" through every caller.
+   */
+  refreshCommitCancelUI() {
+    const myId = this.bga.players.getCurrentPlayerId();
+    const iHaveCommitted = this.game.committedPlayerIds.has(myId);
+    const handStock = this.game.handStock;
+    this.bga.statusBar.removeActionButtons();
+
+    if (!iHaveCommitted) {
+      this.bga.statusBar.setTitle(_("${you} must commit a work card"));
+      handStock.onCardClick = (card) => this.onCardSelect(card);
+      if (this.game.selectedHandCard) this.showCommitButton(this.game.selectedHandCard);
+    } else {
+      handStock.onCardClick = null;
+      const allCommitted = this.game.committedPlayerIds.size === Object.keys(this.game.gamedatas.players).length;
+      this.bga.statusBar.setTitle(
+        allCommitted
+          ? _("Everyone has committed -- resolving...")
+          : _("Waiting for other players -- you can still cancel your commitment"),
+      );
+      // allCommitted here means this player's own commit was the very last one -- the state
+      // has already transitioned away server-side (States/PlayCards.php's actCommitCard) by
+      // the time this client-side check runs, so no Cancel button would be actionable anyway.
+      if (!allCommitted) {
+        this.bga.statusBar.addActionButton(_("Cancel"), () => this.onCancel(), {
+          color: "alert",
+          confirm: _("Take your committed card back to hand?"),
+        });
+      }
+    }
+  }
+
+  // Click a card to select it (shows a Commit button, below) without playing it yet -- only
+  // pressing Commit actually calls the server. Clicking the already-selected card again
+  // deselects it; clicking a different card moves the selection.
+  onCardSelect(card) {
+    if (this.game.selectedHandCard === card) {
+      this.clearSelection();
+      return;
+    }
+    this.clearSelection();
+    this.game.selectedHandCard = card;
+    this.game.handCardsManager.getCardElement(card).classList.add("loaf_hand-card-selected-pending-commit");
+    this.showCommitButton(card);
+  }
+
+  clearSelection() {
+    if (this.game.selectedHandCard) {
+      this.game.handCardsManager
+        .getCardElement(this.game.selectedHandCard)
+        .classList.remove("loaf_hand-card-selected-pending-commit");
+    }
+    this.game.selectedHandCard = null;
+    this.bga.statusBar.removeActionButtons();
+  }
+
+  showCommitButton(card) {
+    this.bga.statusBar.removeActionButtons();
+    this.bga.statusBar.addActionButton(_("Commit ${value}").replace("${value}", card.value), () => this.onCommit(card), {
+      color: "primary",
+    });
   }
 
   // Stashed so notif_playerCommitted (which fires for the acting player too, same as every
   // other player) knows exactly which HandStock card to remove -- the notification itself
   // deliberately never carries the value, for privacy against OTHER players
   // (docs/loaf-open-questions.md Q3), so it can't be recovered from the notification alone.
-  onCardClick(card) {
+  onCommit(card) {
     this.game.pendingCommitCard = card;
     // Persists (unlike pendingCommitCard, nulled out once notif_playerCommitted consumes it)
     // through the rest of this round -- ResolveAdvancedEffect's swap-effect handling
-    // (notif_cardSwapped) needs to know this player's own played card's value later, and
-    // nothing else client-side tracks it once the real card object leaves this.handStock.
+    // (notif_cardSwapped) and, now, a later actCancelCommit need this player's own played
+    // card's value, and nothing else client-side tracks it once the real card object leaves
+    // this.handStock. Also restored from gamedatas.myCommittedValue on setup/refresh, see
+    // setupHandAndCommitStocks's own comment.
     this.game.myPlayedCardValue = card.value;
+    this.game.selectedHandCard = null;
     this.bga.actions.performAction("actCommitCard", {
       value: card.value,
     });
+  }
+
+  onCancel() {
+    this.bga.actions.performAction("actCancelCommit", {});
   }
 }
 
@@ -362,7 +446,7 @@ class ResolveAdvancedEffect {
     }
   }
 
-  // Stashed the same way PlayCards.onCardClick stashes pendingCommitCard -- neither
+  // Stashed the same way PlayCards.onCommit stashes pendingCommitCard -- neither
   // notif_playerDiscarded nor notif_cardSwapped carries the chosen value (same hand-privacy
   // discipline against *other* players, docs/loaf-open-questions.md Q3), so the acting
   // player's own notification handler needs another way to know which card object to move.
@@ -813,6 +897,17 @@ export class Game {
         });
       }),
     );
+
+    // Commit/cancel flow (PlayCards): WHO has committed, for gating the hand-select-vs-Cancel
+    // UI (PlayCards.refreshCommitCancelUI) -- reuses this same gamedatas field rather than a
+    // second independently-reconstructed source of truth, same reasoning as committedPlayerIds
+    // itself (see that field's own comment). gamedatas.myCommittedValue (Game.php's getAllDatas,
+    // privately scoped to the requesting player like myHand) restores this client's own
+    // in-memory myPlayedCardValue on a fresh page load/refresh -- without it, a refresh after
+    // committing but before the round resolves would leave myPlayedCardValue undefined, and a
+    // later cancel (notif_playerCancelledCommit) would have no real value to put back in hand.
+    this.committedPlayerIds = new Set(gamedatas.committedPlayerIds);
+    this.myPlayedCardValue = gamedatas.myCommittedValue;
   }
 
   // Adds a live reputation readout to BGA's own standard player panel (the name/score/flag
@@ -1048,6 +1143,8 @@ export class Game {
     // other per-round display this handler already clears, rather than leaving it stale into
     // a round where a fresh commit will overwrite it anyway.
     this.myPlayedCardValue = null;
+    // Commit/cancel flow (PlayCards): fresh round, nobody's committed yet.
+    this.committedPlayerIds = new Set();
   }
 
   // Matches Game.php's `playerCommitted` notification (PlayCards::actCommitCard). No card
@@ -1093,6 +1190,48 @@ export class Game {
       value: null,
       visible: false,
     });
+
+    // Commit/cancel flow: drives PlayCards' status-bar title/Commit-Cancel buttons for every
+    // client, not just the acting player's -- an opponent committing changes whether *this*
+    // player's own Cancel button should still show ("everyone committed" gates it).
+    this.committedPlayerIds.add(args.player_id);
+    this.playCards?.refreshCommitCancelUI();
+  }
+
+  // Matches Game.php's `playerCancelledCommit` notification (PlayCards::actCancelCommit) --
+  // mirror image of notif_playerCommitted above. No card value here either, same privacy
+  // discipline. Unlike ResolveAdvancedEffect's swap-effect reversal (notif_cardSwapped), the
+  // round hasn't resolved yet at cancel time, so the committed slot is still a face-down
+  // placeholder (value: null, visible: false) for every client including the acting player's
+  // own -- cardPlayedRevealed (what makes committed cards face-up) only fires later, in
+  // ResolveRound. So only the acting player's own client can supply the real value, from its
+  // own already-tracked myPlayedCardValue (restored from gamedatas.myCommittedValue on
+  // setup/refresh, see setupHandAndCommitStocks).
+  async notif_playerCancelledCommit(args) {
+    this.adjustHandCount(args.player_id, 1);
+    this.committedPlayerIds.delete(args.player_id);
+
+    const committedStock = this.committedCardStocks[args.player_id];
+    const [placeholder] = committedStock.getCards();
+    const isMe = args.player_id === this.bga.players.getCurrentPlayerId();
+
+    if (isMe && placeholder) {
+      // Same fromStock reversal pattern as notif_cardSwapped's genuine-swap branch below: keep
+      // the *same* card object (same committedSerial => same manager.getId(), required by
+      // fromStock) and just fill in the real value/visibility now that it's back in my own
+      // hand, rather than removeCard-ing it and addCard-ing an unrelated new object.
+      await this.handStock.addCard(
+        { ...placeholder, value: this.myPlayedCardValue, visible: true },
+        { fromStock: committedStock },
+      );
+      this.myPlayedCardValue = null;
+    } else if (placeholder) {
+      // An opponent's cancel, from this client's perspective: just clear this local view of
+      // their committed slot -- this client never had a hand-side card of theirs to touch.
+      await committedStock.removeCard(placeholder);
+    }
+
+    this.playCards?.refreshCommitCancelUI();
   }
 
   // Matches Game.php's `reputationChanged` notification (ResolveRound). Moves the player's
@@ -1226,7 +1365,7 @@ export class Game {
   // the deterministic-fallback case, never touches hand at all.
   //
   // Which case actually happened is determined by comparing the clicked card's value against
-  // `myPlayedCardValue` (set in PlayCards.onCardClick, persists across the round unlike
+  // `myPlayedCardValue` (set in PlayCards.onCommit, persists across the round unlike
   // pendingCommitCard) rather than anything in this notification's own payload -- same privacy
   // discipline as everywhere else in this file, the server never sends the acting player's own
   // choice back to them either.

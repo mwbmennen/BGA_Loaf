@@ -397,6 +397,21 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   separately-planned hover-tooltip "zoom" sheets had any oversampling — see `loaf-remarks.md`'s
   "Sprite sheets/board.png built at exactly 1x" entry for the full fix and the `hand-sheet.jpg`
   4MB-limit complication.
+- [ ] **`getCardElement(card)` returns the outer per-card element, not the inner front-face div
+  a `setupFrontDiv` hover/selection style might already target.** Already generically worded,
+  ready to copy essentially verbatim. Where: `bga-studio-reference.md` §10,
+  "`CardManager.getCardElement(card)`/`CardStock.getCardElement(card)` returns the outer card
+  element, not the inner front-face div a `setupFrontDiv` hover/selection style might already
+  target" — covers the mechanism (a class toggled externally via `getCardElement()` lands on a
+  different, parent element from whatever `setupFrontDiv`'s own div-scoped listeners target,
+  causing two independent transforms to stack on two nested elements) and the fix (keep the
+  toggle on the outer element, since there's no live div reference to reuse from outside
+  `setupFrontDiv`, but write the CSS as a descendant selector so the actual transform/box-shadow
+  lands on the same inner element the other style already uses). Concrete incident: L'Oaf's
+  "card selected, pending commit" persistent highlight (`PlayCards.js`'s `onCardSelect`) stacked
+  with the existing hover-preview style, producing a double lift and an exposed "ghost" border —
+  caught live from a user screenshot, not predicted in review. See `loaf-remarks.md`'s "Two-step
+  commit/cancel for PlayCards" entry for the full incident.
 
 ## Needs generalizing before it's portable
 

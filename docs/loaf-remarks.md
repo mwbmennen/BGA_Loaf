@@ -1560,3 +1560,53 @@ stays correct regardless of the file's real resolution), not a claim about the c
 was about to go stale/misleading now that the real file is 1480x465. Functionally nothing
 needed to change there — just the comment, so a future reader checking the file's actual
 dimensions doesn't get confused by a mismatch.
+
+## Two-step commit/cancel for PlayCards (2026-09-25) — confirmed live
+
+Previously, clicking a hand card during `PlayCards` called `actCommitCard` immediately, with no
+way to change your mind. By request: clicking a card now only selects it (a status-bar "Commit
+${value}" button appears); only pressing that button actually plays the card. Once committed, a
+"Cancel" button (native `confirm` prompt) is available to take the card back to hand, but only
+while at least one other player still hasn't committed.
+
+The real design problem wasn't the button — it was that the old code deactivated a player
+(`setPlayerNonMultiactive`) the instant they committed, and a deactivated player can't call any
+further `#[PossibleAction]` in a `MULTIPLE_ACTIVE_PLAYER` state, so there was no way for a
+committed player to invoke a cancel action at all. Fixed by no longer deactivating players
+individually: everyone stays multiactive for the whole state, `actCommitCard`/`actCancelCommit`
+(`States/PlayCards.php`) gate legality off DB state (`work_card.location`) instead of
+active/inactive status, and completion ("has everyone committed?") is detected explicitly and
+triggers one batched `setPlayerNonMultiactive()` loop (one call per player, all within the same
+request) rather than the old one-call-per-commit pattern. **Confirmed live (2026-09-25)**: that
+batched loop does auto-transition to `ResolveRound` cleanly on the last player's commit, the same
+way the old single-call version did — this was the single biggest risk flagged going into this
+change (see the code comment right above the loop in `actCommitCard`), and it held up.
+
+Also added, and needed for correctness rather than being optional polish:
+- `actCommitCard` now rejects a second commit without cancelling first (previously impossible
+  since committing deactivated you; now that you stay active, needed an explicit guard).
+- `zombie()` is now idempotent (checks for an existing `played` card before choosing again) —
+  under the old design a committed player was deactivated immediately, so the framework had no
+  reason to call `zombie()` for them again; under the new design they stay active longer, making
+  a second call theoretically reachable.
+- `Game.php`'s `getAllDatas` gained `myCommittedValue`, privately scoped to the requesting player
+  like `myHand` already is. Needed because a page refresh after committing but before the round
+  resolves would otherwise leave the client's in-memory `myPlayedCardValue` undefined — the one
+  piece of data `notif_playerCancelledCommit` needs to know which real card to put back in hand
+  (the round hasn't resolved yet at cancel time, so — unlike the swap-effect reversal in
+  `notif_cardSwapped` — the committed slot is still a face-down placeholder for everyone,
+  including its own owner's client; `cardPlayedRevealed` is what makes it face-up, and that only
+  fires later, in `ResolveRound`).
+
+**A real CSS bug caught live, not in dev**: the new "selected, pending commit" persistent
+highlight (`.loaf_hand-card-selected-pending-commit`) was originally applied via
+`handCardsManager.getCardElement(card)`, which returns the *outer* per-card element — a
+different, nesting-parent element from the *inner* `.loaf-hand-card-front` div that the existing
+`.loaf_hand-card-hover` class already targets. Hovering an already-selected card stacked both:
+the inner front div lifted a second time inside the already-lifted outer box, leaving the outer
+box's own border exposed below as a visible "ghost" rectangle (caught from a user screenshot,
+not predicted). Fixed by rewriting the CSS as a descendant selector
+(`.loaf_hand-card-selected-pending-commit .loaf-hand-card-front`) so the class marker stays on
+the outer element (the only thing addressable from a plain card data object) but the actual
+lift/border always lands on the same single inner element hover already uses — confirmed live
+afterward that hovering a selected card no longer shows the artifact.

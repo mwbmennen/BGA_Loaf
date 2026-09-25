@@ -365,6 +365,33 @@
   box-shadow: inset 0 0 0 6px var(--loaf-my-player-color, blueviolet) !important;
 }
 
+/* Commit/cancel flow (PlayCards.js's onCardSelect): a card the player has clicked but not yet
+   committed -- persists (unlike .loaf_hand-card-hover above, which only applies while the mouse
+   is actually over the card) until Commit is pressed or the card is deselected. Same lift +
+   border visual as the hover-preview state -- selecting reads naturally as "permanently
+   previewing this one".
+
+   The class itself is toggled on the *outer* per-card element (`handCardsManager
+   .getCardElement(card)`, the only thing addressable from a plain card data object -- there's
+   no live reference to the inner front-face div the way setupHandCardFrontDiv's own mouseenter/
+   mouseleave listeners have one), but the outer element isn't where .loaf_hand-card-hover's own
+   lift/border are applied -- that's the *inner* `.loaf-hand-card-front` div, a level down. Fixed
+   as a bug (confirmed live, screenshot): applying the transform/box-shadow directly to the outer
+   element stacked with the inner div's own hover transform whenever both were active at once
+   (hovering an already-selected card) -- the inner content lifted a *second* time inside the
+   already-lifted outer box, leaving the outer box's own border exposed below as a visible ghost
+   rectangle. Targeting the inner `.loaf-hand-card-front` descendant instead, the same element
+   `.loaf_hand-card-hover` itself uses, means only ever one lift/border applies to the actual
+   visible card face, regardless of whether hover and selection are both active. Same
+   `!important`/CSS-specificity reasoning as every other style here that targets a
+   bga-cards-rendered element. */
+.loaf_hand-card-selected-pending-commit .loaf-hand-card-front {
+  transform: translateY(
+    calc(var(--bga-cards_card-height, 251px) / -5)
+  ) !important;
+  box-shadow: inset 0 0 0 6px var(--loaf-my-player-color, blueviolet) !important;
+}
+
 /* Advanced-effect card choice (docs/loaf-phase5-plan.md §9, ResolveAdvancedEffect.js's
    markEligibility) -- an ineligible hand card stays visible but visually and functionally
    disabled, rather than being hidden, so the player can see their whole hand and understand
