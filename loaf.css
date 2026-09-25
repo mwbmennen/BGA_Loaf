@@ -103,6 +103,13 @@
 
 .loaf_boss-pile-fan {
   position: relative;
+  /* z-index: 0 (any explicit value, not just `relative`'s own positioning) turns this into a
+     real stacking-context root, so the boss card / filed-card slots' own z-index: 1-10 below
+     stay contained here instead of leaking out to compete against unrelated page elements (e.g.
+     BGA's own hand-area panel) that happen to have no z-index of their own. Diagnosed from a
+     live report: on a short/narrow viewport where the hand area visually overlaps the board,
+     the boss card was painting above the hand -- not yet re-verified live after this fix. */
+  z-index: 0;
   width: 540px; /* boss card (180px) + up to 6 filed-card slots (60px reveal each), generous */
   height: 251px;
 }
