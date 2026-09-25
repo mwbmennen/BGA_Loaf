@@ -169,6 +169,19 @@ class Game extends \Bga\GameFramework\Table
             "SELECT DISTINCT `player_id` FROM `work_card` WHERE `location` = 'played'",
             true
         ));
+        // Own committed-but-not-yet-revealed value only (same per-owner privacy scoping as
+        // myHand above) -- needed so a page refresh after committing (but before the round
+        // resolves) can still restore the client's own myPlayedCardValue, which the commit/
+        // cancel flow (States/PlayCards.php's actCancelCommit) needs to know which real card to
+        // put back in hand. Without this, a refresh-then-cancel would try to rebuild the hand
+        // card with a null/undefined value -- notif_playerCommitted/notif_playerCancelledCommit
+        // (Game.js) never carry it themselves, same privacy rule as playerCommitted's own
+        // notification. Null once already revealed (revealedCommittedValues below already
+        // covers that case) or if this player hasn't committed at all.
+        $myCommittedValue = $this->getUniqueValueFromDb(
+            "SELECT `value` FROM `work_card` WHERE `player_id` = $currentPlayerId AND `location` = 'played'"
+        );
+        $result['myCommittedValue'] = $myCommittedValue !== null ? (int) $myCommittedValue : null;
         // Empty unless this round's committed cards have already been revealed
         // (GLOBAL_CARDS_REVEALED_THIS_ROUND, set in ResolveRound.php right after
         // cardPlayedRevealed fires, reset in RoundStart.php) -- without this, a page refresh

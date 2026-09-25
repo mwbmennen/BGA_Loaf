@@ -1550,6 +1550,43 @@ be forced to an unhelpful value (e.g. `box-shadow: inset ...` instead of `outlin
 has the advantage of correctly following the card's own `border-radius` where `outline` — always
 a plain rectangle — wouldn't).
 
+### `CardManager.getCardElement(card)`/`CardStock.getCardElement(card)` returns the *outer* card element, not the inner front-face div a `setupFrontDiv` hover/selection style might already target
+
+**Symptom:** a persistent CSS class toggled from outside `setupFrontDiv` (e.g. "this card is
+selected," applied via `manager.getCardElement(card).classList.add(...)` from a click handler
+that only has the card's plain data object, not a live div reference) visually stacks with an
+existing hover-preview style instead of coexisting cleanly — hovering an already-selected card
+produces a double lift, and a "ghost" border/box-shadow left behind at the un-lifted position
+(caught live from a screenshot, not predicted in review).
+
+**Cause:** `setupFrontDiv(card, div)` receives the *inner* front-face div directly, and any
+listener attached there (e.g. `div.addEventListener('mouseenter', () =>
+div.classList.add('my-hover-class'))`) naturally targets that same inner element. But
+`getCardElement(card)` — the only way to address a card's DOM element from *outside*
+`setupFrontDiv`, since there's no live div reference to reuse — returns the *outer* per-card
+container that wraps the front/back faces, a different, parent element. Applying a `transform`/
+`box-shadow` directly to that outer element, while a *different* style targets the inner face
+div, means two independent transforms apply to two nested elements at once: the inner div lifts
+a second time *inside* the already-lifted outer box, and the outer box's own border is left
+exposed below, no longer aligned with the now-doubly-shifted visible content.
+
+**Fix:** keep the class *toggle* on the outer element (still the only thing addressable
+externally), but write the CSS as a descendant selector so the actual visual properties land on
+the same inner element the other style already uses:
+
+```css
+/* Wrong — targets the outer element directly, stacks with an inner-div hover style: */
+.my-selected-class {
+  transform: translateY(-10px) !important;
+}
+
+/* Right — toggle stays on the outer element, but the descendant selector routes the actual
+   transform to the same inner face div .my-hover-class already targets: */
+.my-selected-class .my-front-face-class {
+  transform: translateY(-10px) !important;
+}
+```
+
 ---
 
 ## State Transitions: Old vs New Style
