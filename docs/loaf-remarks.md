@@ -1610,3 +1610,151 @@ not predicted). Fixed by rewriting the CSS as a descendant selector
 the outer element (the only thing addressable from a plain card data object) but the actual
 lift/border always lands on the same single inner element hover already uses — confirmed live
 afterward that hovering a selected card no longer shows the artifact.
+
+## No state class uses `GameState`'s `description`/`descriptionMyTurn` — status bar text is 100% hand-rolled in `Game.js`
+
+While compiling `docs/user-facing-text.txt` (a catalogue of every user-facing string, for
+future translation work), none of the five state classes under `modules/php/States/`
+(`PlayCards`, `ResolveAdvancedEffect`, `EndGame`, `ResolveRound`, `RoundStart`) pass a
+`description` or `descriptionMyTurn` argument to `parent::__construct()` — confirmed by
+grepping all five files. I initially assumed this meant the framework itself had no such
+parameter (since `tests/stubs/BgaFrameworkStubs.php`'s hand-written `GameState` stub, used so
+PHPUnit/PHPStan can type-check locally without a vendored framework, also omits it). That
+assumption was wrong: fetching the official docs
+(`https://en.doc.boardgamearena.com/State_classes:_State_directory`) confirmed the real
+`GameState` constructor does accept `description`/`descriptionMyTurn` (plus `transitions` and
+`initialPrivate`) — all optional, which is exactly why every state class here still compiles
+and runs without them. See `bga-studio-reference.md`'s matching entry for the full signature.
+
+Net effect for this project specifically: every status-bar string a player sees today — titles,
+waiting-for-others text, the "${you} must..." phrasing — comes from manual
+`this.bga.statusBar.setTitle(...)` calls inside each `onEnteringState`-driven branch of
+`Game.js`, not from the framework's native per-state description mechanism. Functionally
+equivalent today (every state has matching JS text), but worth knowing for any future state
+addition. **Update (2026-10-07)**: `tests/stubs/BgaFrameworkStubs.php`'s `GameState` stub (around
+line 370) has since been brought in line with the real signature — `description`,
+`descriptionMyTurn`, `transitions`, and `initialPrivate` were added as optional constructor
+params, so PHPStan will now actually check any future state class that passes them. No state
+class here uses them yet; that's still an open choice, not a bug.
+- Not a bug to fix now — just flagging it as a deliberate-or-not architectural choice this
+  project has made, in case a future state addition forgets the manual `setTitle()` call and
+  assumes the framework provides one "for free" the way `states.inc.php`-era tutorials do.
+
+## Deferred: migrate `$this->roundCards` off the deprecated `Deck` component to `ItemManager`
+
+**Status (2026-10-07): deliberately deferred, not forgotten.** `Game.php` (`$this->roundCards`,
+set up at `Game.php:39,54,370-374`) and its three consumers (`RoundStart.php:32,44,48`,
+`ResolveRound.php:87`, plus a raw-SQL query at `Game.php:220-226` that bypasses the Deck
+abstraction entirely and reads `round_card`'s columns directly) all use
+`Bga\GameFramework\Components\Deck`, which BGA's own docs mark deprecated in favor of a newer
+`ItemManager` component. Investigated as a candidate fix alongside the `BgaFrameworkStubs.php`
+audit (see `bga-studio-reference.md`'s matching entry and `bga-template-upstream-notes.md`),
+decided against doing it now:
+
+- **Not a drop-in swap.** `ItemManager` requires a dedicated typed `Card` class
+  (`#[Item]`/`#[ItemField]` attributes) replacing every plain-array card access
+  (`$card['id']`/`$card['type']`/`$card['location_arg']` → `$card->id`/`$card->type`/the
+  framework's own `ORDER` field) across all three files, plus `Location`/`ItemLocation` objects
+  replacing bare location strings (`shuffle('deck')` → `shuffle(Location $location)`).
+- **One genuine win if ever done**: `RoundStart.php:40-43` currently carries an explicitly
+  flagged *unverified assumption* — it manually sorts by `location_arg` because `Deck`'s row
+  ordering was never confirmed locally. `ItemManager` documents an `ORDER` field and
+  `getItemOnTop()`/`getItemsOnTop()` built for exactly this case, so migrating would resolve
+  that standing flag rather than carry it forward.
+- **Real cost**: first use of an entirely new component family with nothing vendored locally to
+  verify against — same risk category as the `playerScoreAux` incident (three live guesses
+  before the right signature was found, per the entry earlier in this file). Would need its own
+  round of `BgaFrameworkStubs.php` additions (`ItemManager`, `ItemManagerFactory`, `Item`/
+  `ItemField` attributes, `Location`, `Collection`) verified against docs the same way `Deck`'s
+  stub just was, before being trustworthy for PHPStan.
+
+Since `Deck` is deprecated but not shown as actively broken, the risk (real production-code
+changes across 3 files, first-use-of-new-API live-verification risk) outweighs the benefit
+(resolving one ordering assumption, modernizing an API surface) for a game that already works.
+Revisit if BGA ever announces `Deck`'s actual removal, or if a future feature needs something
+`ItemManager` does natively that `Deck` can't (e.g. richer typed-object card handling).
+
+## Fixed: 9 `UserException` error messages existed unwrapped, missed by an empty grep for the wrong exception class name
+
+While compiling `docs/user-facing-text.txt`, an earlier pass concluded "no `BgaUserException(...)`
+calls were found, so there's no user-facing error text to catalogue" — a real mistake, not just
+an incomplete catalogue. `BgaUserException` is the *old* framework's exception class; this
+project's state classes throw `Bga\GameFramework\UserException` (confirmed correct namespace
+during the `BgaFrameworkStubs.php` audit), so the grep silently found zero matches and that was
+misread as "no error text exists" rather than "wrong class name." Grepping for `UserException`
+instead turned up 9 real messages across `PlayCards.php` (5: lines 98, 108, 159, 166, 173) and
+`ResolveAdvancedEffect.php` (4: lines 110, 113, 152, 174) — all of them genuinely shown to the
+acting player as a popup when they attempt an illegal move, and **none of them wrapped in
+`clienttranslate(...)`**, a direct miss of this project's own standing rule
+(`loaf-open-questions.md` Q8: no hardcoded English strings anywhere in `modules/php/`).
+
+**Status (2026-10-07): fixed.** All 9 messages now wrapped in `clienttranslate(...)`, per the
+canonical example in `BGA_Studio_Migration_Guide` (`throw new
+UserException(clienttranslate('You must choose 3 cards'));`). `docs/user-facing-text.txt` gained
+a Section 9 for these and a corrected NOTES entry. The `Core/*.php` `InvalidArgumentException`s
+(pure-logic preconditions in DB-free classes) were deliberately left untranslated and
+uncatalogued — they're not meant to reach a real player under correct UI gating; the one case
+where a Core exception legitimately can surface to a player
+(`SwapEffectResolver`'s invalid-choice case) was already being caught in
+`ResolveAdvancedEffect.php` and re-thrown as a `UserException` — that catch-and-rethrow message
+just needed the same `clienttranslate()` wrap as the other 8, which it now has.
+
+Generalizable lesson logged in `bga-studio-reference.md`/`bga-template-upstream-notes.md`: an
+empty grep for a renamed framework symbol looks identical to "feature doesn't exist" — treat it
+as "wrong name, keep looking" until the symbol's current name is confirmed, not as a finding.
+
+## Fixed: a zombie's auto-committed card never left their own hand display (live bug report)
+
+**Reported by the user (2026-10-07)**: made the first player a zombie; their card was
+auto-committed, but their hand display still showed every card -- the played card never
+disappeared.
+
+**Root cause**: `Game.js`'s `notif_playerCommitted` only removes the committed card from
+`handStock` when `this.pendingCommitCard` is already set (line ~1183's `if (args.player_id
+=== getCurrentPlayerId() && this.pendingCommitCard)` guard) -- and `pendingCommitCard` is only
+ever set by `onCommit()` (`Game.js:336`), which runs when the player *clicks* their own card.
+`PlayCards::zombie()`'s auto-commit (`actCommitCard($zombieChoice, $playerId)`, server-side,
+no client interaction) never runs that click handler, so for the zombied player's own client,
+`pendingCommitCard` stays unset. The hand*-count* number still updates correctly (`adjustHandCount`
+isn't gated on it), but the actual card element silently never gets removed -- exactly matching
+the report. This was a known, deliberate design gap, not an oversight: the existing code
+comment on `onCommit()` says outright "the notification itself deliberately never carries the
+value... so it can't be recovered from the notification alone" (for privacy against *other*
+players) -- it just never accounted for a commit that didn't originate from a click at all.
+
+**First fix attempt (superseded, see below)**: initially reused this project's established
+`notify->player()` pattern (the `cardRecycled`/`cardRecycledValue` precedent) -- a second,
+separate private notification with the value, sent just before the public one. This worked,
+but the user caught a real UX regression: it made the acting player's own log show *two* lines
+per commit ("Dumbledore1 has committed their work card" *and* "You commit ${value}"), which is
+superfluous -- the public line about themselves adds nothing once the private one exists.
+
+**Corrected fix**: BGA's `_private`/`_merge_private` mechanism on `notify->all()` (confirmed via
+`Main_game_logic:_yourgamename.game.php`, fetched 2026-10-07) substitutes a *different*
+message+args for one specific player id, in the *same* notification -- not an additional one.
+`PlayCards::actCommitCard()` now sends a single `notify->all('playerCommitted', ...)` whose
+args carry `'_private' => [$currentPlayerId => new NotificationMessage(clienttranslate('You
+commit ${value}'), ['value' => $value])]` and `'_merge_private' => true`. Every other player
+sees the public "${player_name} has committed their work card" line (no value, same as
+before); the acting player sees *only* "You commit ${value}" in its place -- one line, not two
+-- and `_merge_private` additionally puts `value` directly on that one player's own `args`
+object (framework-guaranteed never sent to anyone else's client), which `Game.js`'s
+`notif_playerCommitted` now reads directly: `this.pendingCommitCard ?? this.handStock.getCards().find(c
+=> c.value === args.value)`, preferring the already-confirmed click-time path and falling back
+to the new mechanism only when nothing local set it (the zombie case). This removed the need
+for a second notification/handler entirely (`notif_playerCommittedValue` deleted). The
+`NotificationMessage` class (`Bga\GameFramework\NotificationMessage`) and the `_private`/
+`_merge_private` args mechanism are both first uses in this project -- unverified locally, no
+vendored framework -- but structured so a live surprise there only leaves the zombie case as
+broken as before, never regresses the normal human-commit path.
+
+**Note on where the fix lives**: `modules/js/Game.js` is currently the real, hand-maintained
+source, not a build artifact -- `rollup.config.mjs` points `input: 'src/ts/Game.ts'`, but that
+path doesn't exist (`src/ts/` is absent; only `src-disabled/ts/` does, confirming the
+TypeScript pipeline is inactive). Checked before editing so this fix wouldn't land somewhere a
+future `npm run build:ts` would silently clobber.
+
+Verified: 99 PHPUnit tests + PHPStan clean (no test covers `PlayCards`/`actCommitCard`
+directly -- by this project's own architecture rule, only the DB-free `Core/*` classes have
+unit coverage), and `eslint modules/js/Game.js` clean. Not yet re-verified live on Studio with
+an actual zombie seat -- do that before considering this fully closed.

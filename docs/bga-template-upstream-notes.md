@@ -68,6 +68,77 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   string..." section, "Stub `self::_()` for PHPUnit" (added after L'Oaf's round-card
   hover-tooltip text was the first non-notification server-translated string in that
   project — see `loaf-remarks.md`'s "Round-card hover-tooltip explanation text" entry).
+- [ ] **A hand-written local test stub for a framework class only ever mirrors what the
+  project happened to use, not the real signature — re-verify it against the official docs,
+  don't trust it as a reference.** `tests/stubs/BgaFrameworkStubs.php`'s `GameState` stub
+  omitted `description`/`descriptionMyTurn`/`transitions`/`initialPrivate` from its
+  constructor simply because no state class here passes them — which initially read as "the
+  framework has no such parameter" until the official docs
+  (`https://en.doc.boardgamearena.com/State_classes:_State_directory`) were actually fetched
+  and showed otherwise. Nothing keeps a local stub in sync with the real framework as it
+  evolves or as more of its surface gets used; the stub's omissions are silent (PHPStan/tests
+  stay green either way) and easy to mistake for authoritative. Where: `bga-studio-reference.md`,
+  "`GameState`'s constructor has `description`/`descriptionMyTurn`..." section; concrete
+  instance in `loaf-remarks.md`'s "No state class uses `GameState`'s
+  `description`/`descriptionMyTurn`..." entry. Suggested template rule: when a question comes
+  up about a framework class's real signature/behavior, check the official docs before relying
+  on a hand-written local stub's shape as if it were a spec.
+- [ ] **An empty grep for a framework symbol looks identical to "feature doesn't exist" — it
+  usually means "wrong/old name."** BGA renamed its catchable user-error exception from the old
+  framework's global `BgaUserException` to the new typed framework's
+  `Bga\GameFramework\UserException` (`SystemException`/`VisibleSystemException` for
+  non-user-facing cases). Grepping a typed-framework project for the old name finds nothing and
+  reads as confirmation the feature/pattern isn't used at all — concrete incident: L'Oaf's
+  user-facing-text catalogue grepped `BgaUserException`, found zero matches, and wrongly
+  reported "no user-facing error text exists," when 9 real `UserException` messages existed
+  all along, just under the new name (and unwrapped in `clienttranslate()` to boot — a second,
+  compounding miss). Where: `bga-studio-reference.md`, "Searching for user-facing error text?
+  Grep the NEW exception class name, not the old one"; concrete instance in
+  `loaf-remarks.md`'s "Fixed: 9 `UserException` error messages..." entry. Suggested template
+  rule: treat a zero-match grep for any BGA framework symbol as "confirm the current name
+  against the docs" before concluding the underlying feature is unused — same root cause as
+  the stub-drift entry above, just surfacing as a false negative in a manual grep instead of a
+  silently-incomplete stub.
+- [ ] **Any client-side state set only at click-time (to work around a privacy-motivated
+  notification that omits a value) silently breaks for a server-initiated version of the same
+  action.** A UI update gated on "the client already knows this locally because the player
+  just clicked" (e.g. `pendingCommitCard`, set in a click handler, consumed by the matching
+  `notif_*` handler to know which card element to remove — necessary because the notification
+  itself deliberately omits the value for privacy against *other* players) silently no-ops the
+  moment that same action is ever triggered a different way — a zombie auto-play, an AI bot
+  move, a timer-driven auto-pass, anything server-initiated with no corresponding client click.
+  The notification still fires and still carries whatever public data it always did; what's
+  missing is only the private echo the click-time code happened to provide as a side effect.
+  Concrete incident: L'Oaf's zombie auto-commit left the auto-played card visibly stuck in the
+  zombied player's own hand, because hand-removal was gated on `pendingCommitCard`, which only
+  `onCommit()`'s click handler ever set — reported live by the user, not caught in review.
+  Where: `loaf-remarks.md`'s "Fixed: a zombie's auto-committed card never left their own hand
+  display" entry for the full incident; fixed using `notify->all()`'s `_private`/
+  `_merge_private` mechanism (see the entry immediately below), not a second `notify->player()`
+  call. Suggested template rule: any game with both (a) a public notification that
+  deliberately omits a value for privacy, relying on click-time client state to fill the gap,
+  and (b) any server-initiated path that can trigger the same action (zombie/bot/timer) needs
+  a private value echo for the acting player specifically — don't assume the click-time
+  workaround covers every way the action can happen.
+- [ ] **Prefer `notify->all()`'s `_private`/`_merge_private` args over a second
+  `notify->player()` call when one specific recipient needs *different* text for the same
+  event, not *additional* text.** `notify->player()` is correct when a player needs a genuinely
+  separate, additional notification (e.g. revealing a card drawn into their own private hand,
+  alongside an unrelated public "something happened" line — see `bga-studio-reference.md`'s
+  `cardRecycled`/`cardRecycledValue` entry). But if the goal is "this one player should see
+  *this* message instead of the public one, for the same event," two separate notify calls
+  produce two separate log lines for that player — a visible UX regression (caught live by a
+  user report, not in review: see `loaf-remarks.md`'s "Fixed: a zombie's auto-committed
+  card..." entry, "First fix attempt" vs. "Corrected fix"). The right tool is `notify->all()`'s
+  own built-in per-recipient override: pass `'_private' => [$playerId => new
+  NotificationMessage($privateMessage, $privateArgs)]` in the args array, which substitutes a
+  different message+args for that one player id within the *same* notification (one log line,
+  not two) — add `'_merge_private' => true` alongside `_private` to also merge those private
+  args directly into that player's own `args` (instead of nesting under `args._private`), so
+  the client-side `notif_*` handler can read them like any other field. Framework-guaranteed:
+  no other player's client ever receives the private fields at all, not even hidden in `args`.
+  Where: `Main_game_logic:_yourgamename.game.php`'s `_private` documentation; concrete instance
+  in `PlayCards::actCommitCard`.
 - [ ] **Game-log narrative order is `notify->all()` call order, not computation order.** The
   log shows notifications in the order they were *called*, independent of when the underlying
   DB writes happened — but any `${...}` value interpolated into a message must already be known
@@ -412,6 +483,18 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   with the existing hover-preview style, producing a double lift and an exposed "ghost" border —
   caught live from a user screenshot, not predicted in review. See `loaf-remarks.md`'s "Two-step
   commit/cancel for PlayCards" entry for the full incident.
+- [ ] **`Deck` is deprecated in favor of `ItemManager` — use the latter for any new
+  deck/pile-of-items pattern.** Already generically worded, ready to copy essentially
+  verbatim. Where: `bga-studio-reference.md`, "The `Deck` component is deprecated in favor of
+  `ItemManager` — not a drop-in swap" — covers what's different (typed item class with
+  `#[Item]`/`#[ItemField]` attributes instead of plain arrays, `Location` objects instead of
+  bare strings) and the one genuine upside (`ItemManager`'s native `ORDER` field / `getItemOnTop()`
+  removes the kind of unverified row-ordering assumption a `Deck`-based project can end up
+  carrying). For a *new* project: start on `ItemManager` directly, no reason to build on the
+  deprecated path. For migrating an *existing* `Deck` usage: scope it as deliberate, standalone
+  work, not something to fold into an unrelated change — concrete instance in `loaf-remarks.md`'s
+  "Deferred: migrate `$this->roundCards`..." entry, where L'Oaf decided the migration's benefit
+  didn't yet outweigh the first-use-of-a-new-API risk for a game that already works.
 
 ## Needs generalizing before it's portable
 
