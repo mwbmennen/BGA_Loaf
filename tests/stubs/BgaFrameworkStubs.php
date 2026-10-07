@@ -12,25 +12,111 @@ namespace {
 
 namespace Bga\GameFramework\Components\Counters {
 
+    // Confirmed via en.doc.boardgamearena.com/PlayerCounter_and_TableCounter (fetched
+    // 2026-10-07) plus a second independent search for the enum case names -- "public
+    // (default)"/"self"/"private" in the prose maps to these three cases via the matching
+    // isVisible()/isSelf()/isHidden() methods below.
+    enum CounterVisibility
+    {
+        case VISIBLE;
+        case SELF;
+        case HIDDEN;
+    }
+
     class PlayerCounter
     {
-        public function initDb(array $_playerIds, int $initialValue = 0): void {}
+        public function initDb(array $_playerIdsOrNos, int $_initialValue = 0): void {}
 
-        public function inc(int $_playerId, int $_increment): void {}
+        public function get(int $_playerIdOrNo): int { return 0; }
 
-        public function fillResult(array &$_result): void {}
+        public function set(int $_playerIdOrNo, int $_value, ?\Bga\GameFramework\NotificationMessage $_message = null): int { return 0; }
+
+        public function inc(int $_playerIdOrNo, int $_inc, ?\Bga\GameFramework\NotificationMessage $_message = null): int { return 0; }
+
+        public function getMin(): int { return 0; }
+
+        public function getMax(): int { return 0; }
+
+        public function getAll(): array { return []; }
+
+        public function setAll(int $_value, ?\Bga\GameFramework\NotificationMessage $_message = null): int { return 0; }
+
+        public function fillResult(array &$_result, ?string $_fieldName = null, ?int $_currentPlayerId = null): void {}
+
+        public function setVisibility(CounterVisibility $_visibility): void {}
+
+        public function isVisible(): bool { return true; }
+
+        public function isHidden(): bool { return false; }
+
+        public function isSelf(): bool { return false; }
+
+        public function setUseNo(bool $_useNo): void {}
+
+        public function setStrict(bool $_strict): void {}
+    }
+
+    // Confirmed same source as PlayerCounter above -- the table-wide counterpart, distinct
+    // from the unrelated `TableStats` class in Helpers below.
+    class TableCounter
+    {
+        public function initDb(int $_initialValue = 0): void {}
+
+        public function get(): int { return 0; }
+
+        public function set(int $_value, ?\Bga\GameFramework\NotificationMessage $_message = null): int { return 0; }
+
+        public function inc(int $_inc, ?\Bga\GameFramework\NotificationMessage $_message = null): int { return 0; }
+
+        public function fillResult(array &$_result, ?string $_fieldName = null): void {}
+    }
+}
+
+namespace Bga\GameFramework {
+
+    // Confirmed via Main_game_logic:_yourgamename.game.php (fetched 2026-10-07): used as a
+    // `notify->all(...)` args' `_private[$playerId]` value to substitute a per-recipient
+    // message+args in place of the public one (e.g. "You commit ${value}" for the acting
+    // player instead of the public "${player_name} has committed..." line) -- see
+    // PlayCards::actCommitCard. `(string $message, array $args = [])`, args referenced in the
+    // message via `${_private.fieldName}` unless `_merge_private => true` is also set
+    // alongside `_private` in the outer args array, which merges the fields directly into the
+    // targeted player's own `args` instead.
+    class NotificationMessage
+    {
+        public function __construct(
+            public string $message,
+            public array $args = [],
+        ) {
+        }
     }
 }
 
 namespace Bga\GameFramework\Helpers {
 
+    use Bga\GameFramework\Components\Counters\CounterVisibility;
     use Bga\GameFramework\Components\Counters\PlayerCounter;
+    use Bga\GameFramework\Components\Counters\TableCounter;
 
     class CounterFactory
     {
-        public function createPlayerCounter(string $_name): PlayerCounter
-        {
+        // Confirmed via en.doc.boardgamearena.com/PlayerCounter_and_TableCounter (fetched
+        // 2026-10-07) -- the previous stub only had `string $_name`, missing every optional
+        // param.
+        public function createPlayerCounter(
+            string $_name,
+            ?int $_min = 0,
+            ?int $_max = null,
+            CounterVisibility $_visibility = CounterVisibility::VISIBLE,
+            bool $_useNo = false,
+            ?bool $_strict = null,
+        ): PlayerCounter {
             return new PlayerCounter();
+        }
+
+        public function createTableCounter(string $_name, ?int $_min = 0, ?int $_max = null): TableCounter
+        {
+            return new TableCounter();
         }
     }
 
@@ -58,6 +144,16 @@ namespace Bga\GameFramework\Helpers {
         // this was unverified until then. Used by ResolveAdvancedEffect::onEnteringState() to
         // activate exactly a target subset in one call.
         public function setPlayersMultiactive(array $_playerIds, string $_nextStateClass = '', bool $_activeOnly = false): void {}
+
+        // Confirmed via State_classes:_State_directory (fetched 2026-10-07) -- the private
+        // sub-state API that pairs with GameState's `initialPrivate` constructor param. No
+        // state in this project uses `initialPrivate` yet, so these were previously missing
+        // entirely with nothing to catch it.
+        public function initializePrivateStateForAllActivePlayers(): void {}
+
+        public function nextPrivateStateForAllActivePlayers(string $_transition): void {}
+
+        public function nextPrivateState(int $_playerId, string $_transition): void {}
     }
 
     // Unverified locally, same caveat as setPlayerNonMultiactive above. Sourced from BGA's
@@ -65,7 +161,10 @@ namespace Bga\GameFramework\Helpers {
     // `->set(string $name, $value)`, `->inc(string $name, int $inc): int`.
     class Globals
     {
-        public function get(string $_name, mixed $_defaultValue = null): mixed { return $_defaultValue; }
+        // Confirmed via Main_game_logic:_yourgamename.game.php (fetched 2026-10-07) -- the
+        // previous stub was missing the third `$class` param (returns a typed object instead
+        // of stdClass when given a class name).
+        public function get(string $_name, mixed $_defaultValue = null, ?string $_class = null): mixed { return $_defaultValue; }
         public function set(string $_name, mixed $_value): void {}
         public function inc(string $_name, int $_inc): int { return 0; }
         public function has(string $_name): bool { return false; }
@@ -122,6 +221,16 @@ namespace Bga\GameFramework\Helpers {
     class TableOptions
     {
         public function get(int $_optionId): int|string { return 0; }
+
+        // Confirmed via Main_game_logic:_yourgamename.game.php (fetched 2026-10-07) -- the
+        // previous stub only had get().
+        public function getGameVersion(): int { return 0; }
+
+        public function isTurnBased(): bool { return false; }
+
+        public function isRealTime(): bool { return false; }
+
+        public function getGameLanguage(): string { return 'en'; }
     }
 
     class DebugHelper
@@ -214,13 +323,16 @@ namespace Bga\GameFramework {
     use Bga\GameFramework\Helpers\DeckFactory;
     use Bga\GameFramework\Helpers\Gamestate;
 
+    // `MANAGER` removed 2026-10-07: State_classes:_State_directory enumerates exactly these
+    // four cases for the typed GameState enum. "manager" is a real state *type* string, but
+    // only in the OLD states.inc.php array system -- conflating the two was an unverified
+    // guess in the original stub, not a confirmed 5th case of this enum.
     enum StateType: string
     {
         case ACTIVE_PLAYER = 'activeplayer';
         case MULTIPLE_ACTIVE_PLAYER = 'multipleactiveplayer';
         case PRIVATE = 'private';
         case GAME = 'game';
-        case MANAGER = 'manager';
     }
 
     abstract class Table
@@ -358,6 +470,10 @@ namespace Bga\GameFramework {
 
     class UserException extends \RuntimeException {}
     class SystemException extends \RuntimeException {}
+
+    // Confirmed via BGA_Studio_Migration_Guide (fetched 2026-10-07): the old framework's
+    // feException maps to one of three classes here, not two -- this one was missing.
+    class VisibleSystemException extends \RuntimeException {}
 }
 
 namespace Bga\GameFramework\States {
@@ -376,7 +492,11 @@ namespace Bga\GameFramework\States {
             mixed $_game,
             public int $id,
             public StateType $type,
+            public ?string $description = null,
+            public ?string $descriptionMyTurn = null,
+            public array $transitions = [],
             public bool $updateGameProgression = false,
+            public int|string|null $initialPrivate = null,
         ) {
             $this->bga         = new \Bga\GameFramework\Helpers\Bga();
             $this->playerStats = new \Bga\GameFramework\Helpers\PlayerStats();
@@ -405,11 +525,29 @@ namespace Bga\GameFramework\GameResult {
         public static function fromPlayersDb(array $_playersDb): array { return []; }
     }
 
+    // Confirmed via Main_game_logic:_yourgamename.game.php (fetched 2026-10-07) -- the
+    // previous stub's individualRanking() was missing both the no-args overload (use
+    // already-stored scores) and `reverseScoreAux`; coop()/solo() were missing entirely.
+    // Nothing in this project calls any of these yet (EndGame.php doesn't return a
+    // GameResult at all currently -- a separate, unrelated gap, not fixed here).
     class GameResult
     {
-        public function __construct(public readonly array $_players = []) {}
+        public function __construct(public readonly array $players = []) {}
 
-        public static function individualRanking(array $_players, bool $_reverseScore = false): static
+        public static function individualRanking(
+            ?array $_players = null,
+            bool $_reverseScore = false,
+            bool $_reverseScoreAux = false,
+        ): static {
+            return new static($_players ?? []);
+        }
+
+        public static function coop(int $_score, bool $_win): static
+        {
+            return new static();
+        }
+
+        public static function solo(int $_score, bool $_win): static
         {
             return new static();
         }

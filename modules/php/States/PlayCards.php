@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Bga\Games\loaf\States;
 
+use Bga\GameFramework\NotificationMessage;
 use Bga\GameFramework\StateType;
 use Bga\GameFramework\States\GameState;
 use Bga\GameFramework\States\PossibleAction;
@@ -95,7 +96,7 @@ class PlayCards extends GameState
     #[PossibleAction]
     public function actCommitCard(int $value, int $currentPlayerId) {
         if (!in_array($value, $this->getHandValues($currentPlayerId), true)) {
-            throw new UserException('You do not have that work card in hand');
+            throw new UserException(clienttranslate('You do not have that work card in hand'));
         }
 
         // New under the commit/cancel redesign: a committed player is no longer deactivated
@@ -105,20 +106,42 @@ class PlayCards extends GameState
         if ($this->game->getUniqueValueFromDb(
             "SELECT `value` FROM `work_card` WHERE `player_id` = $currentPlayerId AND `location` = 'played'"
         ) !== null) {
-            throw new UserException('You have already committed a work card this round');
+            throw new UserException(clienttranslate('You have already committed a work card this round'));
         }
 
         $this->game->DbQuery(
             "UPDATE `work_card` SET `location` = 'played' WHERE `player_id` = $currentPlayerId AND `value` = $value"
         );
 
-        // No card value leak -- other players only learn someone has committed, not what.
+        // No card value leak to OTHER players -- but the acting player's own client gets a
+        // substituted private message via `_private`/`_merge_private` (one notification, one
+        // log line per recipient -- not a second line stacked under the public one; the
+        // framework replaces the message+args entirely for whichever player id has a
+        // `_private` entry, and guarantees no other player's client ever receives that entry
+        // at all). Needed for PlayCards::zombie()'s auto-commit, which never runs this
+        // player's own onCommit() click handler client-side, so Game.js's pendingCommitCard
+        // (normally set at click-time) would otherwise stay unset and the card would silently
+        // never leave their hand display (confirmed live: a zombied player's hand kept
+        // showing the auto-played card). `_merge_private` puts `value` directly on this
+        // player's own `args` (vs. nested under `args._private`) so notif_playerCommitted can
+        // read `args.value` directly. Unverified locally (first use of `_private`/
+        // `NotificationMessage`, no vendored framework) -- Game.js only uses this as a
+        // fallback when pendingCommitCard isn't already set from a real click, so a live
+        // surprise here can't regress the normal human-commit path, only leave the zombie case
+        // exactly as broken as before.
         $this->game->bga->notify->all(
             'playerCommitted',
             clienttranslate('${player_name} has committed their work card'),
             [
                 'player_id' => $currentPlayerId,
                 'player_name' => $this->game->getPlayerNameById($currentPlayerId),
+                '_private' => [
+                    $currentPlayerId => new NotificationMessage(
+                        clienttranslate('You commit ${value}'),
+                        ['value' => $value]
+                    ),
+                ],
+                '_merge_private' => true,
             ]
         );
 
@@ -156,21 +179,21 @@ class PlayCards extends GameState
     #[PossibleAction]
     public function actCancelCommit(int $currentPlayerId) {
         if (!$this->game->cancelCommitAllowed()) {
-            throw new UserException('Cancelling a committed card is not allowed in this game');
+            throw new UserException(clienttranslate('Cancelling a committed card is not allowed in this game'));
         }
 
         $playedValue = $this->game->getUniqueValueFromDb(
             "SELECT `value` FROM `work_card` WHERE `player_id` = $currentPlayerId AND `location` = 'played'"
         );
         if ($playedValue === null) {
-            throw new UserException('You have not committed a work card this round');
+            throw new UserException(clienttranslate('You have not committed a work card this round'));
         }
         // Defense-in-depth: by construction unreachable once allPlayersCommitted() is true
         // (this state has already transitioned away by the same actCommitCard() call that made
         // it true, confirmed live -- see actCommitCard's own comment) -- kept explicit rather
         // than assumed anyway, since a defensive check here costs nothing.
         if ($this->allPlayersCommitted()) {
-            throw new UserException('Every player has already committed -- you can no longer cancel');
+            throw new UserException(clienttranslate('Every player has already committed -- you can no longer cancel'));
         }
 
         $this->game->DbQuery(
@@ -189,19 +212,40 @@ class PlayCards extends GameState
     }
 
     /**
-     * Idempotent: under the old design a player was deactivated the instant they committed, so
-     * the framework had no reason to call zombie() for them again. Under the new design a
-     * committed player stays active for the rest of this state (so they can still cancel),
-     * which makes a second zombie() call for an already-committed player unverified -- this
-     * guard makes that harmless either way, and a zombie must never cancel.
+     * Confirmed live (2026-09-25): a zombie player MUST end up deactivated as a direct result
+     * of this call, regardless of whether everyone else has committed yet -- leaving them
+     * active (the normal outcome of actCommitCard for any *real* player, so a connected player
+     * can still cancel) threw `Bga\Exceptions\Framework\ZombieStateException`, "Can't manage
+     * zombie player in this game state (20)", the one time this zombied player wasn't also the
+     * last one needed to complete the round. BGA's own zombie dispatch (`checkZombieTurn()` /
+     * `checkReturnState()`, per the stack trace) requires the specific player it just zombied
+     * to no longer be counted active afterward -- it can't tell "this player is fine to stay
+     * active and idle" apart from "zombie handling failed to make progress for them". A zombie
+     * player also has no further use for the ability to cancel anyway (nobody's there to press
+     * the button), so losing it here is the right tradeoff, not a compromise.
+     *
+     * Handles both cases uniformly: not yet committed (auto-commits via actCommitCard first)
+     * and already committed (an earlier real commit, now zombied while just waiting -- the same
+     * failure mode, confirmed live only for the not-yet-committed case but the mechanism applies
+     * equally to this one). `allPlayersCommitted()` is checked *after* the conditional commit,
+     * not before -- if this zombie's own commit happened to be the last one needed,
+     * actCommitCard's own batch-completion branch already deactivated every player, including
+     * this one, moments ago; deactivating them again here is skipped rather than assumed
+     * harmless, since setPlayerNonMultiactive's behavior on an already-inactive player isn't
+     * verified.
      */
     function zombie(int $playerId) {
-        if ($this->game->getUniqueValueFromDb(
+        $hasPlayedCard = $this->game->getUniqueValueFromDb(
             "SELECT `value` FROM `work_card` WHERE `player_id` = $playerId AND `location` = 'played'"
-        ) !== null) {
-            return;
+        ) !== null;
+
+        if (!$hasPlayedCard) {
+            $zombieChoice = $this->getRandomZombieChoice($this->getHandValues($playerId));
+            $this->actCommitCard($zombieChoice, $playerId);
         }
-        $zombieChoice = $this->getRandomZombieChoice($this->getHandValues($playerId));
-        return $this->actCommitCard($zombieChoice, $playerId);
+
+        if (!$this->allPlayersCommitted()) {
+            $this->game->gamestate->setPlayerNonMultiactive($playerId, ResolveRound::class);
+        }
     }
 }

@@ -1,0 +1,283 @@
+L'OAF — ALL USER-FACING TEXT (grouped by type)
+Generated 2026-10-07 by scanning modules/php, modules/js, and the top-level
+*.jsonc config files. Source file:line is given for each entry so it can be
+cross-checked against the live code later; variables are left as ${...}.
+Re-checked 2026-10-07 (same day, after the zombie-commit fix) -- line numbers
+corrected for PlayCards.php/Game.js shifts from that fix, one new string
+added (PlayCards.php's private "You commit ${value}"), and one pre-existing
+off-by-few line number fixed (Game.php's "Order: worth..." entry, unrelated
+to this session's edits).
+
+================================================================================
+1. GAME LOG MESSAGES (clienttranslate(...) passed to notifyAllPlayers/notifyPlayer)
+   These appear in the game log / notification feed during play.
+================================================================================
+
+modules/php/States/PlayCards.php:134
+  "${player_name} has committed their work card"
+  (public text -- every player except the committer sees this)
+
+modules/php/States/PlayCards.php:140
+  "You commit ${value}"
+  (private substitution, acting player only -- via notify->all()'s _private/
+  _merge_private mechanism, not a separate notification. Replaces the public
+  line above for this one recipient; see bga-studio-reference.md's
+  "_private/_merge_private on notify->all()" entry)
+
+modules/php/States/PlayCards.php:206
+  "${player_name} cancelled their committed work card"
+
+modules/php/States/ResolveRound.php:53
+  "${player_name} played ${value}"
+
+modules/php/States/ResolveRound.php:95
+  "Total ${total} (target ${target}): the bosses are happy!"
+
+modules/php/States/ResolveRound.php:96
+  "Total ${total} (target ${target}): the bosses are disappointed."
+
+modules/php/States/ResolveRound.php:128
+  "${player_name} moves ${delta} on the reputation track"
+
+modules/php/States/ResolveRound.php:145
+  "Review effect: ${target}, ${amount}"
+
+modules/php/States/ResolveRound.php:295
+  "${player_name} moves ${delta} on the reputation track from the review effect"
+
+modules/php/States/ResolveRound.php:351
+  "${player_name} recycles their lowest discard-pile card back into hand"
+
+modules/php/States/ResolveRound.php:369
+  "You recycle ${value} back into hand"
+
+modules/php/States/ResolveAdvancedEffect.php:69
+  "${player_names} must each discard a card of their choice from their hand"
+
+modules/php/States/ResolveAdvancedEffect.php:70
+  "${player_names} must take their played card back and discard another"
+
+modules/php/States/ResolveAdvancedEffect.php:134
+  "${player_name} discards ${value} from hand"
+
+modules/php/States/ResolveAdvancedEffect.php:218
+  "${player_name} takes their played card back and discards ${value}"
+
+modules/php/States/RoundStart.php:54
+  "Review card revealed: on success, ${successTarget}, ${successAmount}; on fail, ${failTarget}, ${failAmount}"
+
+modules/php/States/RoundStart.php:75
+  "Round ${round}: bosses expect a total of at least ${target} work per player"
+
+modules/php/States/EndGame.php:95
+  "Every player was fired -- there is no winner."
+
+modules/php/States/EndGame.php:96-99
+  (two variants, boss-ending-dependent -- see file for exact wording)
+
+modules/php/States/EndGame.php:116
+  "${player_name} receives ${amount} at game end (${target}, doubled)"
+
+modules/php/States/EndGame.php:117
+  "${player_name} receives ${amount} at game end (${target})"
+
+modules/php/States/EndGame.php:150
+  "${player_name} is fired and excluded from scoring"
+
+modules/php/States/EndGame.php:161
+  "${player_name}: hand [${hand}] = ${handTotal}, FIRED (reputation ${reputation}), score ${score}"
+
+modules/php/States/EndGame.php:168
+  "${player_name}: hand [${hand}] = ${handTotal}, reputation bonus +${bonus} (reputation ${reputation}), end-game bonus ${endGameBonus}, score ${score}, tie-break value ${aux}"
+
+modules/php/States/EndGame.php:204
+  "${names} are tied on score and reputation -- they share the victory."
+
+modules/php/States/EndGame.php:214
+  "${winnerNames} wins the tie over ${loserNames} on lower reputation."
+
+modules/php/States/EndGame.php:215
+  "${winnerNames} win the tie over ${loserNames} on lower reputation."
+
+================================================================================
+2. CARD / EFFECT DESCRIPTION FRAGMENTS (clienttranslate(...) in Core/ReviewEffectDescription.php)
+   These are composed into log messages and into the tooltip text in
+   section 3 below -- not shown verbatim on their own.
+================================================================================
+
+modules/php/Core/ReviewEffectDescription.php:28  "every player"
+modules/php/Core/ReviewEffectDescription.php:32  "the lowest-reputation player(s)"
+modules/php/Core/ReviewEffectDescription.php:33  "the highest-reputation player(s)"
+modules/php/Core/ReviewEffectDescription.php:34  "every player with positive reputation"
+modules/php/Core/ReviewEffectDescription.php:35  "every player with negative reputation"
+modules/php/Core/ReviewEffectDescription.php:36  "every player at zero reputation"
+modules/php/Core/ReviewEffectDescription.php:37  "every player"
+modules/php/Core/ReviewEffectDescription.php:38  "no one"
+modules/php/Core/ReviewEffectDescription.php:63  "${amount} reputation"
+modules/php/Core/ReviewEffectDescription.php:65  "recycling their lowest discard-pile card back to hand"
+modules/php/Core/ReviewEffectDescription.php:66  "discarding a card of their choice from hand"
+modules/php/Core/ReviewEffectDescription.php:70  "taking their played card back, then discarding one at most ${amount} lower"
+modules/php/Core/ReviewEffectDescription.php:75  "taking their played card back, then discarding one at least ${amount} higher"
+modules/php/Core/ReviewEffectDescription.php:80  "${amount} bonus at game end"
+modules/php/Core/ReviewEffectDescription.php:88  "${amount} penalty at game end"
+modules/php/Core/ReviewEffectDescription.php:90  "doubling every end-game bonus"
+modules/php/Core/ReviewEffectDescription.php:91  "doubling every end-game penalty"
+modules/php/Core/ReviewEffectDescription.php:92  "having no effect"
+modules/php/Core/ReviewEffectDescription.php:98  "triggering an unrecognized effect"
+modules/php/Core/ReviewEffectDescription.php:108 "Happy" / "Angry"  (boss pile name)
+modules/php/Core/ReviewEffectDescription.php:112 "${description} -- counts as 2 cards toward the ${pile} Boss pile, not 1"
+
+================================================================================
+3. CARD TOOLTIP TEXT (Game.php, built server-side, shown in Game.js hover-zoom)
+================================================================================
+
+modules/php/Game.php:274  "Order: worth ${amount} work per player"
+modules/php/Game.php:279  "On success: ${target}, ${amount}"
+modules/php/Game.php:284  "On fail: ${target}, ${amount}"
+
+================================================================================
+4. UI / STATUS BAR TEXT (modules/js/Game.js — _(...) calls)
+   Title bar text, action buttons, confirm dialogs, panel labels.
+================================================================================
+
+-- Status bar titles --
+modules/js/Game.js:166  "A new round is starting..."
+modules/js/Game.js:193  "Bakers are committing a work card"
+modules/js/Game.js:273  "${you} must commit a work card"
+modules/js/Game.js:367  "Revealing work cards..."
+modules/js/Game.js:383  "An advanced card effect is resolving..."
+modules/js/Game.js:486  "The game is over"
+
+-- Status bar descriptions (waiting states) --
+modules/js/Game.js:243  "Waiting for other players to commit a work card"
+modules/js/Game.js:281  "Everyone has committed -- resolving..."
+modules/js/Game.js:283  "Waiting for other players -- you can still cancel your commitment"
+modules/js/Game.js:284  "Waiting for other players to commit a work card"
+modules/js/Game.js:399  "${you} must take your played card back and discard another"
+modules/js/Game.js:400  "${you} must discard a card of your choice from hand"
+modules/js/Game.js:405  "Waiting for other players to resolve the advanced effect"
+
+-- Action buttons --
+modules/js/Game.js:290  "Cancel"  (button label)
+modules/js/Game.js:292  "Take your committed card back to hand?"  (confirm dialog)
+modules/js/Game.js:331  "Commit ${value}"  (button label, ${value} substituted with card value)
+
+-- Panel / overlay labels --
+modules/js/Game.js:565  "Next order card"
+modules/js/Game.js:569  "Current review card"
+modules/js/Game.js:575  "Angry boss"
+modules/js/Game.js:582  "Happy boss"
+modules/js/Game.js:947  "Reputation"
+modules/js/Game.js:965  "Hand" / "card(s)"
+modules/js/Game.js:1462 "FIRED"
+
+================================================================================
+5. TABLE OPTIONS (gameoptions.jsonc — shown on the table-creation setup screen)
+================================================================================
+
+Option 100: "Advanced round cards"
+  Value 0: "Off (basic cards only)"
+  Value 1: "On"
+    description: "Adds the 12 advanced (croissant) round cards, with more
+                  elaborate effects. The rulebook recommends leaving this off
+                  for your first game."
+    tmdisplay: "Advanced cards"
+
+Option 101: "Cancel a committed card"
+  Value 0: "Off (no take-backs)"
+    description: "Clicking a hand card plays it immediately -- once
+                  committed, it's locked in for the round."
+  Value 1: "On"
+    description: "Clicking a card selects it; press Commit to actually play
+                  it. Once committed, you can still Cancel and take it back
+                  to hand until every player has committed."
+
+================================================================================
+6. PLAYER PREFERENCES (gamepreferences.jsonc)
+================================================================================
+
+None defined yet -- file only contains a commented-out example.
+
+================================================================================
+7. STATISTICS LABELS (stats.jsonc — shown in the post-game "Tables/Stats" tab)
+================================================================================
+
+Table stats:
+  "Rounds played"
+  "Boss that ended the game (0 = Happy, 1 = Angry)"
+
+Player stats:
+  "Final point value"
+  "Final hand value"
+  "Final reputation"
+  "Reputation bonus (from reputation board tier)"
+  "End-game bonus/malus"
+  "Fired"
+  "Won a tie-break"
+
+================================================================================
+8. GAME METADATA (gameinfos.jsonc — shown on BGA's game page / lobby, not translated via clienttranslate)
+================================================================================
+
+  game_name: "L'oaf"
+  publisher: "Wulfhorn Games"
+  tie_breaker_description: "" (empty -- not currently used)
+
+================================================================================
+9. EXCEPTION / ERROR TEXT (clienttranslate(...) passed to UserException)
+   Shown to the acting player as a popup when they attempt an illegal move
+   (e.g. clicking a card they don't hold, double-committing). Corrected
+   2026-10-07: an earlier pass here grepped for "BgaUserException" -- the
+   OLD framework's global-namespace exception class -- and found nothing,
+   wrongly concluding there was no error text. This project's typed
+   framework throws `Bga\GameFramework\UserException` instead, and these 9
+   messages existed all along; they just weren't wrapped in
+   clienttranslate() until this same pass fixed that.
+================================================================================
+
+modules/php/States/PlayCards.php:99
+  "You do not have that work card in hand"
+
+modules/php/States/PlayCards.php:109
+  "You have already committed a work card this round"
+
+modules/php/States/PlayCards.php:182
+  "Cancelling a committed card is not allowed in this game"
+
+modules/php/States/PlayCards.php:189
+  "You have not committed a work card this round"
+
+modules/php/States/PlayCards.php:196
+  "Every player has already committed -- you can no longer cancel"
+
+modules/php/States/ResolveAdvancedEffect.php:110
+  "Not a discard-choice effect"
+
+modules/php/States/ResolveAdvancedEffect.php:113
+  "You do not have that work card in hand"
+
+modules/php/States/ResolveAdvancedEffect.php:152
+  "Not a swap effect"
+
+modules/php/States/ResolveAdvancedEffect.php:174
+  "That card is not an eligible discard for this effect"
+
+================================================================================
+NOTES
+================================================================================
+- No states.inc.php / descriptionmyturn strings exist yet in this repo --
+  the BGA state-machine description text (shown in the status bar by the
+  framework itself, independent of the custom setTitle() calls above) has
+  not been authored. Section 4's setTitle() calls currently substitute for
+  that.
+- Section 2's fragments are never shown to players standalone; they're
+  always substituted into a Section 1 or Section 3 template string.
+- The Core/*.php `InvalidArgumentException`s (ScoringCalculator,
+  RoundResolver, TargetGroupResolver, SwapEffectResolver,
+  ReviewEffectResolver) are deliberately NOT catalogued here -- they're
+  pure-logic precondition violations in DB-free Core classes, not meant to
+  ever reach a real player under correct UI gating. Where one legitimately
+  can (SwapEffectResolver's invalid-choice case), ResolveAdvancedEffect.php
+  already catches it and re-throws as a translated UserException (see
+  section 9) at the BGA-adapter boundary -- that's the pattern to follow
+  for any new Core exception that might someday surface to a player.

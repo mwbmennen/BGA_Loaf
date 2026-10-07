@@ -1165,39 +1165,53 @@ export class Game {
   }
 
   // Matches Game.php's `playerCommitted` notification (PlayCards::actCommitCard). No card
-  // value is included -- it stays hidden until cardPlayedRevealed. Committing removes one card
-  // from hand -- update the live count here rather than only on the next page load
-  // (previously this handler did nothing at all, so "Hand: N card(s)" silently went stale
-  // the moment the game started -- confirmed live).
+  // value is included in the public args -- it stays hidden until cardPlayedRevealed. The
+  // acting player's own `args` additionally carries `value` via the server's `_private`/
+  // `_merge_private` override (framework-guaranteed never sent to any other player's client) --
+  // needed for PlayCards::zombie()'s auto-commit, which never runs this player's own
+  // onCommit() click handler, so pendingCommitCard (normally set at click-time) would
+  // otherwise stay unset and the card would silently never leave their hand display
+  // (confirmed live: a zombied player's hand kept showing the auto-played card). Committing
+  // removes one card from hand -- update the live count here rather than only on the next
+  // page load (previously this handler did nothing at all, so "Hand: N card(s)" silently went
+  // stale the moment the game started -- confirmed live).
   //
   // Also drives the two visible parts of §8's commit step: removes the real card from this
-  // player's own HandStock (only possible for the acting player -- see onCardClick's own
-  // comment on why the value can't come from this notification), and adds a face-down
-  // placeholder to their committed slot, identical in shape to what setupHandAndCommitStocks
-  // reconstructs from gamedatas.committedPlayerIds on a fresh page load -- same id
-  // (`committed_${playerId}`) either way, so cardPlayedRevealed's updateCardInformations()
-  // finds whichever one is actually present without needing to know which case it was.
+  // player's own HandStock, and adds a face-down placeholder to their committed slot,
+  // identical in shape to what setupHandAndCommitStocks reconstructs from
+  // gamedatas.committedPlayerIds on a fresh page load -- same id (`committed_${playerId}`)
+  // either way, so cardPlayedRevealed's updateCardInformations() finds whichever one is
+  // actually present without needing to know which case it was.
   async notif_playerCommitted(args) {
     this.adjustHandCount(args.player_id, -1);
 
-    if (args.player_id === this.bga.players.getCurrentPlayerId() && this.pendingCommitCard) {
-      // Removing a card reflows the hand's fan layout -- whichever neighboring card slides
-      // into the removed card's old screen position ends up under the still-stationary mouse
-      // cursor, firing a genuine mouseenter on it (confirmed live: a brief, spurious hover-
-      // preview border on the card that had been sitting to the right). Suppressing new
-      // hover-previews for a short window around the removal covers that reflow settling;
-      // 500ms matches this library's own `transition: transform .5s` on hand-stock cards
-      // (bga-cards.esm.js), so it lasts at least as long as the reflow's own animation. No
-      // explicit "un-hover" needed before removing -- the committed card's own
-      // `loaf_hand-card-hover` class (setupHandCardFrontDiv) just leaves with the element when
-      // it's removed, which is the whole point (see that method's own comment): it animates
-      // away directly from its lifted/hovered position instead of visibly settling down first.
-      this.suppressHandHoverPreview = true;
-      await this.handStock.removeCard(this.pendingCommitCard);
-      this.pendingCommitCard = null;
-      setTimeout(() => {
-        this.suppressHandHoverPreview = false;
-      }, 500);
+    if (args.player_id === this.bga.players.getCurrentPlayerId()) {
+      // Prefer the click-time card (the normal, already-confirmed-live path) and only fall
+      // back to looking it up by args.value -- the zombie case, and also an untested
+      // first-use of the server's `_merge_private` mechanism (no vendored framework to verify
+      // against locally) -- when nothing local set it. A live surprise in `_merge_private`
+      // therefore can't regress the normal human-commit path, only leave the zombie case
+      // exactly as broken as before.
+      const cardToRemove = this.pendingCommitCard ?? this.handStock.getCards().find((card) => card.value === args.value);
+      if (cardToRemove) {
+        // Removing a card reflows the hand's fan layout -- whichever neighboring card slides
+        // into the removed card's old screen position ends up under the still-stationary mouse
+        // cursor, firing a genuine mouseenter on it (confirmed live: a brief, spurious hover-
+        // preview border on the card that had been sitting to the right). Suppressing new
+        // hover-previews for a short window around the removal covers that reflow settling;
+        // 500ms matches this library's own `transition: transform .5s` on hand-stock cards
+        // (bga-cards.esm.js), so it lasts at least as long as the reflow's own animation. No
+        // explicit "un-hover" needed before removing -- the committed card's own
+        // `loaf_hand-card-hover` class (setupHandCardFrontDiv) just leaves with the element when
+        // it's removed, which is the whole point (see that method's own comment): it animates
+        // away directly from its lifted/hovered position instead of visibly settling down first.
+        this.suppressHandHoverPreview = true;
+        await this.handStock.removeCard(cardToRemove);
+        this.pendingCommitCard = null;
+        setTimeout(() => {
+          this.suppressHandHoverPreview = false;
+        }, 500);
+      }
     }
 
     await this.committedCardStocks[args.player_id].addCard({

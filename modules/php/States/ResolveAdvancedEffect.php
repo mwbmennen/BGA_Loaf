@@ -107,10 +107,10 @@ class ResolveAdvancedEffect extends GameState
     public function actDiscardChoice(int $value, int $currentPlayerId) {
         $reviewEffect = $this->getReviewEffect();
         if ($reviewEffect['effect'] !== 'discard_choice') {
-            throw new UserException('Not a discard-choice effect');
+            throw new UserException(clienttranslate('Not a discard-choice effect'));
         }
         if (!in_array($value, $this->handValues($currentPlayerId), true)) {
-            throw new UserException('You do not have that work card in hand');
+            throw new UserException(clienttranslate('You do not have that work card in hand'));
         }
 
         $this->game->DbQuery(
@@ -149,7 +149,7 @@ class ResolveAdvancedEffect extends GameState
     public function actSwapDiscard(int $value, int $currentPlayerId) {
         $reviewEffect = $this->getReviewEffect();
         if (!in_array($reviewEffect['effect'], self::SWAP_EFFECTS, true)) {
-            throw new UserException('Not a swap effect');
+            throw new UserException(clienttranslate('Not a swap effect'));
         }
 
         $playedValue = (int) $this->game->getUniqueValueFromDb(
@@ -171,7 +171,7 @@ class ResolveAdvancedEffect extends GameState
                 $value,
             );
         } catch (\InvalidArgumentException $e) {
-            throw new UserException('That card is not an eligible discard for this effect');
+            throw new UserException(clienttranslate('That card is not an eligible discard for this effect'));
         }
 
         // Deterministic fallback ("if they can't, they discard the played card instead") --

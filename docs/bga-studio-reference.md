@@ -1609,6 +1609,57 @@ In the new style, every state method that causes a transition simply returns the
 
 ---
 
+## `GameState`'s constructor has `description`/`descriptionMyTurn` — confirmed against the official docs, not just assumed
+
+Confirmed via `https://en.doc.boardgamearena.com/State_classes:_State_directory` (fetched
+2026-10-07, since no BGA framework is vendored locally to read directly — see "Framework API
+confidence note" in `bga-template-upstream-notes.md`). The new-style `GameState` base class
+constructor's real signature is:
+
+```php
+parent::__construct($game,
+    id: 2,
+    type: StateType::ACTIVE_PLAYER,
+
+    // optional
+    description: clienttranslate('${actplayer} must play a card or pass'),
+    descriptionMyTurn: clienttranslate('${you} must play a card or pass'),
+    transitions: [],
+    updateGameProgression: false,
+    initialPrivate: null,
+);
+```
+
+Only `game`, `id`, and `type` are mandatory; `description`/`descriptionMyTurn` (plus
+`transitions`, `initialPrivate`) are optional, which is why a state class that omits them still
+compiles and runs fine — nothing forces you to use the framework's native status-bar text
+mechanism instead of hand-rolling the equivalent with `statusBar.setTitle(...)` calls in
+`Game.js`. If a project's hand-written local test stub for `GameState` (used so PHPUnit/PHPStan
+can type-check without a vendored framework) only mirrors the parameters that project happened
+to use, re-verify it against the docs above before trusting it as a signature reference —
+it can silently drift from the real class. See `loaf-remarks.md` for a concrete instance of
+this drift.
+
+---
+
+## Searching for user-facing error text? Grep the NEW exception class name, not the old one
+
+The old framework's catchable user-error exception is the global `BgaUserException`. The new
+typed framework's equivalent — confirmed via `BGA_Studio_Migration_Guide` (fetched 2026-10-07),
+which gives `throw new UserException(clienttranslate('You must choose 3 cards'));` as the
+canonical example — is `Bga\GameFramework\UserException` (plus `SystemException` and
+`VisibleSystemException` for non-user-facing failures). A grep for `BgaUserException` on a
+project using the typed framework will cleanly find zero matches and *look like* confirmation
+that no user-facing error text exists, when the real exception class is just named differently.
+Concrete incident: exactly this happened while cataloguing all of L'Oaf's user-facing strings —
+the catalogue initially (and wrongly) reported "no error text to catalogue" on the strength of
+that empty grep, until grepping for `UserException` instead turned up 9 real, unwrapped error
+messages across two state classes (see `loaf-remarks.md`'s matching entry). Lesson: when a grep
+for a framework symbol comes back empty, treat that as "wrong name" until the symbol's current
+name is confirmed against the docs, not as "feature absent."
+
+---
+
 ## Wrap every user-facing string in BGA's translation functions, from day one
 
 BGA Studio's translator platform can only pick up strings that are wrapped in its translation
@@ -1785,3 +1836,84 @@ $this->bga->notify->player($playerId, 'cardRecycledValue', clienttranslate('You 
 
 The client then handles `notif_cardRecycledValue` with no `args.player_id` check needed — the
 framework itself already guarantees it only ever arrives for the one player it was sent to.
+
+**Caveat, learned the hard way**: this two-call pattern is right when the targeted player
+needs a genuinely *additional* notification alongside the public one (as in the example above
+— a separate "something happened" line plus a separate private reveal). It's the *wrong* tool
+when the goal is "this one player should see different text *instead of* the public line, for
+the same event" — two calls there means two log lines for that player, a visible redundancy
+(caught live by a user report: `loaf-remarks.md`'s "Fixed: a zombie's auto-committed card
+never left their own hand display" entry, "First fix attempt" vs. "Corrected fix"). For that
+case, use the `_private`/`_merge_private` mechanism on a single `notify->all()` call instead —
+see the next section.
+
+---
+
+## `_private`/`_merge_private` on `notify->all()` — one message, substituted per recipient, not a second notification
+
+When one specific player needs *different* text for the same event (not an *additional*
+notification — see this entry's own caveat just above), `notify->all()`'s args array accepts a
+reserved `'_private'` key: a map of `$playerId => new NotificationMessage($message, $args)`.
+For whichever player id has an entry there, the framework substitutes that player's own
+message+args in place of the public one — one log line for that player, not two. Add
+`'_merge_private' => true` alongside `_private` (same args array, not inside the
+`NotificationMessage`) to also merge those private args directly into that player's own
+`args` object (instead of nesting them under `args._private`), so a client-side `notif_*`
+handler can read them like any other field:
+
+```php
+$this->bga->notify->all(
+    'playerCommitted',
+    clienttranslate('${player_name} has committed their work card'),
+    [
+        'player_id' => $currentPlayerId,
+        'player_name' => $this->game->getPlayerNameById($currentPlayerId),
+        '_private' => [
+            $currentPlayerId => new NotificationMessage(
+                clienttranslate('You commit ${value}'),
+                ['value' => $value]
+            ),
+        ],
+        '_merge_private' => true,
+    ]
+);
+```
+
+Every other player's client sees the public "${player_name} has committed..." line (no
+`value`, same as always). The acting player's client sees *only* "You commit ${value}" in its
+place, and its own `args.value` is directly readable in `notif_playerCommitted(args)`.
+Framework-guaranteed: no other player's client ever receives the private fields at all, not
+even hidden in `args` (confirmed via `Main_game_logic:_yourgamename.game.php`, fetched
+2026-10-07 — "NO private data must be sent with this method, as a cheater could see it even if
+it is not used explicitly by the game interface logic," referring to `notify->all()`'s normal
+args, which is exactly what `_private` exists to avoid). Concrete instance:
+`PlayCards::actCommitCard` (see `loaf-remarks.md`'s matching entry).
+
+---
+
+## The `Deck` component is deprecated in favor of `ItemManager` — not a drop-in swap
+
+`Bga\GameFramework\Components\Deck` (created via `$this->bga->deckFactory->createDeck(...)`) is
+marked deprecated on BGA's own docs in favor of a newer `ItemManager` component
+(`$this->bga->itemManagerFactory->createItemManager(...)`), confirmed via
+`en.doc.boardgamearena.com/ItemManager` (fetched 2026-10-07). Worth knowing before reaching for
+`Deck` in a new project, but migrating an *existing* `Deck` usage isn't a like-for-like method
+swap:
+
+- `ItemManager` requires defining a typed item class with `#[Item]`/`#[ItemField]` attributes
+  (`kind: ItemFieldKind::ID`, `::LOCATION`, `::ORDER`, or a plain data field) — `Deck`'s plain
+  associative arrays (`['id' => ..., 'type' => ..., 'location_arg' => ...]`) go away entirely;
+  every consumer switches to typed property access (`$item->type` instead of `$card['type']`).
+- Locations become `Location`/`ItemLocation` objects, not bare strings — `shuffle('deck')`
+  becomes `shuffle(Location $location)`.
+- In exchange, `ItemManager` gives you a real `ORDER` field concept plus `getItemOnTop()`/
+  `getItemsOnTop()` — if a project's `Deck` usage had to manually sort by `location_arg`
+  because the row order was never confirmed (a real instance of this: L'Oaf's
+  `RoundStart.php`, see `loaf-remarks.md`'s "Deferred: migrate `$this->roundCards`..." entry),
+  that's exactly the kind of unverified assumption `ItemManager`'s native ordering removes.
+
+Net: use `ItemManager` for new projects adopting a deck/pile-of-items pattern from scratch —
+there's no reason to start on the deprecated path. For an *existing* `Deck` usage, treat
+migrating as a deliberate, scoped piece of work (new item class, every consumer's array access
+rewritten, a fresh round of test-stub verification for `ItemManager`'s own API against the
+docs) rather than a quick swap — don't do it opportunistically alongside unrelated changes.
