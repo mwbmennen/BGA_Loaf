@@ -5,11 +5,34 @@ declare(strict_types=1);
 namespace Bga\Games\loaf\Core;
 
 /**
- * Plain-text, translatable descriptions of a review effect's target/amount, for game-log
- * notifications. Shared by two call sites that need the exact same wording for different
- * purposes: RoundStart's `reviewCardRevealed` (speculative -- describes *both* sides before
- * either has happened) and ResolveRound's `reviewEffectApplied` (describes only the one side
- * that actually resolved). Pure/DB-free -- see docs/loaf-implementation-plan.md §2.
+ * Plain-text, translatable descriptions of a review effect's target/amount.
+ *
+ * `target()` is a plain lookup -- its return values are always one of a handful of static,
+ * already-registered clienttranslate() strings with no embedded placeholder, so a caller can
+ * safely pass it straight through as a `notify->all()` arg marked `'i18n' => ['target']` (or
+ * similar) and the client will independently translate it per recipient.
+ *
+ * `effectMessage()` (added 2026-10-07, replacing the old fragment-returning `amount()`) is
+ * NOT a fragment to compose into another message's own `${...}` placeholder -- it returns a
+ * complete, self-contained [message, args] pair meant to BE the notify call's own top-level
+ * message. Confirmed live via BGA's `&dummyTranslations` test (see
+ * docs/loaf-remarks.md's "Notification game-log text can't actually be translated..." entry)
+ * that the old design was a real bug, not a theoretical one: `amount()` baked the real number
+ * into the string server-side (`str_replace('${amount}', '+1', clienttranslate('${amount}
+ * reputation'))`), producing e.g. "+1 reputation" -- a string that can never match any
+ * dictionary key, since only the un-substituted template was ever registered. Nesting that
+ * baked-in fragment as an arg inside an *outer* clienttranslate() message (e.g. "Review
+ * effect: ${target}, ${amount}") compounded the problem: even marking the arg `i18n` wouldn't
+ * have helped, because the dictionary lookup would still miss on the already-substituted text.
+ *
+ * The fix: every (framing, effect type) combination gets its OWN complete literal
+ * clienttranslate() string, with `target` and the raw number as that *same* message's direct,
+ * top-level args -- one level of substitution, no nesting, exactly like every other
+ * already-correct notification in this codebase (e.g. `${player_name} played ${value}`).
+ * `clienttranslate()` requires a literal argument (no runtime concatenation of a shared prefix
+ * into a shared suffix -- that breaks extraction, see bga-studio-reference.md's "Wrap every
+ * user-facing string..." section), so each framing needs its own full set of per-effect-type
+ * literals -- this is mechanical duplication, not a design flaw.
  */
 final class ReviewEffectDescription
 {
@@ -40,79 +63,118 @@ final class ReviewEffectDescription
     }
 
     /**
-     * Every non-reputation arm here is deliberately a gerund phrase ("recycling...",
-     * "discarding...") rather than a conjugated verb ("recycles...") -- the target phrases
-     * this gets appended to don't all agree on grammatical number ("every player" is singular,
-     * "the lowest-reputation player(s)" is deliberately ambiguous), and a gerund reads
-     * naturally after a comma regardless of the target's number, sidestepping the need for a
-     * verb-conjugation branch per target/effect combination.
+     * One complete, self-contained [message, args, i18nArgs] triple for one side of a review
+     * effect, for a specific notification call site's own framing. The caller still needs to
+     * merge in `target()`'s own return value under the `target` key the message references,
+     * and mark it `'i18n'` alongside whatever `i18nArgs` already lists (e.g. `['target',
+     * ...$built['i18nArgs']]`) -- `target`/`pile` are always clean, static, already-registered
+     * strings with no embedded placeholder, safe to translate independently. `amount` (when
+     * present) is always just a formatted number, never translated, so it's never in
+     * `i18nArgs`.
+     *
+     * Every non-reputation/non-swap arm is deliberately a gerund phrase ("recycling...",
+     * "discarding...") following the target with a comma, not a conjugated verb
+     * ("recycles...") -- the target phrases don't all agree on grammatical number ("every
+     * player" is singular, "the lowest-reputation player(s)" is deliberately ambiguous), and a
+     * gerund reads naturally after a comma regardless of the target's number, sidestepping a
+     * verb-conjugation branch per target/effect combination. Preserved unchanged from the
+     * pre-2026-10-07 fragment-based wording -- only the assembly changed, not the phrasing.
      *
      * @param array{target: ?string, effect: string, amount: ?int, counts_as_two: bool} $effect
      * @param 'success'|'fail' $side Which side of the card $effect is -- needed only to name
-     *     the right boss pile in the counts_as_two note below; `success` always files to the
+     *     the right boss pile in the counts_as_two case below; `success` always files to the
      *     Happy pile and `fail` to the Angry pile (same mapping ResolveRound.php's own
      *     `$bossPile = $result->success ? 'review_happy' : 'review_angry'` uses), never
      *     data-dependent, so it's safe to hardcode that correspondence here.
+     * @param 'reviewEffectApplied'|'onSuccess'|'onFail' $framing Which call site this is for --
+     *     'reviewEffectApplied' is ResolveRound's single-side notification; 'onSuccess'/
+     *     'onFail' are RoundStart's two notifications (split from one combined
+     *     "on success, X; on fail, Y" sentence specifically because that combined shape can't
+     *     be flattened into one literal per effect type without also enumerating every
+     *     (success-effect x fail-effect) pair -- see docs/loaf-remarks.md's matching entry for
+     *     why that tradeoff was chosen over keeping one notification).
+     * @return array{message: string, args: array<string, mixed>, i18nArgs: string[]}
      */
-    public static function amount(array $effect, string $side): string
+    public static function effectMessage(array $effect, string $side, string $framing): array
     {
-        $description = match ($effect['effect']) {
-            'reputation' => str_replace(
-                '${amount}',
-                sprintf('%+d', $effect['amount']),
-                clienttranslate('${amount} reputation')
-            ),
-            'discard_recycle_lowest' => clienttranslate('recycling their lowest discard-pile card back to hand'),
-            'discard_choice' => clienttranslate('discarding a card of their choice from hand'),
-            'swap_discard_lower_by_at_most' => str_replace(
-                '${amount}',
-                (string) $effect['amount'],
-                clienttranslate('taking their played card back, then discarding one at most ${amount} lower')
-            ),
-            'swap_discard_higher_by_at_least' => str_replace(
-                '${amount}',
-                (string) $effect['amount'],
-                clienttranslate('taking their played card back, then discarding one at least ${amount} higher')
-            ),
-            'end_game_bonus' => str_replace(
-                '${amount}',
-                sprintf('%+d', $effect['amount']),
-                clienttranslate('${amount} bonus at game end')
-            ),
+        // Reachable only for the two "empty effect" advanced cards (advanced_07/advanced_08's
+        // `none` sides) per the current card data (docs/loaf-card-data.json) -- counts_as_two
+        // on any other effect type is unconfirmed by any real card, so only 'none' gets its own
+        // literal per framing here. A future card ever pairing counts_as_two with a different
+        // effect type would fall through to the plain (non-counts_as_two) phrasing below,
+        // silently dropping the "counts as 2" note -- same "correctness against future rule
+        // changes, not current reachability" discipline as this class's other defensive
+        // fallbacks, but flagged here since this one genuinely would need a new arm added.
+        if ($effect['counts_as_two'] && $effect['effect'] === 'none') {
+            $pile = $side === 'success' ? clienttranslate('Happy') : clienttranslate('Angry');
+            $message = match ($framing) {
+                'reviewEffectApplied' => clienttranslate(
+                    'Review effect: ${target}, having no effect -- counts as 2 cards toward the ${pile} Boss pile, not 1'
+                ),
+                'onSuccess' => clienttranslate(
+                    'On success: ${target}, having no effect -- counts as 2 cards toward the ${pile} Boss pile, not 1'
+                ),
+                'onFail' => clienttranslate(
+                    'On fail: ${target}, having no effect -- counts as 2 cards toward the ${pile} Boss pile, not 1'
+                ),
+            };
+
+            return ['message' => $message, 'args' => ['pile' => $pile], 'i18nArgs' => ['pile']];
+        }
+
+        $amount = match ($effect['effect']) {
+            'reputation' => sprintf('%+d', $effect['amount']),
+            'swap_discard_lower_by_at_most', 'swap_discard_higher_by_at_least' => (string) $effect['amount'],
+            'end_game_bonus' => sprintf('%+d', $effect['amount']),
             // RoundCardData stores end_game_malus's amount as a positive magnitude (the minus
             // sign is applied by whoever consumes it, e.g. EndGameEffectResolver) -- negate it
             // here so the displayed sign matches what actually happens to the score.
-            'end_game_malus' => str_replace(
-                '${amount}',
-                sprintf('%+d', -$effect['amount']),
-                clienttranslate('${amount} penalty at game end')
-            ),
-            'double_end_game_bonus' => clienttranslate('doubling every end-game bonus'),
-            'double_end_game_malus' => clienttranslate('doubling every end-game penalty'),
-            'none' => clienttranslate('having no effect'),
-            // Every real effect type is covered above -- this is structurally required by
-            // `match` (it throws UnhandledMatchError on no match, unlike `switch`), not a real
-            // reachable case. Kept only as a defensive fallback against a future new effect
-            // type or a data typo, same "correctness against future rule changes" discipline
-            // as EndGame.php's own empty-hand fallback.
-            default => clienttranslate('triggering an unrecognized effect'),
+            'end_game_malus' => sprintf('%+d', -$effect['amount']),
+            default => null,
         };
 
-        // Checked independently of $effect['effect'] -- currently only the two "empty effect"
-        // cards (advanced_07/advanced_08's `none` sides) ever set this, but the flag itself,
-        // not the effect type, is what actually drives EndConditionChecker::weightedCount(),
-        // so a future card pairing it with a real effect would still need this note (confirmed
-        // live: a reader had no way to tell this side ends the game faster than usual without
-        // it -- docs/loaf-remarks.md's Phase 4 entry).
-        if ($effect['counts_as_two']) {
-            $pileName = $side === 'success' ? clienttranslate('Happy') : clienttranslate('Angry');
-            $description = str_replace(
-                ['${description}', '${pile}'],
-                [$description, $pileName],
-                clienttranslate('${description} -- counts as 2 cards toward the ${pile} Boss pile, not 1')
-            );
-        }
+        $message = match ($framing) {
+            'reviewEffectApplied' => match ($effect['effect']) {
+                'reputation' => clienttranslate('Review effect: ${target}, ${amount} reputation'),
+                'discard_recycle_lowest' => clienttranslate('Review effect: ${target}, recycling their lowest discard-pile card back to hand'),
+                'discard_choice' => clienttranslate('Review effect: ${target}, discarding a card of their choice from hand'),
+                'swap_discard_lower_by_at_most' => clienttranslate('Review effect: ${target}, taking their played card back, then discarding one at most ${amount} lower'),
+                'swap_discard_higher_by_at_least' => clienttranslate('Review effect: ${target}, taking their played card back, then discarding one at least ${amount} higher'),
+                'end_game_bonus' => clienttranslate('Review effect: ${target}, ${amount} bonus at game end'),
+                'end_game_malus' => clienttranslate('Review effect: ${target}, ${amount} penalty at game end'),
+                'double_end_game_bonus' => clienttranslate('Review effect: ${target}, doubling every end-game bonus'),
+                'double_end_game_malus' => clienttranslate('Review effect: ${target}, doubling every end-game penalty'),
+                'none' => clienttranslate('Review effect: ${target}, having no effect'),
+                default => clienttranslate('Review effect: ${target}, triggering an unrecognized effect'),
+            },
+            'onSuccess' => match ($effect['effect']) {
+                'reputation' => clienttranslate('On success: ${target}, ${amount} reputation'),
+                'discard_recycle_lowest' => clienttranslate('On success: ${target}, recycling their lowest discard-pile card back to hand'),
+                'discard_choice' => clienttranslate('On success: ${target}, discarding a card of their choice from hand'),
+                'swap_discard_lower_by_at_most' => clienttranslate('On success: ${target}, taking their played card back, then discarding one at most ${amount} lower'),
+                'swap_discard_higher_by_at_least' => clienttranslate('On success: ${target}, taking their played card back, then discarding one at least ${amount} higher'),
+                'end_game_bonus' => clienttranslate('On success: ${target}, ${amount} bonus at game end'),
+                'end_game_malus' => clienttranslate('On success: ${target}, ${amount} penalty at game end'),
+                'double_end_game_bonus' => clienttranslate('On success: ${target}, doubling every end-game bonus'),
+                'double_end_game_malus' => clienttranslate('On success: ${target}, doubling every end-game penalty'),
+                'none' => clienttranslate('On success: ${target}, having no effect'),
+                default => clienttranslate('On success: ${target}, triggering an unrecognized effect'),
+            },
+            'onFail' => match ($effect['effect']) {
+                'reputation' => clienttranslate('On fail: ${target}, ${amount} reputation'),
+                'discard_recycle_lowest' => clienttranslate('On fail: ${target}, recycling their lowest discard-pile card back to hand'),
+                'discard_choice' => clienttranslate('On fail: ${target}, discarding a card of their choice from hand'),
+                'swap_discard_lower_by_at_most' => clienttranslate('On fail: ${target}, taking their played card back, then discarding one at most ${amount} lower'),
+                'swap_discard_higher_by_at_least' => clienttranslate('On fail: ${target}, taking their played card back, then discarding one at least ${amount} higher'),
+                'end_game_bonus' => clienttranslate('On fail: ${target}, ${amount} bonus at game end'),
+                'end_game_malus' => clienttranslate('On fail: ${target}, ${amount} penalty at game end'),
+                'double_end_game_bonus' => clienttranslate('On fail: ${target}, doubling every end-game bonus'),
+                'double_end_game_malus' => clienttranslate('On fail: ${target}, doubling every end-game penalty'),
+                'none' => clienttranslate('On fail: ${target}, having no effect'),
+                default => clienttranslate('On fail: ${target}, triggering an unrecognized effect'),
+            },
+        };
 
-        return $description;
+        return ['message' => $message, 'args' => $amount === null ? [] : ['amount' => $amount], 'i18nArgs' => []];
     }
 }

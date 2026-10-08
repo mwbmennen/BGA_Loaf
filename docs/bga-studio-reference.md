@@ -1917,3 +1917,134 @@ there's no reason to start on the deprecated path. For an *existing* `Deck` usag
 migrating as a deliberate, scoped piece of work (new item class, every consumer's array access
 rewritten, a fresh round of test-stub verification for `ItemManager`'s own API against the
 docs) rather than a quick swap — don't do it opportunistically alongside unrelated changes.
+
+---
+
+## A notification arg that's itself a translatable phrase with its own `${...}` placeholder can never translate correctly once server-side code fills that placeholder in
+
+A tempting pattern: a helper function returns a reusable, `clienttranslate()`-marked "phrase
+fragment" with its own embedded placeholder (e.g. `str_replace('${amount}', '+1',
+clienttranslate('${amount} reputation'))` → `"+1 reputation"`), and a caller passes that
+*already-substituted* string as a plain arg into a *different*, outer notification's own
+`${...}` placeholder (e.g. `clienttranslate('Review effect: ${target}, ${amount}')`). This
+looks fine in English and even extracts cleanly (BGA's static scanner sees the literal
+`clienttranslate('${amount} reputation')` argument just fine) — but it can **never** actually
+translate correctly, for any language, for any value of the substituted number. The
+translation dictionary only ever contains the *un-substituted* template
+(`"${amount} reputation"`); the runtime string with a real number already baked in
+(`"+1 reputation"`) will never match that key, or any key, since a different number produces a
+different string every time. Adding `'i18n' => ['amount']` to the outer call doesn't help
+either — it just makes the client *attempt* a lookup that's guaranteed to miss.
+
+**How to catch this**: BGA Studio supports a live test for exactly this, via
+`&dummyTranslations` appended to a Studio table URL (confirmed via the `Translations` docs,
+fetched 2026-10-07) — every string the client successfully looked up in the translation
+dictionary renders wrapped in `«»`. A correctly-flat notification like `"${player_name} played
+${value}"` renders as one full `«PlayerName played 5»`. A notification built from the broken
+pattern above renders with the *outer* template correctly bracketed, but the *nested*,
+already-substituted fragment sitting as plain, unbracketed text inside it — concrete proof the
+inner fragment was never independently looked up, not just a theoretical risk. See
+`loaf-remarks.md`'s "Fixed: notification game-log text built from `ReviewEffectDescription`
+could never actually translate..." entry for the full incident and live test transcript.
+
+**The fix**: don't nest. Every notification's message must be its own complete, flat,
+top-level `clienttranslate()` literal, with every dynamic piece (including any reusable
+"phrase" a helper would otherwise bake in) substituted as that *same* message's own direct
+arg. If a helper needs to vary by both an outer context (e.g. which notification/framing is
+calling it) and an inner effect type, this usually means writing out one full literal per
+(context × effect type) combination rather than composing fragments — `clienttranslate()`
+requires a literal argument, so a shared prefix/suffix can't be interpolated in at runtime
+without breaking extraction (see "Wrap every user-facing string..." section above). This is
+mechanical duplication, not a design flaw — accept it rather than reaching for fragment reuse.
+The one kind of fragment that *is* safe to reuse and nest: a lookup that returns one of a
+small set of **static** strings with no embedded placeholder of its own (e.g. a `target()`-style
+helper returning "every player" / "the lowest-reputation player(s)" / etc.) — mark it `'i18n'`
+when passed as another message's arg, and it translates correctly, because the exact string
+being looked up is always one of the already-registered literals, never a runtime composite.
+
+---
+
+## A literal sign/character sitting directly against `${placeholder}` in a `clienttranslate()` template can break the *entire* template's extraction — not just that one value
+
+A second, independently-found `&dummyTranslations` bug, in the same project, in a notification
+that doesn't involve the nested-fragment pattern above at all: `'${player_name}: hand
+[${hand}] = ${handTotal}, reputation bonus +${bonus} (reputation ${reputation}), ...'` rendered
+with **zero** `«»` brackets — not even around the outer sentence (worse than the nested-fragment
+bug, which at least got the outer template right). Substitution itself was perfect — every arg
+landed correctly; this was purely a translation-registration failure for the template string.
+
+Isolated via a clean A/B against a near-identical sibling template in the same notification
+(the fired-player branch, differing only by not having a bonus line at all) that *did* bracket
+correctly — ruling out every other structural feature the two shared (a colon touching a
+placeholder's closing brace, literal `[`/`]` characters, multiple placeholders) and leaving
+exactly one difference: `+${bonus}` — a literal `+` sitting directly against the *opening*
+`${` with no space, baked into the template text itself (as opposed to the sign being part of
+the *substituted value*, e.g. via `sprintf('%+d', ...)`). The mechanism isn't independently
+confirmed (no vendored framework, no access to BGA's extraction parser internals) — but the
+controlled comparison is enough to act on without needing to know the exact regex BGA uses.
+
+**Rule going forward**: never write a literal sign, or any other non-whitespace character,
+directly touching `${` or `}` in a `clienttranslate()` template. Put it in the substituted
+*value* instead. If the value should always show a sign (e.g. a reputation-bonus tier that's
+always ≥0 but should still read as "+3" not "3"), use `sprintf('%+d', $value)` on the value —
+PHP's `%+d` renders a leading sign even for zero (`sprintf('%+d', 0)` → `"+0"`), so this is a
+drop-in replacement with byte-for-byte identical output, not a cosmetic change. A quick sweep
+for this specific pattern across an existing codebase: `grep -rnP "clienttranslate\('[^']*[+\-]\\\$\{"`.
+
+---
+
+## `&dummyTranslations` only verifies text translated client-side (`_()`) — it has no visibility into `self::_()`-resolved server-side text at all
+
+Confirmed live: hovering a card whose tooltip text was built via `self::_()` (server-side,
+synchronous, baked into plain data before it's ever sent to the client — see the "Wrap every
+user-facing string..." section's `self::_()` discussion) showed ordinary unbracketed text even
+with `&dummyTranslations` active on the table. This matches the docs' own wording for the
+flag — "front-side translations (using `_('...')` on the front side)" — which only describes
+the *client's* `_()` dictionary lookup, not the server-side function.
+
+This isn't evidence the server-resolved text is broken *or* working — `&dummyTranslations`
+simply never reaches that code path in either direction, so a clean result there (no visible
+error) can't be read as a pass. Anything resolved via `self::_()` — tooltips, any other
+server-rendered-then-sent-as-plain-data content — needs a different verification method: a
+real second language actually contributed via BGA's translator platform, then previewed with
+`&lang=<code>` (per the docs' "Language Preview" section). There's no way to simulate that
+locally or via `&dummyTranslations`; it's a genuine gap until a real translation exists.
+Don't mistake "no live test available yet" for "confirmed working" — track it as an open
+verification item instead (see `loaf-remarks.md`'s `&dummyTranslations` tooltip entry).
+
+---
+
+## `self::_()` requires a literal string argument at its own call site — passing a variable (or any function-call result) silently fails to translate, no error
+
+Confirmed via BGA's function reference / forum (the main `Translations` page doesn't cover
+`self::_()` at all, despite saying PHP has "3 different functions" for translation — only
+`clienttranslate()` and `totranslate()` are documented there): `self::_()` *does* correctly
+resolve to the current requesting player's own language, server-side — but only when called
+as `self::_("my string")` with the string written directly inline. `self::_($my_string)` —
+passing a variable — returns the original, untranslated string, with no error or warning of
+any kind. This is the exact same "must be a literal, not a runtime value" constraint
+`clienttranslate()` has (see "Wrap every user-facing string..." section above), but it's easy
+to miss because `self::_()` *looks* like an ordinary function you could freely compose or
+delegate to a helper — you can't, any more than you can with `clienttranslate()`.
+
+**This breaks silently and completely** for any code that tries to translate something by
+calling `self::_()` on the output of another function — e.g. `self::_($helper->getMessage())`,
+`self::_(SomeClass::someStaticMethod(...))`, or even `self::_(clienttranslate('...'))` (the
+inner `clienttranslate()` call is itself a function-call expression from `self::_()`'s point
+of view, not a bare literal, so wrapping one marker inside the other doesn't combine their
+effects — it just defeats the outer one). All three produce correctly-looking English output
+in every test that doesn't involve a second language, since the "translation" step is a silent
+no-op that happens to return its input unchanged — exactly like the bugs elsewhere in this
+reference that only show up once real multi-language use is attempted.
+
+**The fix**: every `self::_()` call must have the literal string written directly inside its
+own parentheses, at the exact call site — which, since `self::_()` is `self::`-scoped, means
+inside a method of the `Table`-descendant class itself. If the same text is also needed for a
+`notify->all()` path (which needs `clienttranslate()` for client-side translation instead),
+expect to write the string out twice, once per mechanism, in two different places — there's no
+single wrapper that correctly serves both `self::_()` and `clienttranslate()`/client-side `_()`
+simultaneously through a shared helper function's return value. Concrete incident:
+`loaf-remarks.md`'s `&dummyTranslations` tooltip entry's 2026-10-08 update — every `self::_()`
+call in that project's tooltip-building code passed a variable or a nested function call,
+reasoned (with high confidence, from this documented rule alone, no live test needed) to
+silently never translate anything.

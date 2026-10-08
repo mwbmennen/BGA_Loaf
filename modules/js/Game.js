@@ -1344,9 +1344,12 @@ export class Game {
   }
 
   // Matches Game.php's `reviewEffectApplied` notification (ResolveRound) -- describes the
-  // review effect that just actually resolved (as opposed to `reviewCardRevealed`, which
-  // describes both possible sides speculatively before either has happened). Log-text only,
-  // same "surface hidden state via the log" pattern as everything else pre-Phase-5.
+  // review effect that just actually resolved (as opposed to RoundStart's
+  // `reviewCardRevealedSuccess`/`reviewCardRevealedFail`, which describe both possible sides
+  // speculatively before either has happened -- split into two notifications 2026-10-07, no
+  // handler needed for either since the game log renders both automatically with no extra
+  // DOM/state update, same as this one). Log-text only, same "surface hidden state via the
+  // log" pattern as everything else pre-Phase-5.
   async notif_reviewEffectApplied(_args) {}
 
   // Matches Game.php's `cardRecycled` notification (ResolveRound, discard_recycle_lowest). No

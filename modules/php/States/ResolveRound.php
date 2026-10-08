@@ -135,17 +135,29 @@ class ResolveRound extends GameState
             );
         }
 
-        // Unlike RoundStart's 'reviewCardRevealed' (speculative -- describes both sides before
-        // either has happened), this describes only the side that actually just resolved --
+        // Unlike RoundStart's 'reviewCardRevealedSuccess'/'reviewCardRevealedFail'
+        // (speculative -- describe both sides before either has happened), this describes
+        // only the side that actually just resolved --
         // the round's success/fail above already fixed which one. Reuses the exact same
-        // target/amount text as the reveal message (ReviewEffectDescription), so a tester can
-        // compare "what was promised" against "what happened" using identical wording.
+        // target/amount wording as the reveal message (ReviewEffectDescription), so a tester
+        // can compare "what was promised" against "what happened" using identical phrasing.
+        //
+        // effectMessage() returns a complete, self-contained message -- NOT a fragment to
+        // nest into a separately-written outer template (see ReviewEffectDescription's own
+        // docblock for why the old fragment-based design, confirmed live via
+        // &dummyTranslations, could never actually translate the amount/effect portion:
+        // docs/loaf-remarks.md's "Notification game-log text can't actually be translated for
+        // the amount/effect portion" entry). `target`/`pile` are always clean, static,
+        // already-registered strings -- safe to mark `i18n` so the client translates them
+        // independently per recipient; `amount` is just a formatted number, never translated.
+        $built = ReviewEffectDescription::effectMessage($reviewEffect, $side, 'reviewEffectApplied');
         $this->game->bga->notify->all(
             'reviewEffectApplied',
-            clienttranslate('Review effect: ${target}, ${amount}'),
+            $built['message'],
             [
                 'target' => ReviewEffectDescription::target($reviewEffect),
-                'amount' => ReviewEffectDescription::amount($reviewEffect, $side),
+                ...$built['args'],
+                'i18n' => ['target', ...$built['i18nArgs']],
             ]
         );
 
