@@ -1758,3 +1758,201 @@ Verified: 99 PHPUnit tests + PHPStan clean (no test covers `PlayCards`/`actCommi
 directly -- by this project's own architecture rule, only the DB-free `Core/*` classes have
 unit coverage), and `eslint modules/js/Game.js` clean. Not yet re-verified live on Studio with
 an actual zombie seat -- do that before considering this fully closed.
+
+## Fixed: notification game-log text built from `ReviewEffectDescription` could never actually translate the amount/effect portion (live `&dummyTranslations` finding)
+
+**Found while cross-checking this project's translation setup against BGA's official
+`Translations` docs (fetched 2026-10-07).** `ReviewEffectDescription::amount()` (removed, see
+below) baked a real computed value into its `clienttranslate()`-marked string *server-side*,
+e.g. `str_replace('${amount}', '+1', clienttranslate('${amount} reputation'))` → the literal
+runtime value `"+1 reputation"`. That value was then passed as a plain arg into a *separate*,
+outer `notify->all()` message (`RoundStart.php`'s `'reviewCardRevealed'`, `ResolveRound.php`'s
+`'reviewEffectApplied'`, `EndGame.php`'s `'endGameBonusApplied'`) with no `'i18n'` marking.
+
+**Confirmed as a real bug, not a theoretical one**, via BGA's own `&dummyTranslations` table-URL
+flag (per `Translations` docs' testing section): a correctly-extracted/translated string
+renders wrapped in `«»`. Live test on `reviewCardRevealed` and `reviewEffectApplied` both
+showed exactly **one** `«»` pair around the *entire* sentence, with the substituted
+target/amount text (e.g. "the lowest-reputation player(s)", "+1 reputation") sitting as plain,
+unbracketed text *inside* it -- proof the outer template translated correctly but the nested
+fragment never got an independent translation lookup at all. Even adding `'i18n'` marking
+wouldn't have fixed it: the dictionary only ever contains the *un-substituted* template
+(`"${amount} reputation"`); the already-number-filled runtime string can never match any
+dictionary key, for any number. In a real non-English game, this would have meant the outer
+sentence structure translates correctly while the target/amount portion silently stays in
+English forever -- directly contradicting this project's own `loaf-open-questions.md` Q8
+commitment ("every user-facing string must be wrapped... no engineering pass to retrofit it").
+
+**`ReviewEffectDescription::target()` was fine as-is** -- it has no embedded placeholder, just
+returns one of a handful of static, already-registered strings. Only `amount()`'s
+substitution, and the way both got nested as fragments into someone else's outer message, was
+broken.
+
+**Fix (2026-10-07)**: replaced `amount()` with `effectMessage(array $effect, string $side,
+string $framing): array`, returning a complete `['message' => ..., 'args' => ..., 'i18nArgs'
+=> ...]` triple -- the `message` IS the notify call's own top-level `clienttranslate()`
+literal (one per (framing × effect type), ~30 total, since `clienttranslate()` requires a
+literal argument and can't interpolate a shared prefix at runtime), never a fragment nested
+into another template. `target()` kept as a reusable fragment (safe, no embedded placeholder)
+-- callers merge it in under `'target'` and add it to `'i18n'` alongside whatever
+`i18nArgs` lists (currently only `'pile'`, for the `counts_as_two` + `'none'` case).
+
+Three call sites updated:
+- `ResolveRound.php`'s `reviewEffectApplied` -- same notification type, now built correctly.
+- `EndGame.php`'s `endGameBonusApplied` -- only needed `'i18n' => ['target']` added (no
+  `amount()`-style substitution was ever involved here; `amount` there is just a plain
+  formatted number, not a translatable phrase).
+- `RoundStart.php`'s `reviewCardRevealed` -- **split into two separate notifications**,
+  `reviewCardRevealedSuccess`/`reviewCardRevealedFail`. The old combined "on success, X; on
+  fail, Y" sentence couldn't be flattened into one literal per effect type without also
+  enumerating every (success-effect × fail-effect) pair -- a real combinatorial blowup with no
+  clean reuse. Splitting into two single-effect notifications reuses the exact same
+  `effectMessage()` literals `reviewEffectApplied` already needs (via dedicated `'onSuccess'`/
+  `'onFail'` framings), at the cost of a visible, minor log-format change (two lines instead of
+  one at the start of each round). No client-side JS handler needed updating for this rename --
+  confirmed `notif_reviewCardRevealed` never existed as a handler; the old notification's
+  `reviewCardId`/`reviewCardType` args were already dead weight, duplicated and actually
+  consumed via the separate `roundStart` notification instead (see that notification's own
+  comment in `RoundStart.php`).
+
+`Game.php`'s tooltip builder (`buildRoundCardDescriptions()`) also used the old `amount()` --
+updated to call `effectMessage(..., 'onSuccess'/'onFail')` directly via a new
+`resolveEffectText()` helper, reusing the exact same literals the notifications now use instead
+of maintaining separately-worded tooltip text. Resolving via `self::_()` there remains correct
+(per-request/per-viewing-player, not a broadcast -- unlike the notification call sites).
+
+Added `tests/Core/ReviewEffectDescriptionTest.php` (this class had zero test coverage before,
+despite being a pure/DB-free `Core` class per this project's own architecture rule) -- covers
+`target()`'s doubler special-case, `effectMessage()` across all three framings including the
+`end_game_malus` sign-negation and the `counts_as_two` pile-naming, and a generic check that
+every `${...}` placeholder a returned message references has a matching arg (except `target`,
+merged in by the caller).
+
+Verified: 108 PHPUnit tests (9 new) + PHPStan + ESLint all clean. **The translation fix itself
+was confirmed live via `&dummyTranslations`** for `reviewCardRevealedSuccess`/`Fail` and
+`reviewEffectApplied` -- both now render as `«On fail: «every player with positive
+reputation», -2 reputation»` (and the success/`reviewEffectApplied` equivalents): the outer
+sentence bracketed, `target` *independently* bracketed one level in (proof the `'i18n'`
+marking triggered its own separate dictionary lookup, not just plain substitution), and the
+numeric `amount` correctly left unbracketed since it's never meant to be translated. Night-and-
+day difference from the pre-fix single-bracket result. `EndGame.php`'s `endGameBonusApplied`
+(the simple `'i18n'`-only case, no restructuring involved, lower risk) was not separately
+re-tested live -- reasoned about only, but the exact same mechanism just confirmed working
+twice elsewhere makes it very low-risk to leave unconfirmed.
+
+Generalizable lesson logged in `bga-studio-reference.md`/`bga-template-upstream-notes.md`: a
+notification arg that's itself a translatable phrase with its own embedded `${...}`
+placeholder can never be correctly translated once that placeholder is filled in server-side --
+flatten it into the outer message's own top-level literal instead of nesting it.
+
+## Fixed: a second, independently-found `&dummyTranslations` bug -- a literal `+` touching `${bonus}` broke the whole template, not just the nested fragment
+
+**Found live by the user (2026-10-07), continuing the same `&dummyTranslations` pass** that
+caught the `ReviewEffectDescription` nesting bug above -- a genuinely different failure mode,
+in a notification (`EndGame.php:164-174`'s `scoreBreakdown`) that neither uses
+`ReviewEffectDescription` nor was touched by that fix at all. The non-fired branch's template
+(`'${player_name}: hand [${hand}] = ${handTotal}, reputation bonus +${bonus} (reputation
+${reputation}), end-game bonus ${endGameBonus}, score ${score}, tie-break value ${aux}'`)
+rendered with **zero** `«»` brackets at all -- not even around the outer sentence, worse than
+the first bug (which at least bracketed the outer template). Substitution itself was perfect
+(every one of the 8 args landed in exactly the right place, confirmed character-for-character
+against the live output) -- this was purely a translation-registration miss for the template
+string itself.
+
+**Isolated via a clean A/B, not a guess**: the fired branch right next to it
+(`'${player_name}: hand [${hand}] = ${handTotal}, FIRED (reputation ${reputation}), score
+${score}'`) brackets *correctly*, live-tested on request specifically to narrow this down. The
+two templates share every other structural feature -- a colon sitting directly against a
+placeholder's closing brace (`${player_name}:`), literal `[`/`]` characters, multiple
+placeholders -- so ruling those out left exactly one real difference: the failing template has
+`reputation bonus +${bonus}`, a literal `+` character sitting directly against the *opening*
+`${` with no space, baked into the template text itself. The working template has no such
+character anywhere.
+
+**Root cause, same family as the `ReviewEffectDescription` bug but a different mechanism**:
+that earlier bug was about an already-*substituted* value never matching a dictionary key.
+This one is about the *template itself* -- `+${bonus}` apparently makes BGA's own
+translation-extraction/lookup fail to recognize the surrounding template at all. Unverified
+*why* mechanically (no vendored framework, no access to BGA's parser internals), but
+empirically confirmed via the controlled comparison, which is enough to act on even without
+knowing BGA's exact regex.
+
+**Fix**: moved the `+` out of the template and into the substituted value, exactly like
+`ReviewEffectDescription::effectMessage()` already does everywhere else --
+`'bonus' => sprintf('%+d', ScoringCalculator::reputationBonus(...))` instead of a bare int,
+with the template's `+${bonus}` becoming plain `${bonus}`. `reputationBonus()` only ever
+returns 0-5 (confirmed by reading it), and PHP's `%+d` format renders a leading sign even for
+zero (`sprintf('%+d', 0)` → `"+0"`), so the displayed text is byte-for-byte identical to
+before -- only *where* the sign lives changed, not what a player sees.
+
+**Swept the rest of the codebase for the same pattern** (`grep -rnP
+"clienttranslate\('[^']*\+\\\$\{"` across `modules/php`) -- this was the only instance.
+
+Verified: 108 PHPUnit tests + PHPStan clean. **Confirmed live (2026-10-07)**: a non-fired
+player's `scoreBreakdown` line now renders as one fully-bracketed `«Dumbledore2: hand [0, 1, 3,
+11] = 15, reputation bonus +5 (reputation 10), end-game bonus 0, score 20, tie-break value
+-10»` -- zero brackets before the fix, one full wrap after. Both `&dummyTranslations` bugs
+found in this session are now confirmed fixed live, not just reasoned about.
+
+Generalizable lesson logged in `bga-studio-reference.md`/`bga-template-upstream-notes.md`: a
+literal sign character (or any other character) sitting directly against `${` in a
+`clienttranslate()` template is itself a red flag, independent of the nested-fragment issue --
+always put dynamic signs/formatting in the substituted *value* via `sprintf()`, never in the
+template text.
+
+## `&dummyTranslations` cannot verify `Game.php`'s hover-tooltip text -- confirmed live, a real limit on this whole verification method, not a pass or a fail
+
+**Checked live (2026-10-07), same session as the two notification fixes above.** The
+`buildRoundCardDescriptions()`/`resolveEffectText()` tooltip text (`Game.js`'s hover-zoom)
+resolves via `self::_()`, called *server-side*, synchronously, before the already-finished
+plain text is ever sent to the client -- fundamentally different from every notification
+above, which resolves client-side via the browser's own `_()` dictionary lookup. `&dummyTranslations`
+only hooks that client-side lookup (confirmed via the `Translations` docs' own wording: "front-side
+translations (using `_('...')` on the front side)"). Hovering a card with `&dummyTranslations`
+active showed plain, unbracketed text -- exactly as predicted, since there's no client-side
+`_()` call in this path for the flag to hook into at all.
+
+**This is not evidence the tooltip is broken, and not evidence it works** -- it's evidence
+this specific diagnostic tool simply doesn't reach this code path, in either direction. The
+tooltip's own internal ordering (`self::_()` on the clean, un-substituted template *before*
+`str_replace` fills in real values -- see `resolveEffectText()`'s own code) is structurally
+correct and should sidestep the nested-fragment bug class entirely, by design, same discipline
+as the fix above. But that's reasoning from code structure, not a live-confirmed fact.
+
+**Update (2026-10-08): reasoned through from the documented rule, not just unverified anymore
+-- this is very likely actually broken, not merely untested.** Looked up `self::_()`'s real
+documented behavior (not on the main `Translations` page -- found via
+`Development_function_reference`/forum): it returns a string translated to the *current
+requesting player's* language, confirmed -- but **only when called with a literal string
+argument directly at its own call site**. Per the docs: `self::_("my string")` translates;
+`self::_($my_string)` (a variable) does not -- it silently returns the untranslated original,
+no error. Every `self::_()` call in `resolveEffectText()` passes a variable or a function-call
+result, never a literal:
+
+```php
+self::_(ReviewEffectDescription::target($effect))   // argument is a function-call result
+self::_($built['message'])                             // argument is an array access
+self::_($value)                                        // argument is a loop variable
+```
+
+...and `buildRoundCardDescriptions()`'s `'order'` line passes `self::_(clienttranslate('...'))`
+-- a function-call expression, not a bare literal, which almost certainly defeats `self::_()`'s
+own static scanner the same way a variable would (it needs a literal quote immediately inside
+its parentheses to register the string as a key).
+
+**Conclusion: the entire hover-tooltip would very likely always display in English, silently,
+regardless of the player's actual language, once a real translation exists** -- not the
+narrower nested-fragment bug from the notification fixes, but `self::_()` being used in a way
+that defeats its own extraction mechanism for every single piece of tooltip text. High
+confidence from the documented rule alone; not yet confirmed with a live `&lang=` test (still
+blocked on a real second-language translation existing for this project, per the entry above).
+
+**NEXT STEP TO PICK UP**: rewrite the tooltip's translation to use literal `self::_('...')`
+calls directly inside `Game.php` (the only place `self::_()` can be called from, since it's
+`self::`-scoped to a `Table`-descendant class) -- one literal per (framing × effect type)
+combination, parallel to (but separate from) `ReviewEffectDescription::effectMessage()`'s
+existing `clienttranslate()` literals used for notifications. Can't just reuse
+`effectMessage()`'s return value through `self::_()` the way `resolveEffectText()` currently
+does -- that's exactly the "variable passed to the marker" pattern that doesn't work. This is
+the same "flatten, don't indirect" lesson as the notification fixes, one level removed
+(indirection through a function call instead of through string substitution).

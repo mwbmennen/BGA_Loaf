@@ -48,19 +48,42 @@ class RoundStart extends GameState
         $this->game->roundCards->moveCard($reviewCard['id'], 'revealed_review');
         $this->game->bga->globals->set(GLOBAL_CURRENT_REVIEW_CARD_ID, $reviewCard['id']);
 
+        // Split into two notifications (success side, fail side) rather than one combined
+        // "on success, X; on fail, Y" sentence -- a single flattened literal per notification
+        // can't also cover every (success-effect x fail-effect) pair, and the old
+        // fragment-composing design (one shared sentence built from four separately-nested
+        // fragments) could never actually translate correctly: confirmed live via
+        // &dummyTranslations that the baked-in amount text never matched any dictionary key
+        // (see ReviewEffectDescription's own docblock, and docs/loaf-remarks.md's "Notification
+        // game-log text can't actually be translated..." entry). `target`/`pile` are always
+        // clean, static, already-registered strings -- marked `i18n` so the client translates
+        // them independently per recipient; `amount` is just a formatted number, never
+        // translated.
         $review = Game::$ROUND_CARD_TYPES[$reviewCard['type']]['review'];
+        $successBuilt = ReviewEffectDescription::effectMessage($review['success'], 'success', 'onSuccess');
         $this->game->bga->notify->all(
-            'reviewCardRevealed',
-            clienttranslate('Review card revealed: on success, ${successTarget}, ${successAmount}; on fail, ${failTarget}, ${failAmount}'),
+            'reviewCardRevealedSuccess',
+            $successBuilt['message'],
             [
                 // card_type (not just descriptive text) so the client can render the card's
                 // real art -- docs/loaf-phase5-plan.md §7's pending-review-card display.
                 'reviewCardId' => $reviewCard['id'],
                 'reviewCardType' => $reviewCard['type'],
-                'successTarget' => ReviewEffectDescription::target($review['success']),
-                'successAmount' => ReviewEffectDescription::amount($review['success'], 'success'),
-                'failTarget' => ReviewEffectDescription::target($review['fail']),
-                'failAmount' => ReviewEffectDescription::amount($review['fail'], 'fail'),
+                'target' => ReviewEffectDescription::target($review['success']),
+                ...$successBuilt['args'],
+                'i18n' => ['target', ...$successBuilt['i18nArgs']],
+            ]
+        );
+        $failBuilt = ReviewEffectDescription::effectMessage($review['fail'], 'fail', 'onFail');
+        $this->game->bga->notify->all(
+            'reviewCardRevealedFail',
+            $failBuilt['message'],
+            [
+                'reviewCardId' => $reviewCard['id'],
+                'reviewCardType' => $reviewCard['type'],
+                'target' => ReviewEffectDescription::target($review['fail']),
+                ...$failBuilt['args'],
+                'i18n' => ['target', ...$failBuilt['i18nArgs']],
             ]
         );
 
@@ -81,10 +104,11 @@ class RoundStart extends GameState
                 'orderCardId' => $orderCard['id'],
                 'orderCardType' => $orderCard['type'],
                 // Client's notif_roundStart rebuilds pendingReviewStock from scratch every round
-                // (Game.js) and needs these two fields to do it -- 'reviewCardRevealed' above
-                // carries the same reviewCardId/reviewCardType but has no client handler wired to
-                // the stock, so this notification is the only one the client actually consumes for
-                // the pending-review-card display. Omitting them left `card.type` undefined from
+                // (Game.js) and needs these two fields to do it -- 'reviewCardRevealedSuccess'/
+                // 'reviewCardRevealedFail' above carry the same reviewCardId/reviewCardType but
+                // have no client handler wired to the stock, so this notification is the only
+                // one the client actually consumes for the pending-review-card display.
+                // Omitting them left `card.type` undefined from
                 // round 2 onward, silently wrong before the hover-tooltip feature and a hard
                 // TypeError (`roundCardDescriptions[undefined].fail`) after it -- caught live.
                 'reviewCardId' => $reviewCard['id'],

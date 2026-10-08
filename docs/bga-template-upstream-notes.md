@@ -602,6 +602,91 @@ etc.) — rewrite around generic examples before adding to the template.
   text today — the query site is the one place that knows the column's real type, every future
   consumer shouldn't have to re-derive it.
 
+- [ ] **A notification arg that's itself a translatable phrase with its own `${...}`
+  placeholder can never translate correctly once server-side code fills that placeholder in
+  — and `&dummyTranslations` is how you catch it, not static review.** A reusable helper that
+  returns an already-substituted phrase (e.g. `str_replace('${amount}', '+1',
+  clienttranslate('${amount} reputation'))` → `"+1 reputation"`), passed as a plain arg into a
+  *different* outer notification's own placeholder, extracts fine (the static scanner sees the
+  literal `clienttranslate()` argument) but can never actually translate: the dictionary only
+  has the un-substituted template, and the already-filled-in runtime string never matches any
+  key, for any value. Confirmed as a real bug (not theoretical) via BGA's own
+  `&dummyTranslations` Studio table-URL flag — a correctly-flat notification renders one full
+  `«...»`-wrapped sentence; the broken pattern renders the *outer* template bracketed with the
+  *nested*, already-substituted fragment sitting as plain unbracketed text inside it. Where:
+  `bga-studio-reference.md`'s "A notification arg that's itself a translatable phrase..."
+  section (full mechanism + the one safe-to-nest exception: a fragment with no embedded
+  placeholder of its own, e.g. a `target()`-style lookup over a small static set, marked
+  `'i18n'`); concrete incident and fix in `loaf-remarks.md`'s "Fixed: notification game-log
+  text built from `ReviewEffectDescription` could never actually translate..." entry.
+  Suggested template rule: whenever a helper composes a translatable phrase from a reusable
+  fragment *with its own placeholder*, treat nesting it into another message as broken by
+  construction — flatten into one complete top-level literal per real combination instead; and
+  before shipping any non-trivial translated notification, spot-check it live with
+  `&dummyTranslations` rather than trusting that static extraction succeeding means runtime
+  translation will too (it can succeed at extraction and still fail at the dictionary lookup).
+
+- [ ] **A literal sign/character sitting directly against `${placeholder}` in a
+  `clienttranslate()` template can break the *entire* template's extraction, not just that one
+  value — and this is a *different* bug from the nested-fragment one above, found
+  independently in the same project on the same `&dummyTranslations` pass.** `'${player_name}:
+  hand [...] reputation bonus +${bonus} (...)'` rendered with **zero** `«»` brackets at all —
+  worse than the nested-fragment case, which at least got the outer template right. Isolated
+  via a clean A/B against a near-identical sibling template in the same notification that
+  lacked only the `+${bonus}` portion and bracketed correctly — ruling out every other shared
+  feature (a colon touching a placeholder's closing brace, literal `[`/`]` characters,
+  multiple placeholders) and leaving the literal `+` directly against `${` as the one real
+  difference. Mechanism unconfirmed (no access to BGA's parser internals), but the controlled
+  comparison is enough to act on. Where: `bga-studio-reference.md`'s "A literal sign/character
+  sitting directly against `${placeholder}`..." section; concrete incident in
+  `loaf-remarks.md`'s "Fixed: a second, independently-found `&dummyTranslations` bug..." entry.
+  Suggested template rule: never write a sign or any other non-whitespace character directly
+  touching `${`/`}` in a `clienttranslate()` template — put it in the substituted value instead
+  (`sprintf('%+d', $value)` renders a sign even for zero, so this is a drop-in replacement with
+  identical displayed output, not a behavior change). Worth a standing pre-ship grep:
+  `clienttranslate\('[^']*[+\-]\$\{`. Given this and the nested-fragment bug were found
+  independently, minutes apart, in the same `&dummyTranslations` session — strongly suggests
+  **any** notification with placeholders deserves at least one live `&dummyTranslations` pass
+  before being considered done, not just a code read.
+
+- [ ] **`&dummyTranslations` only covers text translated client-side (`_()`) — it's blind to
+  anything resolved server-side via `self::_()`, confirmed by direct live test.** Hovering a
+  card whose tooltip text was built with `self::_()` (resolved synchronously server-side,
+  sent to the client as already-finished plain data) showed ordinary unbracketed text with
+  `&dummyTranslations` active — not because it's broken, but because the flag's own
+  documented scope ("front-side translations... on the front side") never reaches that code
+  path at all. A clean/unbracketed result there is **not** a pass; it's simply the wrong tool.
+  Where: `bga-studio-reference.md`'s "`&dummyTranslations` only verifies text translated
+  client-side..." section; concrete instance in `loaf-remarks.md`'s matching entry. Suggested
+  template rule: any game with server-rendered-then-sent-as-data text (tooltips, anything
+  built via `self::_()` rather than a notification) needs a *different* verification plan —
+  a real contributed translation previewed via `&lang=<code>` — tracked as its own explicit
+  open item rather than assumed "probably fine" just because the structurally-correct
+  translate-before-substitute ordering was followed. Don't let "no test available yet" read
+  as "confirmed working."
+
+- [ ] **`self::_()` requires a literal string argument at its own call site — passing a
+  variable, or any function-call result (including a nested `clienttranslate()` call),
+  silently fails to translate with no error at all.** Confirmed via BGA's function reference
+  (not on the main `Translations` page, which doesn't document `self::_()` despite saying PHP
+  has "3 different functions" for translation). `self::_()` genuinely does resolve to the
+  current requesting player's own language server-side — but only as `self::_("literal
+  string")` written directly inline; `self::_($variable)` returns the untranslated original
+  with zero indication anything went wrong. Easy to miss because `self::_()` looks like an
+  ordinary composable function, but it isn't, any more than `clienttranslate()` is. Where:
+  `bga-studio-reference.md`'s "`self::_()` requires a literal string argument..." section;
+  concrete instance in `loaf-remarks.md`'s `&dummyTranslations` tooltip entry's 2026-10-08
+  update, where every `self::_()` call in a tooltip-building helper passed a variable or
+  nested function-call result, reasoned (with high confidence from the documented rule alone,
+  no live test required to reach this conclusion) to silently never translate anything.
+  Suggested template rule: never pass the result of a helper function/shared method into
+  `self::_()` expecting it to translate — write the literal string directly at the `self::_()`
+  call site, which (since it's `self::`-scoped) means directly inside a method of the
+  `Table`-descendant class itself. If the same text is also needed for a `notify->all()` path
+  (translated via `clienttranslate()`/client-side `_()` instead), expect two separate literal
+  copies of the string, one per mechanism — there's no single wrapper that serves both through
+  a shared return value.
+
 ## Open question — needs resolving before it's portable
 
 - [ ] **PHP syntax ceiling: don't assume the newest PHP version.** Caught myself using PHP

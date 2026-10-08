@@ -107,7 +107,8 @@ class EndGame extends \Bga\GameFramework\States\GameState
         // line further below only shows each player's *total* end-game bonus, which doesn't
         // say which card(s) actually caused it or whether a doubler applied. Reuses
         // ReviewEffectDescription::target() so the "why" here matches the exact wording
-        // already used for 'reviewCardRevealed'/'reviewEffectApplied' earlier in the game.
+        // already used for 'reviewCardRevealedSuccess'/'reviewCardRevealedFail'/
+        // 'reviewEffectApplied' earlier in the game.
         $endGameBonusBreakdown = EndGameEffectResolver::breakdown($resolvedEffects, $reputations);
         foreach ($endGameBonusBreakdown as $entry) {
             $this->game->bga->notify->all(
@@ -119,7 +120,12 @@ class EndGame extends \Bga\GameFramework\States\GameState
                     'player_id' => $entry['playerId'],
                     'player_name' => $this->game->getPlayerNameById($entry['playerId']),
                     'amount' => sprintf('%+d', $entry['amount']),
+                    // target() always returns a clean, static, already-registered string with
+                    // no embedded placeholder (unlike the old ReviewEffectDescription::amount(),
+                    // replaced 2026-10-07 -- see that class's own docblock), so a plain `i18n`
+                    // marking is sufficient here with no further restructuring needed.
                     'target' => ReviewEffectDescription::target($entry['effect']),
+                    'i18n' => ['target'],
                 ]
             );
         }
@@ -165,7 +171,20 @@ class EndGame extends \Bga\GameFramework\States\GameState
                     // shown unconditionally (even at 0) rather than only when advanced cards
                     // are on, same "always show it, zero is a legitimate value" treatment as
                     // every other breakdown term here -- docs/loaf-phase4-plan.md §8 point 5.
-                    : clienttranslate('${player_name}: hand [${hand}] = ${handTotal}, reputation bonus +${bonus} (reputation ${reputation}), end-game bonus ${endGameBonus}, score ${score}, tie-break value ${aux}'),
+                    //
+                    // Confirmed live via &dummyTranslations (2026-10-07): a literal `+`
+                    // character sitting directly against `${` with no space, baked into the
+                    // TEMPLATE text (as this used to read -- "reputation bonus +${bonus}"),
+                    // makes BGA's translation system fail to recognize the entire top-level
+                    // template at all (zero brackets, not even the outer sentence) -- confirmed
+                    // via a clean A/B against the FIRED branch just above, which shares every
+                    // other structural feature (colon-touching-placeholder, literal `[`/`]`,
+                    // similar placeholder count) and brackets correctly. The sign must live in
+                    // the *substituted value* instead (`sprintf('%+d', ...)` below), never the
+                    // template -- same discipline ReviewEffectDescription::effectMessage()
+                    // already follows. See loaf-remarks.md's matching entry for the full
+                    // incident/live-test transcript.
+                    : clienttranslate('${player_name}: hand [${hand}] = ${handTotal}, reputation bonus ${bonus} (reputation ${reputation}), end-game bonus ${endGameBonus}, score ${score}, tie-break value ${aux}'),
                 [
                     'player_id' => $playerId,
                     'player_name' => $this->game->getPlayerNameById($playerId),
@@ -174,8 +193,11 @@ class EndGame extends \Bga\GameFramework\States\GameState
                     // ScoringCalculator's own reputation-bonus tier lookup, not back-derived
                     // from the score -- a fired player's score is the shared sentinel and
                     // doesn't include this term at all, so only shown on the non-fired branch
-                    // above.
-                    'bonus' => ScoringCalculator::reputationBonus($reputations[$playerId]),
+                    // above. Always 0-5 (never negative, see ScoringCalculator::reputationBonus()),
+                    // so sprintf('%+d', ...) always renders a leading sign ("+0".."+5"),
+                    // identical output to the old template-baked "+" -- only where the sign
+                    // lives changed, not what's displayed.
+                    'bonus' => sprintf('%+d', ScoringCalculator::reputationBonus($reputations[$playerId])),
                     'reputation' => $reputations[$playerId],
                     // Signed as-is (not forced with a leading '+' like 'bonus' above) since,
                     // unlike the reputation-bonus tiers, this can legitimately be negative --

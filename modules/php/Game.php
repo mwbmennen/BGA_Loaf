@@ -207,9 +207,10 @@ class Game extends \Bga\GameFramework\Table
         $result['currentOrderAverage'] = (int) $this->bga->globals->get(GLOBAL_CURRENT_ORDER_AVERAGE, 0);
 
         // The currently-revealed review/order cards, for the initial page load / reconnect case
-        // -- RoundStart's own 'reviewCardRevealed'/'roundStart' notifications carry the same
-        // card_id/card_type for the live-push case, same "setup + notification" dual-exposure
-        // pattern already used for bossHappyWeight/bossAngryWeight. The order card is re-derived
+        // -- RoundStart's own 'reviewCardRevealedSuccess'/'reviewCardRevealedFail'/'roundStart'
+        // notifications carry the same card_id/card_type for the live-push case, same "setup +
+        // notification" dual-exposure pattern already used for bossHappyWeight/bossAngryWeight.
+        // The order card is re-derived
         // from round_card directly (lowest card_location_arg still in 'deck') rather than a new
         // persisted global, matching this codebase's existing "recompute rather than track
         // redundant state" discipline (docs/loaf-phase5-plan.md §7).
@@ -255,38 +256,50 @@ class Game extends \Bga\GameFramework\Table
     {
         $descriptions = [];
         foreach (self::$ROUND_CARD_TYPES as $type => $card) {
-            // Framework API confidence note (docs/bga-studio-reference.md "Wrap every
-            // user-facing string..." section flags self::_() vs bare _() as
-            // framework-version-dependent, unverified with no vendored framework locally):
-            // self::_() is assumed to resolve a clienttranslate()-registered string to the
-            // requesting player's language immediately, server-side -- if that's wrong on
-            // Studio, this whole block silently stays English instead of erroring, so verify
-            // live once a second language is actually added.
-            $successTarget = self::_(ReviewEffectDescription::target($card['review']['success']));
-            $successAmount = self::_(ReviewEffectDescription::amount($card['review']['success'], 'success'));
-            $failTarget = self::_(ReviewEffectDescription::target($card['review']['fail']));
-            $failAmount = self::_(ReviewEffectDescription::amount($card['review']['fail'], 'fail'));
-
             $descriptions[$type] = [
                 'order' => str_replace(
                     '${amount}',
                     (string) $card['order']['per_player_average'],
                     self::_(clienttranslate('Order: worth ${amount} work per player'))
                 ),
-                'success' => str_replace(
-                    ['${target}', '${amount}'],
-                    [$successTarget, $successAmount],
-                    self::_(clienttranslate('On success: ${target}, ${amount}'))
-                ),
-                'fail' => str_replace(
-                    ['${target}', '${amount}'],
-                    [$failTarget, $failAmount],
-                    self::_(clienttranslate('On fail: ${target}, ${amount}'))
-                ),
+                'success' => $this->resolveEffectText($card['review']['success'], 'success', 'onSuccess'),
+                'fail' => $this->resolveEffectText($card['review']['fail'], 'fail', 'onFail'),
             ];
         }
 
         return $descriptions;
+    }
+
+    /**
+     * Resolves one of ReviewEffectDescription::effectMessage()'s [message, args] pairs into
+     * plain text for this request's own player language -- correct here (unlike a
+     * notify->all() broadcast) because a tooltip built into getAllDatas() is inherently
+     * per-request/per-viewing-player, never shown to anyone else.
+     *
+     * Framework API confidence note (docs/bga-studio-reference.md "Wrap every user-facing
+     * string..." section flags self::_() vs bare _() as framework-version-dependent,
+     * unverified with no vendored framework locally): self::_() is assumed to resolve a
+     * clienttranslate()-registered string to the requesting player's language immediately,
+     * server-side -- if that's wrong on Studio, this whole block silently stays English
+     * instead of erroring, so verify live once a second language is actually added.
+     *
+     * @param array{target: ?string, effect: string, amount: ?int, counts_as_two: bool} $effect
+     * @param 'success'|'fail' $side
+     * @param 'onSuccess'|'onFail' $framing
+     */
+    private function resolveEffectText(array $effect, string $side, string $framing): string
+    {
+        $built = ReviewEffectDescription::effectMessage($effect, $side, $framing);
+        $text = str_replace(
+            '${target}',
+            self::_(ReviewEffectDescription::target($effect)),
+            self::_($built['message'])
+        );
+        foreach ($built['args'] as $key => $value) {
+            $text = str_replace('${' . $key . '}', self::_($value), $text);
+        }
+
+        return $text;
     }
 
     /**
