@@ -40,6 +40,17 @@ DISPLAY_H=502
 ZOOM_W=500
 ZOOM_H=696
 
+# Hand-card display tile dimensions: same purpose/2x-CSS reasoning as DISPLAY_W/H above, but a
+# separate, smaller constant -- the hand sheet's grid is 13 cols wide (78 tiles, vs. the
+# round-card sheets' 6), so reusing DISPLAY_W directly would put the sheet at 13*360 = 4680px
+# wide. BGA Studio's own project check flags any sprite over 4000px on a side ("might not
+# render on old mobile devices"), confirmed live 2026-10-20 against this exact file. Scaled
+# both dimensions down by the same ~0.83 factor (not just width) to keep tiles tightly fit
+# rather than mismatching the source aspect ratio and padding -- 13*300 = 3900px, comfortably
+# under the 4000px ceiling with margin, rather than landing right at the edge.
+HAND_DISPLAY_W=300
+HAND_DISPLAY_H=418
+
 # Token tile dimensions: small board-marker size, not a card.
 TOKEN_W=64
 TOKEN_H=64
@@ -127,11 +138,15 @@ done
 for f in "${HAND_FILES[@]}"; do
     [[ -f "$f" ]] || { echo "  MISSING: $f" >&2; exit 1; }
 done
-# quality 85, not the 90 used elsewhere -- at the 2x DISPLAY_W/H tier this sheet's 78 tiles push
-# it over the 4MB BGA limit at 90 (measured ~4.4MB); 85 lands at ~2.8MB with no visible artifacts
-# (compared crops directly), so it's a compression trade, not a resolution one -- no need to
-# split this one into two files the way the (since-dropped) hand-card zoom sheets did below.
-montage -font "$MONTAGE_FONT" "${HAND_FILES[@]}" -tile 13x6 -geometry "${DISPLAY_W}x${DISPLAY_H}+0+0" -quality 85 "$IMG_DIR/hand-sheet.jpg"
+# HAND_DISPLAY_W/H, not DISPLAY_W/H -- this sheet's 13-column grid at the round-card sheets'
+# own tile size landed at 4680px wide, over BGA Studio's 4000px-per-side mobile-rendering
+# ceiling (flagged live 2026-10-20, see HAND_DISPLAY_W/H's own comment above). quality 85, not
+# the 90 used elsewhere, is a separate, still-needed trade: even at the smaller tile size this
+# sheet's 78 tiles would still land close to the 4MB BGA limit at quality 90 (measured ~4.4MB
+# at the old, larger tile size); 85 has consistently shown no visible artifacts on this content
+# (compared crops directly) -- no need to split this one into two files the way the
+# (since-dropped) hand-card zoom sheets did below.
+montage -font "$MONTAGE_FONT" "${HAND_FILES[@]}" -tile 13x6 -geometry "${HAND_DISPLAY_W}x${HAND_DISPLAY_H}+0+0" -quality 85 "$IMG_DIR/hand-sheet.jpg"
 check_size "$IMG_DIR/hand-sheet.jpg"
 
 # Hand-card zoom sheets (a hover-zoom tooltip for hand/work cards, mirroring the round-card
