@@ -30,7 +30,8 @@ class EndGame extends \Bga\GameFramework\States\GameState
      * defensively, if the deck ever runs out first -- see RoundStart /
      * docs/loaf-phase2-plan.md §5). Runs ScoringCalculator (docs/loaf-phase3-plan.md §7): hand
      * value + reputation bonus + fired-player exclusion + tie-break by lowest reputation,
-     * mapped onto BGA's native player_score/player_score_aux ranking.
+     * mapped onto BGA's native score/tie-break ranking via the playerScore/playerScoreAux
+     * counters (see those properties' own call sites below).
      */
     public function onEnteringState() {
         // Re-derive which boss ended the game -- no new global needed, same query shape
@@ -143,11 +144,12 @@ class EndGame extends \Bga\GameFramework\States\GameState
         );
 
         foreach ($scores as $playerId => $scoring) {
-            // Real API, not raw SQL on player_score/player_score_aux -- confirmed live via the
-            // sibling Gelati project's EndScore.php (docs/bga-studio-reference.md's
-            // playerScore/playerScoreAux entry) after two earlier signature guesses threw fatal
-            // errors live. player_fired is this project's own custom column with no BGA counter
-            // equivalent, so it stays on raw SQL.
+            // Real API, not a raw SQL UPDATE on BGA's native score/tie-break columns --
+            // confirmed live via the sibling Gelati project's EndScore.php
+            // (docs/bga-studio-reference.md's playerScore/playerScoreAux entry) after two
+            // earlier signature guesses threw fatal errors live. `player_fired` is this
+            // project's own custom column with no BGA counter equivalent, so it stays on raw
+            // SQL.
             $this->game->bga->playerScore->set($playerId, $scoring->score);
             $this->game->bga->playerScoreAux->set($playerId, $scoring->aux);
             $this->game->DbQuery(
@@ -216,7 +218,7 @@ class EndGame extends \Bga\GameFramework\States\GameState
         }
 
         // Explains a tied score's outcome in words -- BGA's own ranking already breaks the
-        // tie correctly via player_score_aux, but shows no reasoning for it. The actual
+        // tie correctly via the playerScoreAux counter, but shows no reasoning for it. The actual
         // winners/losers grouping is pure logic (ScoringCalculator::tieGroups(),
         // unit-tested); this adapter only turns each group into player names and log text.
         $tieGroups = ScoringCalculator::tieGroups($scores);

@@ -9,8 +9,8 @@ use InvalidArgumentException;
 /**
  * Computes final score/tie-break-aux/fired status for every player at game end. Pure/DB-free
  * -- see docs/loaf-implementation-plan.md §2. Deliberately produces the two numbers BGA's
- * native player_score/player_score_aux ranking is built from, rather than computing "who won"
- * itself -- see docs/loaf-phase3-plan.md §6.
+ * native score/tie-break ranking (the playerScore/playerScoreAux counters) is built from,
+ * rather than computing "who won" itself -- see docs/loaf-phase3-plan.md §6.
  */
 final class ScoringCalculator
 {
@@ -76,8 +76,8 @@ final class ScoringCalculator
     /**
      * Groups non-fired players by identical score and identifies each group's tie-break
      * winner(s) via the higher aux value -- used only to *explain* a tie's outcome in the
-     * game log; BGA's own player_score/player_score_aux ranking decides the actual outcome
-     * independently of this method (see §6 notes above).
+     * game log; BGA's own score/tie-break ranking (the playerScore/playerScoreAux counters)
+     * decides the actual outcome independently of this method (see §6 notes above).
      *
      * @param array<int, ScoringResult> $scores From self::score(). Fired players are excluded
      *     from grouping entirely: they can never legitimately tie with an active player (the

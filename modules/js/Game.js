@@ -972,6 +972,21 @@ export class Game {
   // sheet, docs/loaf-phase5-plan.md §4 step 5) -- the "generic hover tooltip instead of a
   // custom zoom overlay" decision, §7. `card` must carry `type` (e.g. "basic_01", matching the
   // Deck component's own field name -- not `card_type`) and `side` ("order"|"review").
+  // Resolves one of Game.php's raw {message, args, i18nArgs} triples into plain, translated
+  // text -- the client-side half of the round-card tooltip translation (see
+  // setupRoundCardFrontDiv()'s own comment on why this moved here from server-side PHP).
+  // `message` is a clienttranslate()-registered template; args listed in `i18nArgs` are
+  // themselves clienttranslate() values needing their own `_()` call (e.g. `target`, `pile`) --
+  // everything else (e.g. `amount`) is a raw, already-formatted value substituted as-is, same
+  // "amount is never translated" rule ReviewEffectDescription's own PHP docblock states.
+  translateTooltipText({ message, args, i18nArgs = [] }) {
+    let text = _(message);
+    for (const [key, value] of Object.entries(args)) {
+      text = text.replace(`\${${key}}`, i18nArgs.includes(key) ? _(value) : value);
+    }
+    return text;
+  }
+
   setupRoundCardFrontDiv(card, div) {
     const { sheet, zoomSheet, x, y } = this.roundCardSpritePosition(card);
     div.style.backgroundImage = `url(${this.bga.images.getImgUrl(sheet)})`;
@@ -982,13 +997,21 @@ export class Game {
     // Zoom tooltip: same sprite-position math, pointing at the higher-resolution sheet, shown
     // at 250x348 (half the source's 500x696 -- downscaled, not upscaled, stays crisp) rather
     // than full size, so it reads as a "closer look" popup, not a full-screen takeover. Next to
-    // it, a text panel built from Game.php's `roundCardDescriptions` (already translated
-    // server-side via self::_() -- plain text here, no client-side translation needed). Only
-    // the text matching the face actually shown (`card.side`) is included -- an order-side
-    // card physically shows only its order face, so its tooltip shouldn't spoil/describe the
-    // review face on the other side, and vice versa.
+    // it, a text panel built from Game.php's `roundCardDescriptions` -- raw {message, args,
+    // i18nArgs} triples, translated here client-side via translateTooltipText() (below), the
+    // same pattern every notify->all() message already uses. Moved off a server-side
+    // self::_()-based version on 2026-10-20 (docs/loaf-remarks.md's matching entry): BGA
+    // Studio's own code-quality check flags self::_()/_() as deprecated, and its suggested
+    // replacement, clienttranslate(), never translates anything by itself -- it's a pure
+    // registration marker, resolved only by a client-side `_()` lookup. Only the text matching
+    // the face actually shown (`card.side`) is included -- an order-side card physically shows
+    // only its order face, so its tooltip shouldn't spoil/describe the review face on the other
+    // side, and vice versa.
     const description = this.gamedatas.roundCardDescriptions[card.type];
-    const descriptionLines = card.side === "order" ? [description.order] : [description.fail, description.success];
+    const descriptionLines =
+      card.side === "order"
+        ? [this.translateTooltipText(description.order)]
+        : [this.translateTooltipText(description.fail), this.translateTooltipText(description.success)];
 
     // Match the card's on-board rotation (same `card.rotation` quarter-turns field
     // getCardRotation reads, above) in the zoom image too -- the pending review card displays
