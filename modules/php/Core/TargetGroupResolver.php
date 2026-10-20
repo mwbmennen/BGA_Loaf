@@ -8,18 +8,18 @@ use InvalidArgumentException;
 
 /**
  * Resolves which players belong to a review/end-game effect's target group, against a
- * snapshot of reputations. Pure/DB-free -- see docs/loaf-implementation-plan.md §2. Shared by
+ * snapshot of reputations. Pure/DB-free (directly testable under PHPUnit). Shared by
  * ReviewEffectResolver (basic `reputation` effects, evaluated mid-round against reputation
- * that already reflects the round's delta) and the Phase 4 end-game effect evaluator
- * (evaluated once at game end against FINAL reputation) -- both need identical target-matching
- * semantics, just against different reputation snapshots. See docs/loaf-phase4-plan.md §5.
+ * that already reflects the round's delta) and the end-game effect evaluator (evaluated once
+ * at game end against FINAL reputation) -- both need identical target-matching semantics, just
+ * against different reputation snapshots.
  */
 final class TargetGroupResolver
 {
     /**
      * @param array<int, int> $reputations Map of player_id => reputation.
      * @return int[] Player IDs in the target group. Ties are additive: every player sharing
-     *     the extreme value is included, not just one (docs/loaf-phase2-plan.md §3.2).
+     *     the extreme value is included, not just one.
      */
     public static function playersInTarget(string $target, array $reputations): array
     {

@@ -12,27 +12,19 @@ namespace Bga\Games\loaf\Core;
  * safely pass it straight through as a `notify->all()` arg marked `'i18n' => ['target']` (or
  * similar) and the client will independently translate it per recipient.
  *
- * `effectMessage()` (added 2026-10-07, replacing the old fragment-returning `amount()`) is
- * NOT a fragment to compose into another message's own `${...}` placeholder -- it returns a
- * complete, self-contained [message, args] pair meant to BE the notify call's own top-level
- * message. Confirmed live via BGA's `&dummyTranslations` test (see
- * docs/loaf-remarks.md's "Notification game-log text can't actually be translated..." entry)
- * that the old design was a real bug, not a theoretical one: `amount()` baked the real number
- * into the string server-side (`str_replace('${amount}', '+1', clienttranslate('${amount}
- * reputation'))`), producing e.g. "+1 reputation" -- a string that can never match any
- * dictionary key, since only the un-substituted template was ever registered. Nesting that
- * baked-in fragment as an arg inside an *outer* clienttranslate() message (e.g. "Review
- * effect: ${target}, ${amount}") compounded the problem: even marking the arg `i18n` wouldn't
- * have helped, because the dictionary lookup would still miss on the already-substituted text.
+ * `effectMessage()` returns a complete, self-contained [message, args] pair meant to BE the
+ * notify call's own top-level message, not a fragment to compose into another message's own
+ * `${...}` placeholder -- nesting an already-substituted fragment inside an outer
+ * clienttranslate() message breaks translation, since the dictionary only ever contains the
+ * un-substituted template.
  *
- * The fix: every (framing, effect type) combination gets its OWN complete literal
- * clienttranslate() string, with `target` and the raw number as that *same* message's direct,
- * top-level args -- one level of substitution, no nesting, exactly like every other
- * already-correct notification in this codebase (e.g. `${player_name} played ${value}`).
- * `clienttranslate()` requires a literal argument (no runtime concatenation of a shared prefix
- * into a shared suffix -- that breaks extraction, see bga-studio-reference.md's "Wrap every
- * user-facing string..." section), so each framing needs its own full set of per-effect-type
- * literals -- this is mechanical duplication, not a design flaw.
+ * Every (framing, effect type) combination gets its own complete literal clienttranslate()
+ * string, with `target` and the raw number as that *same* message's direct, top-level args --
+ * one level of substitution, no nesting, exactly like every other already-correct notification
+ * in this codebase (e.g. `${player_name} played ${value}`). `clienttranslate()` requires a
+ * literal argument -- no runtime concatenation of a shared prefix into a shared suffix, that
+ * breaks extraction -- so each framing needs its own full set of per-effect-type literals --
+ * mechanical duplication, not a design flaw.
  */
 final class ReviewEffectDescription
 {
@@ -43,10 +35,10 @@ final class ReviewEffectDescription
     {
         // The two doubler effects don't target a player group at all -- they modify the
         // *totals* of every other end-game bonus/malus effect, "apply to all players" per the
-        // rulebook (docs/loaf-phase4-plan.md §3 point 3). Their `target` is null in
+        // rulebook. Their `target` is null in
         // RoundCardData (same shape as the genuinely target-less `none` effect), which would
         // otherwise fall into the generic null-target 'no one' case below and misleadingly
-        // read as "on success, no one (doubles every end-game bonus)" -- confirmed live.
+        // read as "on success, no one (doubles every end-game bonus)".
         if (in_array($effect['effect'], ['double_end_game_bonus', 'double_end_game_malus'], true)) {
             return clienttranslate('every player');
         }
@@ -77,8 +69,7 @@ final class ReviewEffectDescription
      * ("recycles...") -- the target phrases don't all agree on grammatical number ("every
      * player" is singular, "the lowest-reputation player(s)" is deliberately ambiguous), and a
      * gerund reads naturally after a comma regardless of the target's number, sidestepping a
-     * verb-conjugation branch per target/effect combination. Preserved unchanged from the
-     * pre-2026-10-07 fragment-based wording -- only the assembly changed, not the phrasing.
+     * verb-conjugation branch per target/effect combination.
      *
      * @param array{target: ?string, effect: string, amount: ?int, counts_as_two: bool} $effect
      * @param 'success'|'fail' $side Which side of the card $effect is -- needed only to name
@@ -91,14 +82,14 @@ final class ReviewEffectDescription
      *     'onFail' are RoundStart's two notifications (split from one combined
      *     "on success, X; on fail, Y" sentence specifically because that combined shape can't
      *     be flattened into one literal per effect type without also enumerating every
-     *     (success-effect x fail-effect) pair -- see docs/loaf-remarks.md's matching entry for
-     *     why that tradeoff was chosen over keeping one notification).
+     *     (success-effect x fail-effect) pair -- a combinatorial explosion of literals compared
+     *     to one set per side, not worth it just to keep a single notification).
      * @return array{message: string, args: array<string, mixed>, i18nArgs: string[]}
      */
     public static function effectMessage(array $effect, string $side, string $framing): array
     {
         // Reachable only for the two "empty effect" advanced cards (advanced_07/advanced_08's
-        // `none` sides) per the current card data (docs/loaf-card-data.json) -- counts_as_two
+        // `none` sides) per the current card data -- counts_as_two
         // on any other effect type is unconfirmed by any real card, so only 'none' gets its own
         // literal per framing here. A future card ever pairing counts_as_two with a different
         // effect type would fall through to the plain (non-counts_as_two) phrasing below,

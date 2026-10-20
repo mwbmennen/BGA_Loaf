@@ -1,7 +1,7 @@
 
 -- ------
 -- BGA framework: Gregory Isabelli & Emmanuel Colin & BoardGameArena
--- loaf implementation : © <Your name here> <Your email address here>
+-- loaf implementation : © Rian Mennen rian.mennen@gmail.com
 --
 -- This code has been produced on the BGA studio platform for use on http://boardgamearena.com.
 -- See http://en.boardgamearena.com/#!doc/Studio for more information.
@@ -17,7 +17,7 @@
 --       you have to restart a game to see your changes in database.
 
 -- Reputation track (-10..+10, see Core\ReputationTrack) and end-of-game firing status
--- (Angry-Boss ending: negative reputation = fired, see docs/loaf-implementation-plan.md).
+-- (Angry-Boss ending: negative reputation = fired).
 ALTER TABLE `player` ADD `player_reputation` INT NOT NULL DEFAULT 0;
 ALTER TABLE `player` ADD `player_fired` BOOL NOT NULL DEFAULT 0;
 
@@ -31,8 +31,8 @@ CREATE TABLE IF NOT EXISTS `work_card` (
   PRIMARY KEY (`player_id`, `value`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- The shared round-card deck (order/review sides, see docs/loaf-card-data.json and
--- Game::$ROUND_CARD_TYPES). Shaped to match BGA's Deck component convention. `card_type`
+-- The shared round-card deck (order/review sides, see Game::$ROUND_CARD_TYPES). Shaped to
+-- match BGA's Deck component convention. `card_type`
 -- holds the static content id (e.g. "basic_01"). Locations: deck, revealed_review,
 -- review_happy, review_angry.
 CREATE TABLE IF NOT EXISTS `round_card` (

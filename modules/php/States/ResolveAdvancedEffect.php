@@ -15,7 +15,7 @@ use Bga\Games\loaf\Game;
 
 /**
  * Handles the three advanced review effects that need a player's own choice: `discard_choice`
- * and the two swap effects (docs/loaf-phase4-plan.md §4). `discard_recycle_lowest` and the
+ * and the two swap effects. `discard_recycle_lowest` and the
  * basic `reputation` effect are fully deterministic and are resolved inline by ResolveRound
  * instead -- they never transition here.
  */
@@ -43,12 +43,9 @@ class ResolveAdvancedEffect extends GameState
      *   current reputations -- the same recompute-over-redundant-state pattern EndGame.php
      *   already uses for `$endingBoss`.
      *
-     * Activates exactly the target group in one `setPlayersMultiactive()` call. Confirmed
-     * live on Studio (docs/loaf-phase4-plan.md §8, "the one open API question") -- this
-     * replaced an earlier "activate everyone, then trim" two-step
-     * (`setAllPlayersMultiactive()` + `setPlayerNonMultiactive()` per non-targeted player) that
-     * was only a fallback because `setPlayersMultiactive()` wasn't yet confirmed for the typed
-     * framework this project uses (it's documented only for BGA's older framework).
+     * Activates exactly the target group in one `setPlayersMultiactive()` call -- simpler than
+     * an "activate everyone, then trim" two-step (`setAllPlayersMultiactive()` +
+     * `setPlayerNonMultiactive()` per non-targeted player).
      */
     public function onEnteringState() {
         $reviewEffect = $this->getReviewEffect();
@@ -123,9 +120,9 @@ class ResolveAdvancedEffect extends GameState
         ]);
 
         // `value` is deliberately public here -- same "all discards are public" decision as
-        // `cardSwapped` below (docs/loaf-remarks.md, "Deliberate rules deviation" entry,
-        // amended 2026-08-24 to cover discard_choice too), by explicit request rather than a
-        // privacy oversight. Unlike a swap, there's no committed-slot card to visually replace
+        // `cardSwapped` below, by explicit request rather than a privacy oversight. Unlike a
+        // swap, there's no
+        // committed-slot card to visually replace
         // (the discard comes straight from hand, not the played card), so the reveal is
         // log-text only -- the JS handler (notif_playerDiscarded) doesn't need a visual update
         // beyond the hand-count/removeCard it already does.
@@ -206,8 +203,8 @@ class ResolveAdvancedEffect extends GameState
         ]);
 
         // `value` is deliberately public here -- an intentional, explicit exception to the
-        // usual "discards are private to their owner" rule (docs/loaf-open-questions.md Q3),
-        // by request: a swap effect's discard has to satisfy the effect's own amount
+        // usual "discards are private to their owner" rule, by request: a swap effect's discard
+        // has to satisfy the effect's own amount
         // constraint ("at most X lower"/"at least X higher" than the played value, already
         // public since cardPlayedRevealed), so showing it publicly lets every player verify
         // the resolution was actually valid. `discard_choice`'s discard is public too now (see
@@ -284,8 +281,7 @@ class ResolveAdvancedEffect extends GameState
     /**
      * Re-derives which side of this round's review card resolved, the same way EndGame.php
      * re-derives $endingBoss -- no new persisted global needed, since `card_location` already
-     * durably records it (docs/loaf-phase2-plan.md §7's "a card's pile fixes which side
-     * resolved" note).
+     * durably records it (a card's pile fixes which side resolved).
      */
     private function getReviewEffect(): array
     {

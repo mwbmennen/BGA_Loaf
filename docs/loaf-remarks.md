@@ -2091,3 +2091,96 @@ output). `img/` is now ~12MB, comfortably under the 15MB guideline, with margin 
 `docs/loaf-phase5-plan.md` §4 step 10 and this entry -- re-add `build_hand_zoom_sheet()` (or
 restore it from git history on this commit) and write `Game.js`'s `setupHandCardFrontDiv` zoom
 tooltip following `setupRoundCardFrontDiv`'s existing pattern as the template.
+
+## Comment-trimming pass, 2026-10-20: six incidents found undocumented while condensing synced-file comments down to docs pointers
+
+Context: went through every synced-to-Studio file (`modules/php/**`, `modules/js/Game.js`,
+`loaf.css`) trimming dated "Confirmed live (date)"/"Fixed (date)" journal-style comments down to
+a short present-tense explanation plus a "see docs/loaf-remarks.md" pointer -- the reasoning is
+that `docs/` never syncs to Studio (`.vscode/sftp.json`'s ignore list), so decision history
+belongs there, not in code a reviewer on Studio will actually read. Before trimming each one,
+checked whether its substance was already recorded here; these six were not, so the pointer left
+behind in the code would otherwise point at nothing. Recorded here now so the pointer is true.
+
+**1. `Game.php`'s `getAllDatas()`: a page refresh mid-round left an already-revealed committed
+card stuck face-down.** A player's own committed card is normally reconstructed as a face-down
+placeholder on reconnect/refresh (hand privacy during play) -- but once `cardPlayedRevealed` has
+actually fired for a round (`ResolveRound.php`, tracked via `GLOBAL_CARDS_REVEALED_THIS_ROUND`,
+reset each round in `RoundStart.php`), every committed card for that round is already public,
+including the refreshing player's own. Without checking that flag, a refresh mid-`ResolveRound`/
+`ResolveAdvancedEffect` rebuilt the committed-card display as face-down unconditionally --
+**confirmed live**: a player's own committed card stayed stuck face-down after a refresh, in the
+middle of a swap-effect choice that required seeing the card's actual value to make. Fixed by
+gating the face-down placeholder on that flag in `getAllDatas()`'s `revealedCommittedValues`
+block.
+
+**2. `PlayCards.php`'s `getHandValues()`: an uncast DB value broke strict `in_array` comparison.**
+`getObjectListFromDb()` returns every value as a PHP string (raw DB driver output), but
+`actCommitCard()` validates the attempted card against this list with `in_array($value, ...,
+true)` -- strict comparison, so `"3" !== 3`. Without `array_map('intval', ...)` on the query
+result, every commit failed with "You do not have that work card in hand" regardless of what was
+actually in the player's hand -- **confirmed live, 2026-08-08**. Same root cause/fix shape as the
+separately-documented `(int)`-cast bug in `Game::getPartCounts()`-equivalent code elsewhere in
+this codebase (PDO returns DB values as strings) -- distinct incident, same lesson.
+
+**3. `PlayCards.php`'s `zombie()`: a zombie player must end up deactivated as a direct result of
+the call, with no exception.** **Confirmed live, 2026-09-25**: leaving a just-zombied player
+active (the normal outcome for a *real* player finishing `actCommitCard`, so a connected player
+can still cancel) threw `Bga\Exceptions\Framework\ZombieStateException`, "Can't manage zombie
+player in this game state (20)" -- the one time the zombied player wasn't also the last one
+needed to complete the round. Per the stack trace, BGA's own zombie dispatch
+(`checkZombieTurn()`/`checkReturnState()`) requires the specific player it just zombied to no
+longer be counted active afterward -- it can't distinguish "fine to stay active and idle" from
+"zombie handling failed to make progress." `zombie()` now explicitly deactivates the player
+(unless `allPlayersCommitted()` already did so as a side effect of this zombie's own commit being
+the last one needed) rather than relying on the normal human-player code path's behavior. A
+zombie player has no further use for the ability to cancel anyway, so losing it here is the right
+tradeoff, not a compromise. Distinct from the separately-documented "zombie's auto-committed card
+never left their own hand display" bug -- that one was a client-side display gap; this is the
+server-side activation-state requirement.
+
+**4. `EndGame.php`: narrative order is notification call order, not computation order.** The
+`gameEnded` notification (announcing *why* the game ended) used to be the very last notification
+sent in `onEnteringState()`, after every `scoreBreakdown`/`tieBreak` line -- which read backwards
+in the game log: players saw their final scores before being told the game had even ended.
+**Confirmed live.** Fixed by moving the `gameEnded` notify call to the top of the method, before
+any scoring-detail notifications -- narrating cause before effect. Purely a notification-ordering
+fix (nothing downstream depends on `gameEnded` firing first), not a logic change.
+
+**5. `Game.js`'s `notif_playerCommitted` handler: the "Hand: N card(s)" panel readout went stale
+the moment the game started.** The handler did nothing beyond its existing pending-card-removal
+logic, so `setupPlayerPanelHandCount`'s initial count was never refreshed after that player's
+very first commit onward -- **confirmed live**. Fixed by calling `adjustHandCount` from this
+handler too, not just wherever the hand-count panel is first populated.
+
+**6. `Game.js`'s `notif_playerCommitted` handler: removing a committed card caused a spurious
+hover-preview border.** Removing a card reflows the hand's fan layout -- whichever neighboring
+card slides into the removed card's old screen position ends up under the still-stationary mouse
+cursor, firing a genuine `mouseenter` on it. **Confirmed live**: a brief, spurious hover-preview
+border appeared on the card that had been sitting to the right of the removed one. Fixed by
+setting `suppressHandHoverPreview = true` around the removal and clearing it after 500ms (matches
+`bga-cards`' own `transition: transform .5s` on hand-stock cards, so the suppression window lasts
+at least as long as the reflow's own settling animation).
+
+**7. `loaf.css`: dark-mode text color for custom game-area labels (pre-release checklist §5).**
+Confirmed live via side-by-side light/dark screenshots (2026-10-20): labels injected directly
+into the custom game area -- the "Next order card"/"Current review card"/boss-count labels, and
+player names above each committed card -- rendered black regardless of theme, unlike text inside
+BGA's own player-panel components (which inverts automatically). Root cause: BGA's own framework
+components (player panels, status bar) are theme-aware by the platform's own design; raw content
+a game injects directly into its own custom game area is not -- it only ever rendered correctly
+in light mode by coincidence. Fixed via a shared `.loaf_section-label` class (applied to the
+previously-unclassed labels) plus the existing `.loaf_committed-card-name` class, both covered by
+one `html[data-theme="dark"]` override (BGA's confirmed dark-mode selector, not
+`prefers-color-scheme`).
+
+**8. `loaf.css`'s `.loaf_boss-pile-fan`: `z-index: 0` establishes a stacking-context root, fixing
+a boss card painting above the hand area.** Diagnosed from a live report: on a short/narrow
+viewport where the hand area visually overlaps the board, the boss card (inside
+`.loaf_boss-pile-fan`, `z-index: 10`) painted above the hand panel, which has no `z-index` of its
+own. Any explicit `z-index` value (not just `position: relative` alone) turns an element into a
+real stacking-context root, containing its own descendants' `z-index` values so they can't leak
+out and compete against unrelated page elements. **Not yet re-verified live after this specific
+fix** -- the original diagnosis was confirmed, but a follow-up check that the fix actually
+resolved it (as opposed to just being the theoretically-correct fix) was never logged. Worth a
+live check next time this area of the UI is touched.

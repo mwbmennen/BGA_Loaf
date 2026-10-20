@@ -25,8 +25,9 @@ class RoundStart extends GameState
      * Automatic state: advance the shared round-card window. Every round draws the top card
      * as this round's review card (filed under a Boss pile once ResolveRound knows this
      * round's success/fail), then reads the target from whichever card is newly exposed on
-     * top, still undrawn -- see docs/loaf-phase1-plan.md's "flip mechanic" section for why
-     * this needs at least 2 cards left in the deck.
+     * top, still undrawn -- needs at least 2 cards left in the deck, since drawing the review
+     * card consumes one and the order target must be read from whichever card remains on top
+     * afterward.
      */
     public function onEnteringState() {
         if ($this->game->roundCards->countCardsInLocation('deck') < 2) {
@@ -37,10 +38,9 @@ class RoundStart extends GameState
         // own comment (constants.inc.php) for why getAllDatas() needs this at all.
         $this->game->bga->globals->set(GLOBAL_CARDS_REVEALED_THIS_ROUND, false);
 
-        // Deck component ordering is unverified locally (see docs/loaf-phase1-plan.md's
-        // "Framework API confidence note") -- sort by `location_arg` ourselves rather than
-        // trust an unconfirmed default row order, assuming ascending `location_arg` = draw
-        // order (lowest = next to draw), the standard Deck component convention.
+        // Deck component row order isn't trusted (its exact behavior isn't independently
+        // confirmed) -- sort by `location_arg` ourselves, ascending = draw order (lowest = next
+        // to draw), the standard Deck component convention.
         $deckCards = $this->game->roundCards->getCardsInLocation('deck');
         usort($deckCards, fn(array $a, array $b) => $a['location_arg'] <=> $b['location_arg']);
 
@@ -50,15 +50,12 @@ class RoundStart extends GameState
 
         // Split into two notifications (success side, fail side) rather than one combined
         // "on success, X; on fail, Y" sentence -- a single flattened literal per notification
-        // can't also cover every (success-effect x fail-effect) pair, and the old
-        // fragment-composing design (one shared sentence built from four separately-nested
-        // fragments) could never actually translate correctly: confirmed live via
-        // &dummyTranslations that the baked-in amount text never matched any dictionary key
-        // (see ReviewEffectDescription's own docblock, and docs/loaf-remarks.md's "Notification
-        // game-log text can't actually be translated..." entry). `target`/`pile` are always
-        // clean, static, already-registered strings -- marked `i18n` so the client translates
-        // them independently per recipient; `amount` is just a formatted number, never
-        // translated.
+        // can't also cover every (success-effect x fail-effect) pair, and composing one shared
+        // sentence from separately-nested fragments can't translate correctly: the client's
+        // translation lookup would run against already-substituted text that was never
+        // registered as a dictionary key. `target`/`pile` are always clean, static,
+        // already-registered strings -- marked `i18n` so the client translates them
+        // independently per recipient; `amount` is just a formatted number, never translated.
         $review = Game::$ROUND_CARD_TYPES[$reviewCard['type']]['review'];
         $successBuilt = ReviewEffectDescription::effectMessage($review['success'], 'success', 'onSuccess');
         $this->game->bga->notify->all(
@@ -66,7 +63,7 @@ class RoundStart extends GameState
             $successBuilt['message'],
             [
                 // card_type (not just descriptive text) so the client can render the card's
-                // real art -- docs/loaf-phase5-plan.md §7's pending-review-card display.
+                // real art for the pending-review-card display.
                 'reviewCardId' => $reviewCard['id'],
                 'reviewCardType' => $reviewCard['type'],
                 'target' => ReviewEffectDescription::target($review['success']),
@@ -107,10 +104,8 @@ class RoundStart extends GameState
                 // (Game.js) and needs these two fields to do it -- 'reviewCardRevealedSuccess'/
                 // 'reviewCardRevealedFail' above carry the same reviewCardId/reviewCardType but
                 // have no client handler wired to the stock, so this notification is the only
-                // one the client actually consumes for the pending-review-card display.
-                // Omitting them left `card.type` undefined from
-                // round 2 onward, silently wrong before the hover-tooltip feature and a hard
-                // TypeError (`roundCardDescriptions[undefined].fail`) after it -- caught live.
+                // one the client actually consumes for the pending-review-card display. Omitting
+                // them leaves `card.type` undefined.
                 'reviewCardId' => $reviewCard['id'],
                 'reviewCardType' => $reviewCard['type'],
             ]

@@ -7,9 +7,9 @@ namespace Bga\Games\loaf\Core;
 /**
  * Resolves the advanced `discard_recycle_lowest` effect: for each targeted player, their
  * lowest-value discard-pile card returns to their hand. Fully deterministic -- no player
- * choice involved (docs/Loaf-English-rules.md line 206: "take the lowest value card from
- * their discard pile back into their hand. If your discard pile is empty, this has no
- * effect."). Pure/DB-free -- see docs/loaf-implementation-plan.md §2.
+ * choice involved (the rulebook's own wording: "take the lowest value card from their discard
+ * pile back into their hand. If your discard pile is empty, this has no effect."). Pure/DB-free
+ * (directly testable under PHPUnit).
  */
 final class DiscardRecycleResolver
 {

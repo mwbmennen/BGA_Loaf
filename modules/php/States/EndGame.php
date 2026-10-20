@@ -27,15 +27,14 @@ class EndGame extends \Bga\GameFramework\States\GameState
 
     /**
      * Reached once EndConditionChecker's weighted boss-pile trigger fires in ResolveRound (or,
-     * defensively, if the deck ever runs out first -- see RoundStart /
-     * docs/loaf-phase2-plan.md §5). Runs ScoringCalculator (docs/loaf-phase3-plan.md §7): hand
-     * value + reputation bonus + fired-player exclusion + tie-break by lowest reputation,
+     * defensively, if the deck ever runs out first -- see RoundStart). Runs ScoringCalculator:
+     * hand value + reputation bonus + fired-player exclusion + tie-break by lowest reputation,
      * mapped onto BGA's native score/tie-break ranking via the playerScore/playerScoreAux
      * counters (see those properties' own call sites below).
      */
     public function onEnteringState() {
         // Re-derive which boss ended the game -- no new global needed, same query shape
-        // ResolveRound.php already uses each round (docs/loaf-phase2-plan.md §7).
+        // ResolveRound.php already uses each round.
         $happyCardTypes = $this->game->getObjectListFromDb(
             "SELECT `card_type` FROM `round_card` WHERE `card_location` = 'review_happy'",
             true
@@ -61,20 +60,20 @@ class EndGame extends \Bga\GameFramework\States\GameState
         ));
         // A player with zero cards left in hand has no GROUP BY row at all -- fill the gap
         // explicitly. Not actually reachable under basic-only play (the game always ends by
-        // round 9 at the latest per docs/loaf-phase2-plan.md §5's pigeonhole proof, and every
-        // hand starts with 12 cards), kept for free correctness against future rule changes.
+        // round 9 at the latest, and every hand starts with 12 cards), kept for free
+        // correctness against future rule changes.
         foreach (array_keys($reputations) as $playerId) {
             $handValues[$playerId] ??= 0;
         }
 
         // Every review effect that actually resolved during the game: the success side for
         // every card filed under the Happy pile, the fail side for every card filed under the
-        // Angry pile (docs/loaf-phase2-plan.md §7's "a card's pile fixes which side
-        // resolved" note -- $happyCardTypes/$angryCardTypes above already list literally every
-        // filed card, basic and advanced alike). EndGameEffectResolver only cares about
+        // Angry pile (a card's pile fixes which side resolved -- $happyCardTypes/$angryCardTypes
+        // above already list literally every filed card, basic and advanced alike).
+        // EndGameEffectResolver only cares about
         // end_game_bonus/end_game_malus/double_end_game_bonus/double_end_game_malus and
         // silently ignores everything else (reputation, discard_choice, ...), so there's no
-        // need to filter this list down first -- see docs/loaf-remarks.md's Phase 4 entry.
+        // need to filter this list down first.
         $resolvedEffects = [
             ...array_map(fn(string $cardType) => Game::$ROUND_CARD_TYPES[$cardType]['review']['success'], $happyCardTypes),
             ...array_map(fn(string $cardType) => Game::$ROUND_CARD_TYPES[$cardType]['review']['fail'], $angryCardTypes),
@@ -84,12 +83,8 @@ class EndGame extends \Bga\GameFramework\States\GameState
         $allFired = count(array_filter($scores, fn($s) => $s->fired)) === count($scores);
 
         // Announce *why* the game ended before any of the scoring detail below -- narrating
-        // cause before effect. This used to be the very last notification sent in this method
-        // (after every scoreBreakdown/tieBreak line), which read backwards: players saw their
-        // final scores before being told the game had even ended (confirmed live -- see
-        // docs/loaf-remarks.md's Phase 4 entry). Nothing below this point depends on having
-        // sent a notification first, so moving it here is purely a narrative-order fix, not a
-        // logic change.
+        // cause before effect, not effect before cause. Nothing below this point depends on
+        // having sent a notification first.
         $this->game->bga->notify->all(
             'gameEnded',
             match (true) {
@@ -122,21 +117,19 @@ class EndGame extends \Bga\GameFramework\States\GameState
                     'player_name' => $this->game->getPlayerNameById($entry['playerId']),
                     'amount' => sprintf('%+d', $entry['amount']),
                     // target() always returns a clean, static, already-registered string with
-                    // no embedded placeholder (unlike the old ReviewEffectDescription::amount(),
-                    // replaced 2026-10-07 -- see that class's own docblock), so a plain `i18n`
-                    // marking is sufficient here with no further restructuring needed.
+                    // no embedded placeholder, so a plain `i18n` marking is sufficient here with
+                    // no further restructuring needed.
                     'target' => ReviewEffectDescription::target($entry['effect']),
                     'i18n' => ['target'],
                 ]
             );
         }
 
-        // Hand privacy protects the simultaneous-play mechanic while the game is running
-        // (docs/loaf-open-questions.md Q3) -- it serves no purpose once the game has ended,
-        // since every player's final score is about to become public anyway. Revealing what
-        // each score is made of lets players (and testers) verify it instead of trusting an
-        // opaque number, same "surface hidden state via the log" pattern as the
-        // reviewCardRevealed notification (docs/bga-studio-reference.md §6).
+        // Hand privacy protects the simultaneous-play mechanic while the game is running --
+        // it serves no purpose once the game has ended, since every player's final score is
+        // about to become public anyway. Revealing what each score is made of lets players
+        // (and testers) verify it instead of trusting an opaque number, same "surface hidden
+        // state via the log" pattern as the reviewCardRevealed notification.
         $handValueLists = $this->game->getCollectionFromDb(
             "SELECT `player_id` AS `id`, GROUP_CONCAT(`value` ORDER BY `value` SEPARATOR ', ') AS `hand` " .
                 "FROM `work_card` WHERE `location` = 'hand' GROUP BY `player_id`",
@@ -144,12 +137,9 @@ class EndGame extends \Bga\GameFramework\States\GameState
         );
 
         foreach ($scores as $playerId => $scoring) {
-            // Real API, not a raw SQL UPDATE on BGA's native score/tie-break columns --
-            // confirmed live via the sibling Gelati project's EndScore.php
-            // (docs/bga-studio-reference.md's playerScore/playerScoreAux entry) after two
-            // earlier signature guesses threw fatal errors live. `player_fired` is this
-            // project's own custom column with no BGA counter equivalent, so it stays on raw
-            // SQL.
+            // Real API, not a raw SQL UPDATE on BGA's native score/tie-break columns.
+            // `player_fired` is this project's own custom column with no BGA counter
+            // equivalent, so it stays on raw SQL.
             $this->game->bga->playerScore->set($playerId, $scoring->score);
             $this->game->bga->playerScoreAux->set($playerId, $scoring->aux);
             $this->game->DbQuery(
@@ -173,24 +163,15 @@ class EndGame extends \Bga\GameFramework\States\GameState
                 $scoring->fired
                     ? clienttranslate('${player_name}: hand [${hand}] = ${handTotal}, FIRED (reputation ${reputation}), score ${score}')
                     // Reputation is included here (not just the bonus tier it maps to) so a
-                    // tied score's aux-based tie-break has something visible to point at --
-                    // see docs/loaf-remarks.md's Phase 3 entry on this gap. endGameBonus is
-                    // shown unconditionally (even at 0) rather than only when advanced cards
-                    // are on, same "always show it, zero is a legitimate value" treatment as
-                    // every other breakdown term here -- docs/loaf-phase4-plan.md §8 point 5.
+                    // tied score's aux-based tie-break has something visible to point at.
+                    // endGameBonus is shown unconditionally (even at 0) rather than only when
+                    // advanced cards are on, same "always show it, zero is a legitimate value"
+                    // treatment as every other breakdown term here.
                     //
-                    // Confirmed live via &dummyTranslations (2026-10-07): a literal `+`
-                    // character sitting directly against `${` with no space, baked into the
-                    // TEMPLATE text (as this used to read -- "reputation bonus +${bonus}"),
-                    // makes BGA's translation system fail to recognize the entire top-level
-                    // template at all (zero brackets, not even the outer sentence) -- confirmed
-                    // via a clean A/B against the FIRED branch just above, which shares every
-                    // other structural feature (colon-touching-placeholder, literal `[`/`]`,
-                    // similar placeholder count) and brackets correctly. The sign must live in
-                    // the *substituted value* instead (`sprintf('%+d', ...)` below), never the
-                    // template -- same discipline ReviewEffectDescription::effectMessage()
-                    // already follows. See loaf-remarks.md's matching entry for the full
-                    // incident/live-test transcript.
+                    // A literal `+` character sitting directly against `${` with no space
+                    // breaks BGA's translation extraction for the entire top-level template,
+                    // not just that value -- the sign must live in the *substituted value*
+                    // instead (`sprintf('%+d', ...)` below), never the template.
                     : clienttranslate('${player_name}: hand [${hand}] = ${handTotal}, reputation bonus ${bonus} (reputation ${reputation}), end-game bonus ${endGameBonus}, score ${score}, tie-break value ${aux}'),
                 [
                     'player_id' => $playerId,
@@ -248,10 +229,9 @@ class EndGame extends \Bga\GameFramework\States\GameState
 
         // Statistics (stats.jsonc): real API is $this->game->bga->tableStats/playerStats, NOT
         // the flat Table::setStat()/incStat() methods -- those are silently broken on the
-        // current framework generation (docs/bga-studio-reference.md's "Table::incStat()/
-        // setStat() are deprecated" entry, confirmed live). Every call goes through
-        // setStatSafely() -- see its own doc for why each one needs its own try/catch rather
-        // than one shared around the whole batch.
+        // current framework generation. Every call goes through setStatSafely() -- see its own
+        // doc for why each one needs its own try/catch rather than one shared around the whole
+        // batch.
         $this->setStatSafely(
             fn() => $this->game->bga->tableStats->set('rounds_played', (int) $this->game->bga->globals->get(GLOBAL_CURRENT_ROUND, 0)),
             'rounds_played'
@@ -347,9 +327,8 @@ class EndGame extends \Bga\GameFramework\States\GameState
      * Every real call into $this->game->bga->tableStats/playerStats goes through here -- one
      * try/catch per stat, not one around a whole batch, so a single bad value (or an
      * unexpected type the live framework rejects) can't silently cancel every stat that would
-     * otherwise have been set after it. See EndGame::onEnteringState()'s stats block for why:
-     * a live incident left an entire second player's stats stuck at their initStat()-time
-     * default because one shared try/catch aborted mid-loop.
+     * otherwise have been set after it and leave a later player's stats stuck at their
+     * initStat()-time default.
      */
     private function setStatSafely(callable $set, string $description): void
     {

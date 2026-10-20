@@ -9,21 +9,21 @@ namespace Bga\Games\loaf\Core;
  * `double_end_game_malus` effect that resolved during the game, once, against FINAL
  * reputations -- these effects don't resolve when their card is filed like every other effect
  * type does; the rulebook's own wording is that filing such a card "add[s] a new scoring
- * rule," evaluated only at actual game end (docs/loaf-phase4-plan.md §5). Pure/DB-free -- see
- * docs/loaf-implementation-plan.md §2.
+ * rule," evaluated only at actual game end. Pure/DB-free (no DB access, directly testable
+ * under PHPUnit).
  *
  * Deliberately stateless: the caller recomputes the full list of resolved advanced-card
  * effects fresh from `round_card` every time, same "no redundant state" discipline
- * `EndConditionChecker` already established in Phase 2 (docs/loaf-phase2-plan.md §4) -- this
- * class never needs to know *when* during the game a card was filed, only *that* it was.
+ * `EndConditionChecker` already uses -- this class never needs to know *when* during the game
+ * a card was filed, only *that* it was.
  */
 final class EndGameEffectResolver
 {
     /**
      * @param list<array{target: ?string, effect: string, amount: ?int, counts_as_two: bool}> $resolvedEffects
      *     Every review effect that resolved during the game (the success-side effect for
-     *     every Happy-pile card, the fail-side effect for every Angry-pile card -- see
-     *     `docs/loaf-phase2-plan.md` §7's note that a card's pile fixes which side resolved).
+     *     every Happy-pile card, the fail-side effect for every Angry-pile card -- a card's
+     *     pile fixes which side resolved).
      *     Effect types other than the four this class cares about are ignored; every other
      *     effect (basic `reputation`, `discard_choice`, etc.) is already fully resolved
      *     elsewhere the moment its card was filed.
@@ -45,10 +45,9 @@ final class EndGameEffectResolver
     /**
      * Per-(effect, affected player) detail, for a "here's exactly what you got and why" game
      * log -- `resolve()` above only needs the summed total per player for scoring, but a
-     * human reading the log wants to see each individual contribution (docs/loaf-remarks.md's
-     * Phase 4 "end-game bonus/malus breakdown" entry). `resolve()` is defined in terms of this
-     * method (sum `amount` per `playerId`) rather than duplicating the doubling logic, so the
-     * two can never drift out of sync with each other.
+     * human reading the log wants to see each individual contribution. `resolve()` is defined
+     * in terms of this method (sum `amount` per `playerId`) rather than duplicating the
+     * doubling logic, so the two can never drift out of sync with each other.
      *
      * @param list<array{target: ?string, effect: string, amount: ?int, counts_as_two: bool}> $resolvedEffects
      * @param array<int, int> $reputations player_id => FINAL reputation.

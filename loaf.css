@@ -1,7 +1,7 @@
 /**
  *------
  * BGA framework: Gregory Isabelli & Emmanuel Colin & BoardGameArena
- * loaf implementation : © <Your name here> <Your email address here>
+ * loaf implementation : © Rian Mennen rian.mennen@gmail.com
  *
  * This code has been produced on the BGA studio platform for use on http://boardgamearena.com.
  * See http://en.boardgamearena.com/#!doc/Studio for more information.
@@ -39,28 +39,25 @@
 
 /********* You can start writing your CSS below this line: **********/
 
-/* Dark mode (BGA Studio's pre-release checklist §5): confirmed live via side-by-side
-   screenshots (2026-10-20) that plain text inserted directly into the custom game area --
-   .loaf_section-label (the "Next order card"/"Current review card"/"Angry boss: X / 5"/"Happy
-   boss: X / 5" labels, Game.js's setup()) and .loaf_committed-card-name (player names above
-   each committed card, same method) -- renders black-on-dark-background in dark mode, unlike
-   BGA's own player-panel text (.loaf_panel-reputation/.loaf_panel-hand-count/the "FIRED"
-   marker, all inserted into `this.bga.playerPanels.getElement(...)`), which correctly inverts
-   on its own. The difference: BGA's own framework components (player panels, status bar,
-   action buttons) are theme-aware by the platform's own design; raw content a game inserts
-   directly into its own custom game area is not -- it was only ever "readable" in light mode
-   by coincidence (default black text happens to work on a light background), never because it
-   was actually theme-aware. `html[data-theme="dark"]` is BGA's own confirmed mechanism for
-   targeting dark mode (not `@media (prefers-color-scheme)` -- that reflects OS/browser
-   preference, not BGA's own in-page theme toggle, which can differ). No light-mode rule is
-   added here since the existing default (unset, inherits black) already renders correctly
-   there -- only the dark override is needed. */
+/* Dark mode (BGA Studio's pre-release checklist §5): plain text inserted directly into the
+   custom game area -- .loaf_section-label (the "Next order card"/"Current review card"/"Angry
+   boss: X / 5"/"Happy boss: X / 5" labels, Game.js's setup()) and .loaf_committed-card-name
+   (player names above each committed card, same method) -- renders black-on-dark-background in
+   dark mode, unlike BGA's own player-panel text (.loaf_panel-reputation/.loaf_panel-hand-count/
+   the "FIRED" marker, all inserted into `this.bga.playerPanels.getElement(...)`), which
+   correctly inverts on its own. The difference: BGA's own framework components (player panels,
+   status bar, action buttons) are theme-aware by the platform's own design; raw content a game
+   inserts directly into its own custom game area is not. `html[data-theme="dark"]` is BGA's
+   own mechanism for targeting dark mode (not `@media (prefers-color-scheme)` -- that reflects
+   OS/browser preference, not BGA's own in-page theme toggle, which can differ). No light-mode
+   rule is added here since the existing default (unset, inherits black) already renders
+   correctly there -- only the dark override is needed. */
 html[data-theme="dark"] .loaf_section-label,
 html[data-theme="dark"] .loaf_committed-card-name {
   color: #f2f2f2;
 }
 
-/* Pending order/review card display (docs/loaf-phase5-plan.md §7): the current review card
+/* Pending order/review card display: the current review card
    sits to the right of the current order card, rotated 90deg -- presentation only, no
    game-state meaning. The rotation itself is applied by bga-cards' own getCardRotation
    (modules/js/Game.js), not a CSS transform here -- the library needs to know the real
@@ -85,7 +82,7 @@ html[data-theme="dark"] .loaf_committed-card-name {
   justify-content: center;
 }
 
-/* Boss piles (docs/loaf-phase5-plan.md §7, Game.js's setupRoundCardStocks): each pile is a
+/* Boss piles (Game.js's setupRoundCardStocks): each pile is a
    fixed Boss character card (a plain background-image div, not a bga-cards card -- static
    flavor art with no game data behind it, img/boss-sheet.jpg) anchored at the pile's inner
    edge, with filed review cards fanned out behind it in a bga-cards SlotStock -- oldest
@@ -127,9 +124,9 @@ html[data-theme="dark"] .loaf_committed-card-name {
   /* z-index: 0 (any explicit value, not just `relative`'s own positioning) turns this into a
      real stacking-context root, so the boss card / filed-card slots' own z-index: 1-10 below
      stay contained here instead of leaking out to compete against unrelated page elements (e.g.
-     BGA's own hand-area panel) that happen to have no z-index of their own. Diagnosed from a
-     live report: on a short/narrow viewport where the hand area visually overlaps the board,
-     the boss card was painting above the hand -- not yet re-verified live after this fix. */
+     BGA's own hand-area panel) that happen to have no z-index of their own -- without it, on a
+     short/narrow viewport where the hand area visually overlaps the board, the boss card paints
+     above the hand. */
   z-index: 0;
   width: 540px; /* boss card (180px) + up to 6 filed-card slots (60px reveal each), generous */
   height: 251px;
@@ -156,9 +153,8 @@ html[data-theme="dark"] .loaf_committed-card-name {
 /* #boss-happy-pile/#boss-angry-pile (bga-cards' own SlotStock element) is left in normal flow
    at the top of .loaf_boss-pile-fan, not absolutely positioned itself -- without an explicit
    height it only grows to fit a *rotated* (180px-tall) card, shorter than the fan's own 251px
-   box, so its own 50% vertical center (what the filed-card slots below center on) sat higher
-   than the boss card's 50% center, confirmed live. Stretching it to the fan's full box makes
-   both centers agree. */
+   box, so its own 50% vertical center (what the filed-card slots below center on) would sit
+   higher than the boss card's. Stretching it to the fan's full box makes both centers agree. */
 #boss-happy-pile,
 #boss-angry-pile {
   width: 100%;
@@ -274,11 +270,11 @@ html[data-theme="dark"] .loaf_committed-card-name {
   line-height: 1.4;
 }
 
-/* Reputation-track board (docs/loaf-phase5-plan.md §5, Game.js's setupReputationBoard). Sized
+/* Reputation-track board (Game.js's setupReputationBoard). Sized
    by aspect-ratio rather than a fixed height so it scales with the interface width while
    keeping img/board.png's own 740x232 proportions -- reputationTrackPositionPercent's token
    math is derived as a percentage of board width specifically because that stays correct at
-   any rendered size, not just 740px (the same reasoning as §6's whole-board zoom needing
+   any rendered size, not just 740px (the same reasoning the whole-board zoom control needs
    percentage-based positioning, not fixed pixels). */
 #reputation-board {
   position: relative;
@@ -295,7 +291,7 @@ html[data-theme="dark"] .loaf_committed-card-name {
    `transform: translate(-50%, -50%)` centers the token ON its `left`/`top` point rather than
    aligning the token's own top-left corner to it, matching how reputationTrackPositionPercent
    computes a column's *center*, not its edge. `drop-shadow` rather than `border`, uniformly on
-   every color (docs/loaf-phase5-plan.md §3 point 7 -- a CSS border doesn't sit cleanly on this
+   every color (a CSS border doesn't sit cleanly on this
    art's irregular illustrated silhouette the way it would on a plain circle, and the board's
    background shifts between light tan and darker olive across the track, so every color --
    not just white -- needs separation from both). `transition` on `left`/`top` animates
@@ -333,7 +329,7 @@ html[data-theme="dark"] .loaf_committed-card-name {
   opacity: 0.85;
 }
 
-/* Own hand (docs/loaf-phase5-plan.md §8, Game.js's setupHandAndCommitStocks) -- a bga-cards
+/* Own hand (Game.js's setupHandAndCommitStocks) -- a bga-cards
    HandStock. Deliberately no fixed width/height here, same "let bga-cards size its own stock"
    precedent as #pending-order-card/#pending-review-card above; only the surrounding spacing
    is this stylesheet's job. */
@@ -343,13 +339,12 @@ html[data-theme="dark"] .loaf_committed-card-name {
 
 /* Hover-preview lift+border on a hand card, toggled in JS (Game.js's setupHandCardFrontDiv) as
    a plain class rather than through bga-cards' own `selectionMode`/"selected" state machinery
-   -- see docs/loaf-remarks.md's Phase 5 §8 entries for the fuller history (this is the third
-   design tried: a hand-rolled outline/box-shadow override on the library's own
+   -- this is the third design tried: a hand-rolled outline/box-shadow override on the library's own
    `.bga-cards_selectable-card`, then reusing the library's "selected" state directly, both
    abandoned in turn -- the former lost a specificity fight against the library's own injected
    stylesheet, the latter caused `removeCard()` to visibly un-lift the card before removing it,
    and independently also stacked an extra border on click since a non-'none' `selectionMode`
-   toggles the library's own selected-state visual too, confirmed live). `cursor: pointer`
+   toggles the library's own selected-state visual too). `cursor: pointer`
    lives here now rather than coming from the library's own `.bga-cards_selectable-card` rule,
    since PlayCards.onPlayerActivationChange (Game.js) no longer ever marks a card "selectable"
    in the library's sense -- `selectionMode` stays at its default `'none'` permanently now.
@@ -376,11 +371,10 @@ html[data-theme="dark"] .loaf_committed-card-name {
     calc(var(--bga-cards_card-height, 251px) / -5)
   ) !important;
   /* !important confirmed necessary, not a first resort -- box-shadow alone (unlike
-       transform, which worked immediately) was silently overridden, the third time this exact
-       "bga-cards' own injected stylesheet outranks a single-class game selector" pattern has
-       shown up this session (docs/loaf-remarks.md's Phase 5 §8 CSS-specificity entry has the
-       fuller history/rationale for reaching for !important here rather than chasing
-       specificity again). `blueviolet` fallback covers the brief window before
+       transform, which worked immediately) was silently overridden, one of several times this
+       exact "bga-cards' own injected stylesheet outranks a single-class game selector" pattern
+       has shown up, hence reaching for !important here rather than chasing specificity again.
+       `blueviolet` fallback covers the brief window before
        setupHandAndCommitStocks sets the real custom property, and any future context where
        this class might apply with no player color in scope at all. */
   box-shadow: inset 0 0 0 6px var(--loaf-my-player-color, blueviolet) !important;
@@ -396,13 +390,11 @@ html[data-theme="dark"] .loaf_committed-card-name {
    .getCardElement(card)`, the only thing addressable from a plain card data object -- there's
    no live reference to the inner front-face div the way setupHandCardFrontDiv's own mouseenter/
    mouseleave listeners have one), but the outer element isn't where .loaf_hand-card-hover's own
-   lift/border are applied -- that's the *inner* `.loaf-hand-card-front` div, a level down. Fixed
-   as a bug (confirmed live, screenshot): applying the transform/box-shadow directly to the outer
-   element stacked with the inner div's own hover transform whenever both were active at once
-   (hovering an already-selected card) -- the inner content lifted a *second* time inside the
-   already-lifted outer box, leaving the outer box's own border exposed below as a visible ghost
-   rectangle. Targeting the inner `.loaf-hand-card-front` descendant instead, the same element
-   `.loaf_hand-card-hover` itself uses, means only ever one lift/border applies to the actual
+   lift/border are applied -- that's the *inner* `.loaf-hand-card-front` div, a level down.
+   Applying the transform/box-shadow directly to the outer element instead would stack with the
+   inner div's own hover transform whenever both were active at once (hovering an
+   already-selected card), producing a visible ghost-rectangle artifact. Targeting the inner `.loaf-hand-card-front` descendant instead, the
+   same element `.loaf_hand-card-hover` itself uses, means only ever one lift/border applies to the actual
    visible card face, regardless of whether hover and selection are both active. Same
    `!important`/CSS-specificity reasoning as every other style here that targets a
    bga-cards-rendered element. */
@@ -413,19 +405,17 @@ html[data-theme="dark"] .loaf_committed-card-name {
   box-shadow: inset 0 0 0 6px var(--loaf-my-player-color, blueviolet) !important;
 }
 
-/* Advanced-effect card choice (docs/loaf-phase5-plan.md §9, ResolveAdvancedEffect.js's
+/* Advanced-effect card choice (ResolveAdvancedEffect.js's
    markEligibility) -- an ineligible hand card stays visible but visually and functionally
    disabled, rather than being hidden, so the player can see their whole hand and understand
    *why* only some cards qualify. `pointer-events: none` also transitively blocks the
-   `.loaf-hand-card-front`-level mouseenter/mouseleave hover-preview listeners from §8 (they're
+   `.loaf-hand-card-front`-level mouseenter/mouseleave hover-preview listeners (they're
    bound below this element in the DOM), so an ineligible card never shows the hover lift
    either -- no separate gating needed for that in JS. Applied to the outer `.bga-cards_card`
    element (CardManager.getCardElement), not a `.front`/`.back` side div, so it uniformly dims
-   whichever face is currently showing. `!important` proactively included (confirmed live
-   necessary, not just precautionary -- without it, `pointer-events: none` was silently
-   overridden and ineligible cards still hover-previewed, the fourth time a plain-specificity
-   style targeting a bga-cards-rendered element has lost to the library's own injected
-   stylesheet this session). */
+   whichever face is currently showing. `!important` is necessary, not just precautionary --
+   without it, `pointer-events: none` is silently overridden and ineligible cards still
+   hover-preview. */
 .loaf_hand-card-ineligible {
   opacity: 0.4 !important;
   pointer-events: none !important;
