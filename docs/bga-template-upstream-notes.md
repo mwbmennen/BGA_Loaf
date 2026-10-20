@@ -522,6 +522,19 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   worded in `bga-studio-reference.md`'s new `giveExtraTime()` entry — ported directly into
   `bga-game-template`'s own `docs/bga-studio-reference.md` this session. Concrete instance:
   L'Oaf's `PlayCards.php` commit/cancel handlers — see `loaf-remarks.md`'s matching entry.
+- [x] **Ported 2026-10-20.** `self::_()`/`_()` (server-side translation) are deprecated on this
+  framework generation — BGA Studio's own code-quality check flags any use of them. Its
+  suggested replacement, `clienttranslate()`, is **not a drop-in swap**: it's a pure
+  registration marker with no server-side translation effect at all, so a literal find/replace
+  would silence the checker while making the translated text stop translating entirely. The
+  real fix is architectural, not textual: route this kind of text through the client the same
+  way `notify->all()` already does (raw `{message, args, i18nArgs}` sent as data, `_()` +
+  substitution done in JS), not through any server-side mechanism. Already generically worded
+  in `bga-studio-reference.md`'s new entry (ported directly into `bga-game-template`'s own copy
+  this session, since the template had no entry on `self::_()` at all before now — this was the
+  first time any project in this family tried using it). Concrete instance: L'Oaf's
+  round-card-tooltip translation in `Game.php`/`Game.js` — see `loaf-remarks.md`'s matching
+  entry for the full incident (two superseded fix attempts before landing on this one).
 
 ## Needs generalizing before it's portable
 

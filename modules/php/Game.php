@@ -250,20 +250,37 @@ class Game extends \Bga\GameFramework\Table
     }
 
     /**
-     * @return array<string, array{order: string, success: string, fail: string}>
+     * Raw, untranslated {message, args, i18nArgs} triples, sent to the client as-is --
+     * Game.js's setupRoundCardFrontDiv() does the actual client-side translation and
+     * placeholder substitution,
+     * the same client-side pattern every notify->all() message in this codebase already uses.
+     *
+     * Replaced a server-side version built on BGA's deprecated per-request translation helper
+     * on 2026-10-20 (see docs/loaf-remarks.md's matching entry): BGA Studio's own code-quality
+     * check flags that helper as deprecated, and its suggested replacement, `clienttranslate()`,
+     * is a pure registration marker with no server-side translation effect at all (confirmed from
+     * BGA's own docs: "transparent... will return the original English string without any
+     * change"). Server-side translation was never going to stay viable either way, so this
+     * moves the tooltip onto the same client-translated path as everything else, rather than
+     * patching around a deprecated mechanism.
+     *
+     * @return array<string, array{
+     *     order: array{message: string, args: array<string, string>},
+     *     success: array{message: string, args: array<string, string>, i18nArgs: string[]},
+     *     fail: array{message: string, args: array<string, string>, i18nArgs: string[]},
+     * }>
      */
     private function buildRoundCardDescriptions(): array
     {
         $descriptions = [];
         foreach (self::$ROUND_CARD_TYPES as $type => $card) {
             $descriptions[$type] = [
-                'order' => str_replace(
-                    '${amount}',
-                    (string) $card['order']['per_player_average'],
-                    self::_(clienttranslate('Order: worth ${amount} work per player'))
-                ),
-                'success' => $this->resolveEffectText($card['review']['success'], 'success', 'onSuccess'),
-                'fail' => $this->resolveEffectText($card['review']['fail'], 'fail', 'onFail'),
+                'order' => [
+                    'message' => clienttranslate('Order: worth ${amount} work per player'),
+                    'args' => ['amount' => (string) $card['order']['per_player_average']],
+                ],
+                'success' => $this->effectTooltipData($card['review']['success'], 'success', 'onSuccess'),
+                'fail' => $this->effectTooltipData($card['review']['fail'], 'fail', 'onFail'),
             ];
         }
 
@@ -271,35 +288,29 @@ class Game extends \Bga\GameFramework\Table
     }
 
     /**
-     * Resolves one of ReviewEffectDescription::effectMessage()'s [message, args] pairs into
-     * plain text for this request's own player language -- correct here (unlike a
-     * notify->all() broadcast) because a tooltip built into getAllDatas() is inherently
-     * per-request/per-viewing-player, never shown to anyone else.
-     *
-     * Framework API confidence note (docs/bga-studio-reference.md "Wrap every user-facing
-     * string..." section flags self::_() vs bare _() as framework-version-dependent,
-     * unverified with no vendored framework locally): self::_() is assumed to resolve a
-     * clienttranslate()-registered string to the requesting player's language immediately,
-     * server-side -- if that's wrong on Studio, this whole block silently stays English
-     * instead of erroring, so verify live once a second language is actually added.
+     * Reuses ReviewEffectDescription::effectMessage()/target() directly -- their return values
+     * are already exactly the raw {message, args} shape the client-side path needs, since
+     * that's the same shape ResolveRound.php/RoundStart.php's own notify->all() calls already
+     * send for this exact text. `target` is merged into `args` (always needed, never already
+     * present under that key) and always added to `i18nArgs` (target() always returns a
+     * clienttranslate() value, needing the same client-side translation as `pile` -- see
+     * effectMessage()'s own docblock on that point); `amount` (when present) is never in
+     * i18nArgs, it's always just a formatted number.
      *
      * @param array{target: ?string, effect: string, amount: ?int, counts_as_two: bool} $effect
      * @param 'success'|'fail' $side
      * @param 'onSuccess'|'onFail' $framing
+     * @return array{message: string, args: array<string, string>, i18nArgs: string[]}
      */
-    private function resolveEffectText(array $effect, string $side, string $framing): string
+    private function effectTooltipData(array $effect, string $side, string $framing): array
     {
         $built = ReviewEffectDescription::effectMessage($effect, $side, $framing);
-        $text = str_replace(
-            '${target}',
-            self::_(ReviewEffectDescription::target($effect)),
-            self::_($built['message'])
-        );
-        foreach ($built['args'] as $key => $value) {
-            $text = str_replace('${' . $key . '}', self::_($value), $text);
-        }
 
-        return $text;
+        return [
+            'message' => $built['message'],
+            'args' => [...$built['args'], 'target' => ReviewEffectDescription::target($effect)],
+            'i18nArgs' => [...$built['i18nArgs'], 'target'],
+        ];
     }
 
     /**

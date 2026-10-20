@@ -1947,15 +1947,49 @@ that defeats its own extraction mechanism for every single piece of tooltip text
 confidence from the documented rule alone; not yet confirmed with a live `&lang=` test (still
 blocked on a real second-language translation existing for this project, per the entry above).
 
-**NEXT STEP TO PICK UP**: rewrite the tooltip's translation to use literal `self::_('...')`
-calls directly inside `Game.php` (the only place `self::_()` can be called from, since it's
-`self::`-scoped to a `Table`-descendant class) -- one literal per (framing × effect type)
-combination, parallel to (but separate from) `ReviewEffectDescription::effectMessage()`'s
-existing `clienttranslate()` literals used for notifications. Can't just reuse
-`effectMessage()`'s return value through `self::_()` the way `resolveEffectText()` currently
-does -- that's exactly the "variable passed to the marker" pattern that doesn't work. This is
-the same "flatten, don't indirect" lesson as the notification fixes, one level removed
-(indirection through a function call instead of through string substitution).
+**First fix, 2026-10-20** (picked back up after this session's `giveExtraTime`/`playerScore`
+fixes, same general "work through the Studio automated-check findings" pass, though this one
+was self-flagged from the open NEXT STEP above rather than a Studio check): added two new
+private methods to `Game.php`, `translatedTarget()`/`translatedEffectTemplate()`, mirroring
+`ReviewEffectDescription`'s own branching with literal `self::_('...')` calls instead of
+delegating to it. This made every call site a correct literal per the documented rule -- but
+turned out to be solving the wrong problem.
+
+**Superseded same day**: running BGA Studio's own code-quality check against this fix surfaced
+a second, more fundamental issue -- *"The `_` function is deprecated, please use
+`clienttranslate` instead."* `self::_()`/`_()` are deprecated on this framework generation,
+full stop; no amount of literal-argument discipline fixes that. And `clienttranslate()`, the
+check's own suggested replacement, is **not a drop-in swap** -- confirmed from BGA's own docs,
+it's "transparent: it will return the original English string without any change," a pure
+registration marker with no server-side translation effect at all. Swapping `self::_()` calls
+for `clienttranslate()` would have silenced the checker while making the tooltip never
+translate again, a regression dressed as a fix. Worth noting too: no sibling project (Gelati,
+TutorialProjects, the template) has ever used `self::_()`/`_()` at all -- L'Oaf was the only one
+to try it, and the only confirmation behind it was secondary (BGA's function reference/forum),
+never battle-tested live by this project family the way `playerScoreAux` was.
+
+**Real fix**: moved the translation to the client, the same architecture every `notify->all()`
+message in this codebase already uses, rather than patching around a deprecated server-side
+mechanism. `buildRoundCardDescriptions()`/the new `effectTooltipData()` now send raw,
+untranslated `{message, args, i18nArgs}` triples straight from
+`ReviewEffectDescription::effectMessage()`/`target()`'s own return values -- no new PHP
+branching-mirroring needed at all, `translatedTarget()`/`translatedEffectTemplate()` (and every
+`self::_()` call) were deleted entirely, a net reduction in code, not just a rewrite.
+`Game.js` gained one new method, `translateTooltipText({message, args, i18nArgs})`, which does
+the `_()` + placeholder substitution -- `setupRoundCardFrontDiv()` calls it on each of
+`order`/`success`/`fail` before building tooltip HTML. Deliberately did *not* reach for
+`this.format_string()` (a real, vendored-`.d.ts`-documented `GameGui` method that does the same
+placeholder substitution) -- `Game.js`'s `Game` class doesn't visibly extend `GameGui` in this
+codebase's own source, so whether that method is actually callable here is unconfirmed, and a
+hand-rolled loop over the already-confirmed bare `_()` global (used ~15 times elsewhere in this
+exact file) and `String.prototype.replace()` needed no new unverified API at all.
+
+**This also closes the "`&dummyTranslations` can't verify this path" gap** noted in the entry
+above -- translation now genuinely happens through the client's own `_()` dictionary lookup,
+the exact mechanism `&dummyTranslations` *does* hook (confirmed in that entry: it specifically
+covers "front-side translations (using `_('...')` on the front side)"). Not yet live-tested with
+that flag, but for the first time this path is actually reachable by it, unlike either previous
+version. 108/108 PHPUnit tests, PHPStan, and ESLint all pass unchanged.
 
 ## `EndGame.php` switched from raw SQL to `$this->game->bga->playerScore`/`playerScoreAux` (2026-10-20)
 

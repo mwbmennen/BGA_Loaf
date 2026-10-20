@@ -2091,14 +2091,63 @@ in every test that doesn't involve a second language, since the "translation" st
 no-op that happens to return its input unchanged — exactly like the bugs elsewhere in this
 reference that only show up once real multi-language use is attempted.
 
-**The fix**: every `self::_()` call must have the literal string written directly inside its
-own parentheses, at the exact call site — which, since `self::_()` is `self::`-scoped, means
-inside a method of the `Table`-descendant class itself. If the same text is also needed for a
-`notify->all()` path (which needs `clienttranslate()` for client-side translation instead),
-expect to write the string out twice, once per mechanism, in two different places — there's no
-single wrapper that correctly serves both `self::_()` and `clienttranslate()`/client-side `_()`
-simultaneously through a shared helper function's return value. Concrete incident:
-`loaf-remarks.md`'s `&dummyTranslations` tooltip entry's 2026-10-08 update — every `self::_()`
-call in that project's tooltip-building code passed a variable or a nested function call,
-reasoned (with high confidence, from this documented rule alone, no live test needed) to
-silently never translate anything.
+**The fix** (superseded 2026-10-20 — see the next entry below; kept here for the full incident
+trail): every `self::_()` call must have the literal string written directly inside its own
+parentheses, at the exact call site — which, since `self::_()` is `self::`-scoped, means inside
+a method of the `Table`-descendant class itself. Concrete incident: `loaf-remarks.md`'s
+`&dummyTranslations` tooltip entry's 2026-10-08 update — every `self::_()` call in that
+project's tooltip-building code passed a variable or a nested function call, reasoned (with
+high confidence, from this documented rule alone, no live test needed) to silently never
+translate anything.
+
+## `self::_()`/`_()` are deprecated on this framework generation — and `clienttranslate()` is not a drop-in replacement, so route this kind of text through the client instead
+
+Confirmed via BGA Studio's own code-quality check, which flags every `self::_()`/`_()` call
+with: *"The `_` function is deprecated, please use `clienttranslate` instead."* This matters
+more than a simple rename, because **`clienttranslate()` doesn't translate anything at call
+time** — per BGA's own docs, it's "transparent: it will return the original English string
+without any change," a pure registration marker for the client-side dictionary, not a
+server-side translator. `self::_()`, by contrast, really did resolve to the requesting player's
+own language server-side (see the entry above) — it just also happens to be flagged deprecated.
+Literally swapping `self::_('...')` → `clienttranslate('...')` silences the checker while making
+whatever used it **stop translating entirely**, a regression dressed as a fix.
+
+**No project in this template family (Gelati, TutorialProjects, the template itself) has ever
+used `self::_()`/`_()` at all** — worth checking before reaching for it in a new project; it's
+not a battle-tested pattern here the way `playerScoreAux` or the stats API are, just a
+single-project experiment that turned out to hit a wall.
+
+**The actual fix**: for the common case this project needed `self::_()` for — translated text
+embedded directly in `getAllDatas()`'s response, not sent via `notify->all()` — route it
+through the exact mechanism `notify->all()` already uses instead of trying to translate
+server-side at all. Send the *raw*, untranslated `clienttranslate()`-registered template plus
+its substitution args as structured data (`{message, args, i18nArgs}` — `i18nArgs` lists which
+arg *values* are themselves `clienttranslate()` strings needing their own translation, as
+opposed to a plain already-formatted value like a number), and do the `_()` lookup +
+placeholder substitution in JS instead:
+
+```js
+translateText({ message, args, i18nArgs = [] }) {
+    let text = _(message);
+    for (const [key, value] of Object.entries(args)) {
+        text = text.replace(`\${${key}}`, i18nArgs.includes(key) ? _(value) : value);
+    }
+    return text;
+}
+```
+
+This is strictly less code than mirroring the translation logic server-side with literal
+`self::_()` calls per branch (no parallel branching structure needed at all — the existing
+message-building function's own return value already has the right shape, reused as-is), it's
+the real, non-deprecated mechanism, and it closes a verification gap for free: `&dummyTranslations`
+(which only hooks the client-side `_()` lookup, confirmed elsewhere in this reference) can now
+actually reach this text, where it couldn't reach a `self::_()`-translated value at all.
+
+**A tempting but unconfirmed shortcut to avoid**: `GameGui` (the vendored `.d.ts`) documents a
+`format_string(string, args)` method that does the same placeholder substitution for you. Don't
+reach for it (or any other `GameGui`-only method called as a bare `this.xxx`) unless your
+game's JS class is confirmed to actually inherit from `GameGui` at runtime — if your project's
+JS entry class doesn't visibly `extends`/mix in `GameGui` in its own source (newer
+ESM-bundled-via-Rollup projects may not), treat any bare `this.<GameGuiMethod>()` call the same
+as an unconfirmed framework API: fall back to primitives you've already confirmed work in that
+exact file (the global `_()` function, plain `String.prototype.replace()`) rather than guessing.
