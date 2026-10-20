@@ -1956,3 +1956,74 @@ existing `clienttranslate()` literals used for notifications. Can't just reuse
 does -- that's exactly the "variable passed to the marker" pattern that doesn't work. This is
 the same "flatten, don't indirect" lesson as the notification fixes, one level removed
 (indirection through a function call instead of through string substitution).
+
+## `EndGame.php` switched from raw SQL to `$this->game->bga->playerScore`/`playerScoreAux` (2026-10-20)
+
+Surfaced by a BGA Studio automated code-quality check ("The player_score / player_score_aux
+fields can be manipulated using the $this->bga->playerScore / $this->bga->playerScoreAux
+counters"), pointed at `EndGame.php:147-148` and `ScoringCalculator.php`'s matching doc
+comments. **Fixed same day** -- `EndGame.php`'s scoring loop now calls
+`$this->game->bga->playerScore->set($playerId, $scoring->score)` and
+`$this->game->bga->playerScoreAux->set($playerId, $scoring->aux)` instead of a raw `UPDATE`.
+
+This had been a raw `UPDATE player SET player_score = ..., player_score_aux = ..., player_fired
+= ...` since the very first Phase 1 placeholder (`player_score` stays at its schema default)
+and was carried forward unchanged through the Phase 3 plan doc and every later phase -- nobody
+revisited it even after the sibling Gelati project confirmed the real counter API live (see
+`docs/bga-studio-reference.md`'s `playerScore`/`playerScoreAux` entry, generalized from this
+finding). `player_fired` is this project's own custom column (`dbmodel.sql:22`, `BOOL NOT NULL
+DEFAULT 0`) with no BGA counter equivalent, so it correctly stayed on a (now standalone) raw SQL
+`UPDATE` right after the two counter calls -- one extra query per player versus the old
+single-query form, judged not worth optimizing away.
+
+**Blocker found and cleared while investigating**: `gameinfos.jsonc`'s `tie_breaker_description`
+was still blank (`""`). Gelati's own incident writeup says this field must be filled in before
+`playerScoreAux` will actually be used for tie-break display, so it was filled in alongside the
+`EndGame.php` change, not left for later: `"Lower reputation (ties favor the lower reputation)"`
+-- matching `ScoringCalculator::score()`'s actual tie-break rule
+(`aux: $fired ? 0 : -$reputations[...]`, lower reputation wins among tied active players).
+
+**Still unverified** (same "can't exercise against real BGA behavior locally" gap as the
+`playerScoreAux` signature itself -- the test stub's `PlayerScore` methods are no-ops): that
+Studio's automated check no longer flags this, that the ranking/tie-break actually renders
+correctly in a live full-tie game, and that `tie_breaker_description` actually reaches BGA's
+translator queue (see `docs/bga-studio-reference.md`'s new entry on jsonc-field translation --
+confirmed from BGA's own docs for the file family, not yet confirmed for this specific field).
+Needs a live Studio sync + test game to close out.
+
+## `giveExtraTime()` added to `PlayCards.php`'s two handlers (2026-10-20)
+
+Another BGA Studio automated-check finding, same session as the `playerScore`/`playerScoreAux`
+fix above: "No giveExtraTime function call found." Nothing in this codebase called it anywhere
+before this. Per BGA's own docs (quoted in full in `docs/bga-studio-reference.md`'s new
+`giveExtraTime()` entry), the call only matters for an action that leaves the acting player
+active -- no state transition for them -- never at turn start/end.
+
+L'Oaf's commit/cancel redesign (see "Two-step commit/cancel for PlayCards" above) turns out to
+already have exactly two such handlers in `PlayCards.php`, both deliberately *not* deactivating
+the acting player individually:
+
+- `actCommitCard()` -- only deactivates everyone, in one batch, once the whole round's committed;
+  a non-final commit leaves the committing player active with nothing left to do but wait (or
+  cancel).
+- `actCancelCommit()` -- always leaves the player active afterward, since they need to recommit.
+
+Added `$this->game->giveExtraTime($currentPlayerId)` to both, right after this project's own
+business-rule validation (hand-contents / already-committed checks) and before the DB mutation
+-- a deliberate deviation from the doc's own example, which has no validation step at all and
+calls `giveExtraTime()` unconditionally right after identifying the active player, before doing
+anything else. Decided (and confirmed with the user) to keep it gated behind validation instead:
+`giveExtraTime` is a framework-level call, and if it isn't covered by the same transaction/
+rollback as this project's `DbQuery` writes, calling it before validation would mean a rejected
+action (invalid card, already committed -- throws and mutates nothing) could still have
+permanently granted extra time. Gating it behind validation sidesteps that question entirely --
+it only fires once the action is actually going to succeed. Checked
+`ResolveAdvancedEffect.php`'s two handlers (`actDiscardChoice`/`actSwapDiscard`) too -- both call
+`setPlayerNonMultiactive()` on the actor immediately, i.e. their turn genuinely does end there,
+so per the docs there's no point adding it and they were left alone.
+
+**Still unverified locally** -- same category of gap as every other first-use framework call in
+this project (the test stub's `giveExtraTime()` is a no-op): that this actually satisfies
+Studio's check, and that it has the intended effect (more reflection time for a player who
+cancels/recommits mid-round) in a real, non-"fast" speed-profile game. 108/108 PHPUnit tests and
+PHPStan both pass unchanged, but neither exercises real BGA timer behavior.

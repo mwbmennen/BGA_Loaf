@@ -495,6 +495,33 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   work, not something to fold into an unrelated change — concrete instance in `loaf-remarks.md`'s
   "Deferred: migrate `$this->roundCards`..." entry, where L'Oaf decided the migration's benefit
   didn't yet outweigh the first-use-of-a-new-API risk for a game that already works.
+- [x] **Ported 2026-10-20.** `$this->bga->playerScore`/`playerScoreAux` is the real API for
+  `player_score`/`player_score_aux` — raw `UPDATE player SET player_score = ...` works but is
+  exactly what BGA Studio's automated code-quality check flags, and skips whatever client-side
+  bookkeeping the real setter does. Confirmed signature (after two earlier live-fatal guesses)
+  already generically worded in `bga-studio-reference.md`'s new `$this->bga->playerScore`/
+  `playerScoreAux` entry — ported directly into `bga-game-template`'s own
+  `docs/bga-studio-reference.md` this session, not left queued here. `playerScoreAux` also
+  needs `tie_breaker_description` filled in in `gameinfos.jsonc` or it's silently unused for
+  tie-break display. L'Oaf's own `EndGame.php` was switched over to this API the same day — see
+  `loaf-remarks.md`'s matching entry.
+- [x] **Ported 2026-10-20.** `gameinfos.jsonc`/`gameoptions.jsonc`/`stats.jsonc` string fields
+  (e.g. `tie_breaker_description`, option `name`/`description`) are translatable with no code
+  wrapper — BGA's own docs confirm the platform wraps them in `totranslate()` server-side when
+  it parses the file, since JSON can't contain a literal function call. Already generically
+  worded in `bga-studio-reference.md`'s new "jsonc string fields are translatable with no code
+  wrapper" entry — ported directly into `bga-game-template`'s own `docs/bga-studio-reference.md`
+  this session, not left queued here. Surfaced while filling in L'Oaf's own
+  `tie_breaker_description` — see `loaf-remarks.md`'s matching entry.
+- [x] **Ported 2026-10-20.** `giveExtraTime($playerId)` only matters for an action that keeps
+  the acting player active (no state transition for them) — never at turn start/end, per BGA's
+  own docs (quoted in full in the ported entry). A game with zero calls to it anywhere is a
+  decent signal (and exactly what BGA Studio's automated code-quality check flags) that some
+  multiactive-state action which keeps its actor active — an undo/cancel action is the classic
+  shape — is missing the call, not that it belongs everywhere a player acts. Already generically
+  worded in `bga-studio-reference.md`'s new `giveExtraTime()` entry — ported directly into
+  `bga-game-template`'s own `docs/bga-studio-reference.md` this session. Concrete instance:
+  L'Oaf's `PlayCards.php` commit/cancel handlers — see `loaf-remarks.md`'s matching entry.
 
 ## Needs generalizing before it's portable
 
