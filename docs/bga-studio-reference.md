@@ -369,6 +369,60 @@ This project's own `tests/stubs/BgaFrameworkStubs.php` declares `PlayerStats`/`T
 
 ---
 
+### `giveExtraTime()` — only matters for an action that keeps the player active, never at turn start/end
+
+Confirmed from BGA's own docs (`Main_game_logic:_Game.php`), already stubbed in `tests/stubs/BgaFrameworkStubs.php` as `giveExtraTime(int $playerId, ?int $specificTime = null): void`, a public method on `Table` (call it as `$this->game->giveExtraTime($playerId)` from a state class, same pattern as every other `$this->game->...` call in this codebase). Verbatim from the docs:
+
+> "the total reflection time cannot be more than time allowed for the turn... there is no point adding this at the beginning of the turn or in game setup, it only matters after the action which does not lead to turn end (which is when this player becomes inactive)."
+
+Their own canonical example calls it from inside an action handler, for the player who just acted and **remains active** (no state transition for them):
+
+```php
+function actionBla($args) {
+    $this->checkAction('actionBla');
+    $playerId = (int)$this->getActivePlayerId();
+    $this->giveExtraTime($player_id);
+    // do some inter-turn action
+    $this->notifyAll(...);
+    // no state transition as this player did an action but stayed active
+}
+```
+
+**Takeaway**: the test for "does this action handler need a `giveExtraTime()` call" is purely "does the acting player stay active afterward, i.e. no `setPlayerNonMultiactive()`/state transition for them" — not "did they just take an action" in general. An action that immediately deactivates the actor (ends their turn) gets no benefit from the call (the doc says so explicitly), so don't add it there just for symmetry/completeness. BGA Studio's automated code-quality check flags a game with **zero** `giveExtraTime` calls anywhere, which is a decent signal that a real-time multiactive/turn-based game is missing this somewhere, but the fix is to find the specific handler(s) that fit the "stays active" case, not to sprinkle it everywhere a player acts.
+
+**Placement within the handler, when there's real business-rule validation** (the doc's own example has none — just BGA's framework-level `checkAction()`, then immediately `giveExtraTime()`): put the call *after* your own game-rule checks (hand contents, legal-move checks, etc.), not before. If `giveExtraTime` isn't covered by the same transaction/rollback as your own `DbQuery` writes, calling it before validation means a rejected action (one that throws and never actually mutates anything) could still have permanently granted extra time — a silent, hard-to-notice asymmetry. Calling it after validation, right before the real mutation, sidesteps the question entirely: it only fires once the action is actually going to succeed. Not verified against BGA's actual transaction semantics for this specific method (judgment call, confirmed as the preferred approach for this project — see `loaf-remarks.md`'s `giveExtraTime()` entry), just the safer default absent that confirmation.
+
+---
+
+### `$this->bga->playerScore`/`playerScoreAux` — the real API for setting `player_score`/`player_score_aux`, not raw SQL
+
+Confirmed live on this framework generation (first via the sibling Gelati project's `EndScore.php`, after two earlier wrong guesses — `playerScore->setAll($score, $tieBreaker)` and the pre-namespaced `Table::DbScoreAux()` — both threw fatal errors live before the real signature was found; see `tests/stubs/BgaFrameworkStubs.php`'s `PlayerScore` class comment). `player_score`/`player_score_aux` are standard BGA columns needing no `dbmodel.sql` entry of their own, and BGA's own ranking/leaderboard UI is built from them — but they should be written through these counter objects, not a raw `UPDATE player SET ...`. A raw SQL write still lands in the DB, but skips whatever client-side bookkeeping the real setter does — confirmed elsewhere as "this will update the JS counter automatically" for `playerScore->set()`, i.e. a raw SQL write won't push a live score update to connected clients the same way. **This is also the exact thing BGA Studio's automated code-quality check flags** ("The player_score / player_score_aux fields can be manipulated using the $this->bga->playerScore / $this->bga->playerScoreAux counters") when it sees a raw `UPDATE` touching either column.
+
+```php
+$this->game->bga->playerScore->set(int $playerId, int $score): void;
+$this->game->bga->playerScore->inc(int $playerId, int $increment): void;
+$this->game->bga->playerScore->setAll(int $value, mixed $message = null): void; // SAME value for every player — not a tiebreak API
+$this->game->bga->playerScore->getMin(): int;
+
+// playerScoreAux is a second, independent PlayerCounter with the identical shape — not a
+// $playerId=null overload or a different class. It's a pure tie-break value: BGA's ranking
+// only consults it when two players have an *identical* playerScore, giving the higher aux
+// the better rank (ties on aux too just share the rank). Requires `tie_breaker_description`
+// to be filled in in gameinfos.jsonc (blank by default) — BGA won't use the aux value for
+// tie-breaking display otherwise.
+$this->game->bga->playerScoreAux->set(int $playerId, int $score): void;
+```
+
+**Takeaway**: same category of trap as the stats API above — a plausible-looking guessed signature (`setAll($score, $tieBreaker)`) throws live instead of working. Don't reach for raw `UPDATE player SET player_score = ...` just because the column is visible from a `SELECT` — go through the counter object. `EndGame.php` was switched off the raw-SQL form on 2026-10-20 (see `docs/loaf-remarks.md`'s matching entry).
+
+### `gameinfos.jsonc`/`gameoptions.jsonc`/`stats.jsonc` string fields are translatable with no code wrapper — the platform wraps them server-side, not you
+
+These config files are JSON(C), so a literal `clienttranslate(...)`/`totranslate(...)` call can't go *in* them — there's nowhere to put a function call inside a JSON string value. BGA's own docs confirm the mechanism for this file family instead: a `gameoptions.jsonc` string "will also automatically have any translation displayed at the client — you don't need to do anything EXCEPT make sure that it is wrapped in a `totranslate()` **on the server**" — i.e. BGA Studio's own loader wraps each relevant field in `totranslate()` when it parses the file; the string itself just needs to be the correct English text, written as a plain JSON value. `gameinfos.jsonc`'s own `game_name` comment ("will serve as the basis for translation") is the same pattern. Concretely verified for `gameoptions.jsonc`'s `name`/`description` fields and `gameinfos.jsonc`'s `tie_breaker_description` (filled in 2026-10-20, see `docs/loaf-remarks.md`'s matching entry) — not yet independently confirmed live that it actually reaches the translator queue for every field in this family, so still worth a spot-check on Studio's translation page after your next sync if a new descriptive field here needs translating.
+
+**Takeaway**: don't try to wrap a `gameinfos.jsonc`/`gameoptions.jsonc`/`stats.jsonc` string value in `clienttranslate()`/`self::_()`/`totranslate()` yourself — it's invalid JSON and unnecessary. Just write the plain English string; the platform's own config-file parser handles translation-marking for this file family, unlike PHP game logic where *you* must call the translation helper yourself (see "Wrap every user-facing string..." below).
+
+---
+
 ### Error: "Declaration of Game::setupNewGame(...) must be compatible with Table::setupNewGame(...)"
 
 ```

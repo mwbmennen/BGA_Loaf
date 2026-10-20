@@ -143,10 +143,15 @@ class EndGame extends \Bga\GameFramework\States\GameState
         );
 
         foreach ($scores as $playerId => $scoring) {
+            // Real API, not raw SQL on player_score/player_score_aux -- confirmed live via the
+            // sibling Gelati project's EndScore.php (docs/bga-studio-reference.md's
+            // playerScore/playerScoreAux entry) after two earlier signature guesses threw fatal
+            // errors live. player_fired is this project's own custom column with no BGA counter
+            // equivalent, so it stays on raw SQL.
+            $this->game->bga->playerScore->set($playerId, $scoring->score);
+            $this->game->bga->playerScoreAux->set($playerId, $scoring->aux);
             $this->game->DbQuery(
-                "UPDATE `player` SET `player_score` = {$scoring->score}, " .
-                    "`player_score_aux` = {$scoring->aux}, " .
-                    "`player_fired` = " . ($scoring->fired ? 1 : 0) .
+                "UPDATE `player` SET `player_fired` = " . ($scoring->fired ? 1 : 0) .
                     " WHERE `player_id` = $playerId"
             );
 

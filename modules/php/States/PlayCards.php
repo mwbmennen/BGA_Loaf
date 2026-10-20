@@ -109,6 +109,11 @@ class PlayCards extends GameState
             throw new UserException(clienttranslate('You have already committed a work card this round'));
         }
 
+        // Committing doesn't end this player's turn -- they stay multiactive either way (see
+        // this method's own comment on allPlayersCommitted()), so per BGA's own docs this is
+        // exactly the "action which does not lead to turn end" case giveExtraTime is for.
+        $this->game->giveExtraTime($currentPlayerId);
+
         $this->game->DbQuery(
             "UPDATE `work_card` SET `location` = 'played' WHERE `player_id` = $currentPlayerId AND `value` = $value"
         );
@@ -195,6 +200,10 @@ class PlayCards extends GameState
         if ($this->allPlayersCommitted()) {
             throw new UserException(clienttranslate('Every player has already committed -- you can no longer cancel'));
         }
+
+        // Cancelling never ends this player's turn -- they always stay multiactive afterward,
+        // waiting to recommit. Same giveExtraTime rationale as actCommitCard() above.
+        $this->game->giveExtraTime($currentPlayerId);
 
         $this->game->DbQuery(
             "UPDATE `work_card` SET `location` = 'hand' WHERE `player_id` = $currentPlayerId AND `value` = " . (int) $playedValue
