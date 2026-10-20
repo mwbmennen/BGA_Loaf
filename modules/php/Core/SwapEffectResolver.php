@@ -10,10 +10,10 @@ use InvalidArgumentException;
  * Resolves the two advanced "swap" effects: `swap_discard_lower_by_at_most` (rulebook "Card,
  * -X": take the played card back, then discard a card at most X lower than it) and
  * `swap_discard_higher_by_at_least` ("Card, +X": same shape, at least X higher). Pure/DB-free
- * -- see docs/loaf-implementation-plan.md §2.
+ * (directly testable under PHPUnit).
  *
- * Players pick freely among multiple eligible cards (confirmed, not assumed --
- * docs/loaf-phase4-plan.md §4), so this class doesn't decide *which* eligible card is
+ * Players pick freely among multiple eligible cards, so this
+ * class doesn't decide *which* eligible card is
  * discarded; it computes the eligible set for the interactive state to offer, and validates/
  * finalizes whatever the player picks (or applies the deterministic fallback if there was
  * nothing eligible to pick from).

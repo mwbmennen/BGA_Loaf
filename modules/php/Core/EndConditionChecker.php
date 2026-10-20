@@ -6,14 +6,15 @@ namespace Bga\Games\loaf\Core;
 
 /**
  * Tracks weighted Happy/Angry boss-pile counts and reports whether the game has ended.
- * Pure/DB-free -- see docs/loaf-implementation-plan.md §2. Deliberately weight-aware from
- * day one (docs/loaf-phase2-plan.md §4/§2): every basic card has `counts_as_two: false`, so
- * weight is always 1 in practice until Phase 4 enables advanced cards, but building this
- * class against the real per-card weight now means Phase 4 doesn't need to revisit it.
+ * Pure/DB-free (directly testable under PHPUnit). Deliberately weight-aware from the start:
+ * every basic card has `counts_as_two: false`, so weight is always 1 in practice until
+ * advanced cards are enabled, but building this class against the real per-card weight up
+ * front means enabling advanced cards doesn't need to revisit it.
  *
  * Deliberately stateless: callers pass in the current card types filed under each pile
- * (queried fresh from `round_card` each time) rather than this class tracking a running
- * total itself -- see docs/loaf-phase2-plan.md §4 for why a tracked global was rejected.
+ * (queried fresh from `round_card` each time) rather than this class tracking a running total
+ * itself -- a tracked global could drift out of sync with the actual filed cards; recomputing
+ * from the authoritative DB state each time can't.
  */
 final class EndConditionChecker
 {
@@ -37,8 +38,8 @@ final class EndConditionChecker
 
     /**
      * @return 'happy'|'angry'|null Which boss pile has reached the end threshold, or null if
-     *     neither has (yet). Uses >= rather than ===: a weight-2 card (Phase 4) can push a
-     *     pile from below the threshold to past it in one step, not just onto it exactly.
+     *     neither has (yet). Uses >= rather than ===: a weight-2 card can push a pile from
+     *     below the threshold to past it in one step, not just onto it exactly.
      */
     public static function checkEnd(int $happyWeight, int $angryWeight): ?string
     {

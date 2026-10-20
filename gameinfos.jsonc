@@ -67,8 +67,8 @@
   "language_dependency": false,
 
   // Colors attributed to players -- matches the 6 physical baker-figure/work-card colors
-  // (docs/Loaf-English-rules.md: "6 baker figures (in each of 6 player colours)"), not BGA's
-  // generic 12-color default. Exactly 6 entries, matching this game's max player count.
+  // ("6 baker figures (in each of 6 player colours)"), not BGA's generic 12-color default.
+  // Exactly 6 entries, matching this game's max player count.
   "player_colors": [
     "36A148", // green
     "E67524", // orange

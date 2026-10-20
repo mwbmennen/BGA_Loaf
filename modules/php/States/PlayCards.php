@@ -24,10 +24,8 @@ class PlayCards extends GameState
 
     /**
      * type: StateType::MULTIPLE_ACTIVE_PLAYER only declares that this state *permits*
-     * several simultaneously-active players -- it doesn't activate anyone by itself.
-     * Confirmed live (2026-08-08): without this call, nobody is marked active on entry, every
-     * connecting player sees "Waiting for other players to commit a work card", and nobody
-     * gets action buttons at all.
+     * several simultaneously-active players -- it doesn't activate anyone by itself. Without
+     * this call, nobody is marked active on entry and nobody gets action buttons at all.
      */
     public function onEnteringState() {
         $this->game->gamestate->setAllPlayersMultiactive();
@@ -35,11 +33,11 @@ class PlayCards extends GameState
 
     /**
      * Every player commits one work card from hand, face down. No turn order -- this is
-     * fully simultaneous (docs/Loaf-English-rules.md, "Structure of a round").
+     * fully simultaneous.
      *
      * No getArgs() override here: an earlier version exposed each player's hand values via
      * BGA's `_private`/`_merge_private` mechanism specifically to build a status-bar
-     * action-button list client-side. Phase 5 §8 replaced that button list with a real
+     * action-button list client-side. A later version replaced that button list with a real
      * `HandStock` seeded from `getAllDatas()`'s own `myHand` (Game.php) instead -- the same
      * data by a different, already-existing route -- so a per-state-entry `_private`
      * round-trip of the same values became redundant. Removed rather than left as unread dead
@@ -48,9 +46,8 @@ class PlayCards extends GameState
      * array_map('intval', ...) matters here: getObjectListFromDb() returns raw DB values as
      * strings, but actCommitCard() compares against this with in_array(..., true) (strict) --
      * without casting, "3" !== 3 and every commit fails with "You do not have that work card
-     * in hand" regardless of what's actually in the player's hand (confirmed live
-     * 2026-08-08). Same cast this codebase already applies in ResolveRound.php for the same
-     * reason.
+     * in hand" regardless of what's actually in the player's hand. Same cast this codebase
+     * already applies in ResolveRound.php for the same reason.
      */
     private function getHandValues(int $playerId): array {
         return array_map('intval', $this->game->getObjectListFromDb(
@@ -78,18 +75,16 @@ class PlayCards extends GameState
 
     /**
      * Deliberately re-fetches the acting player's hand directly rather than trusting the
-     * framework's injected `array $args` magic parameter to carry getArgs()'s `_private`
-     * data through unwrapped -- confirmed live (2026-08-08) that it doesn't: `$args` here
-     * came back without a `handValues` key at all (`_merge_private` only affects what the
-     * client receives, not what's injected into the action handler).
+     * framework's injected `array $args` magic parameter to carry getArgs()'s `_private` data
+     * through unwrapped -- it doesn't (`_merge_private` only affects what the client receives,
+     * not what's injected into the action handler).
      *
-     * Uses `$currentPlayerId`, not `$activePlayerId`. Per BGA's own docs, `$activePlayerId`
-     * is "not necessarily the one triggering the action" and is only reliable on
-     * `ACTIVE_PLAYER` states; on `MULTIPLE_ACTIVE_PLAYER` states like this one it silently
-     * resolved to player id 0 (confirmed live via a stack trace showing
-     * `actCommitCard(3, 0, ...)`), so every check/update/notification below was silently
-     * targeting a nonexistent player. `$currentPlayerId` -- "the player who triggered the
-     * action" -- is the one that's actually reliable here.
+     * Uses `$currentPlayerId`, not `$activePlayerId`. Per BGA's own docs, `$activePlayerId` is
+     * "not necessarily the one triggering the action" and is only reliable on `ACTIVE_PLAYER`
+     * states; on `MULTIPLE_ACTIVE_PLAYER` states like this one it silently resolves to player
+     * id 0, so every check/update/notification below would silently target a nonexistent
+     * player. `$currentPlayerId` -- "the player who triggered the action" -- is the one that's
+     * actually reliable here.
      *
      * @throws UserException
      */
@@ -126,14 +121,9 @@ class PlayCards extends GameState
         // at all). Needed for PlayCards::zombie()'s auto-commit, which never runs this
         // player's own onCommit() click handler client-side, so Game.js's pendingCommitCard
         // (normally set at click-time) would otherwise stay unset and the card would silently
-        // never leave their hand display (confirmed live: a zombied player's hand kept
-        // showing the auto-played card). `_merge_private` puts `value` directly on this
-        // player's own `args` (vs. nested under `args._private`) so notif_playerCommitted can
-        // read `args.value` directly. Unverified locally (first use of `_private`/
-        // `NotificationMessage`, no vendored framework) -- Game.js only uses this as a
-        // fallback when pendingCommitCard isn't already set from a real click, so a live
-        // surprise here can't regress the normal human-commit path, only leave the zombie case
-        // exactly as broken as before.
+        // never leave their hand display. `_merge_private` puts
+        // `value` directly on this player's own `args` (vs. nested under `args._private`) so
+        // notif_playerCommitted can read `args.value` directly.
         $this->game->bga->notify->all(
             'playerCommitted',
             clienttranslate('${player_name} has committed their work card'),
@@ -151,17 +141,11 @@ class PlayCards extends GameState
         );
 
         // Cancel (actCancelCommit) needs a committed player to still be able to act, so nobody
-        // is deactivated individually anymore (the old single setPlayerNonMultiactive() call
-        // right here, per commit, is gone) -- completion is instead detected explicitly and
+        // is deactivated individually anymore -- completion is instead detected explicitly and
         // everyone is deactivated together, in one batch, only once the round is genuinely
-        // done. Reuses the same primitive the old code already relied on (per BGA docs,
-        // unverified locally, see docs/loaf-phase1-plan.md's "Framework API confidence note"),
-        // just called once per player here instead of once per commit.
-        //
-        // Confirmed live (2026-09-25): looping setPlayerNonMultiactive() across every player
-        // within a single request -- all of them still active going into the loop -- does
-        // auto-transition cleanly on the last call, the same way the old one-call version did.
-        // If a future BGA framework change ever breaks this, the fallback is a single explicit
+        // done (looping setPlayerNonMultiactive() across every player within a single request
+        // auto-transitions cleanly on the last call). If a future BGA
+        // framework change ever breaks this, the fallback is a single explicit
         // `$this->game->gamestate->nextState(ResolveRound::class)` call instead of the loop.
         if ($this->allPlayersCommitted()) {
             foreach ($this->allPlayerIds() as $playerId) {
@@ -195,8 +179,8 @@ class PlayCards extends GameState
         }
         // Defense-in-depth: by construction unreachable once allPlayersCommitted() is true
         // (this state has already transitioned away by the same actCommitCard() call that made
-        // it true, confirmed live -- see actCommitCard's own comment) -- kept explicit rather
-        // than assumed anyway, since a defensive check here costs nothing.
+        // it true -- see actCommitCard's own comment) -- kept explicit rather than assumed
+        // anyway, since a defensive check here costs nothing.
         if ($this->allPlayersCommitted()) {
             throw new UserException(clienttranslate('Every player has already committed -- you can no longer cancel'));
         }
@@ -221,27 +205,24 @@ class PlayCards extends GameState
     }
 
     /**
-     * Confirmed live (2026-09-25): a zombie player MUST end up deactivated as a direct result
-     * of this call, regardless of whether everyone else has committed yet -- leaving them
-     * active (the normal outcome of actCommitCard for any *real* player, so a connected player
-     * can still cancel) threw `Bga\Exceptions\Framework\ZombieStateException`, "Can't manage
-     * zombie player in this game state (20)", the one time this zombied player wasn't also the
-     * last one needed to complete the round. BGA's own zombie dispatch (`checkZombieTurn()` /
-     * `checkReturnState()`, per the stack trace) requires the specific player it just zombied
-     * to no longer be counted active afterward -- it can't tell "this player is fine to stay
-     * active and idle" apart from "zombie handling failed to make progress for them". A zombie
-     * player also has no further use for the ability to cancel anyway (nobody's there to press
-     * the button), so losing it here is the right tradeoff, not a compromise.
+     * A zombie player MUST end up deactivated as a direct result of this call, regardless of
+     * whether everyone else has committed yet -- leaving them active (the normal outcome of
+     * actCommitCard for any *real* player, so a connected player can still cancel) throws
+     * `Bga\Exceptions\Framework\ZombieStateException` the one time this zombied player wasn't
+     * also the last one needed to complete the round. BGA's own
+     * zombie dispatch requires the specific player it just zombied to no longer be counted
+     * active afterward -- it can't tell "this player is fine to stay active and idle" apart
+     * from "zombie handling failed to make progress for them". A zombie player also has no
+     * further use for the ability to cancel anyway (nobody's there to press the button), so
+     * losing it here is the right tradeoff, not a compromise.
      *
      * Handles both cases uniformly: not yet committed (auto-commits via actCommitCard first)
-     * and already committed (an earlier real commit, now zombied while just waiting -- the same
-     * failure mode, confirmed live only for the not-yet-committed case but the mechanism applies
-     * equally to this one). `allPlayersCommitted()` is checked *after* the conditional commit,
-     * not before -- if this zombie's own commit happened to be the last one needed,
-     * actCommitCard's own batch-completion branch already deactivated every player, including
-     * this one, moments ago; deactivating them again here is skipped rather than assumed
-     * harmless, since setPlayerNonMultiactive's behavior on an already-inactive player isn't
-     * verified.
+     * and already committed (an earlier real commit, now zombied while just waiting).
+     * `allPlayersCommitted()` is checked *after* the conditional commit, not before -- if this
+     * zombie's own commit happened to be the last one needed, actCommitCard's own batch-
+     * completion branch already deactivated every player, including this one, moments ago;
+     * deactivating them again here is skipped rather than assumed harmless, since
+     * setPlayerNonMultiactive's behavior on an already-inactive player isn't verified.
      */
     function zombie(int $playerId) {
         $hasPlayedCard = $this->game->getUniqueValueFromDb(

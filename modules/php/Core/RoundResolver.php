@@ -9,7 +9,7 @@ use InvalidArgumentException;
 /**
  * Resolves one round of L'Oaf: compares the total of all played work cards to the order's
  * target, and computes the reputation swing for the highest (on success) or lowest (on
- * failure) card player(s). Pure/DB-free — see docs/loaf-implementation-plan.md §2.
+ * failure) card player(s). Pure/DB-free (directly testable under PHPUnit).
  */
 final class RoundResolver
 {

@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Bga\Games\loaf\Core;
 
 /**
- * Immutable outcome of scoring one player at game end -- see docs/loaf-phase3-plan.md §6.
+ * Immutable outcome of scoring one player at game end.
  */
 final class ScoringResult
 {

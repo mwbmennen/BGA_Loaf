@@ -39,9 +39,9 @@ class ResolveRound extends GameState
 
         // Public log visibility for checking round-by-round calculations by hand -- what a
         // player played this round is open information once the round resolves (confirmed --
-        // this is distinct from ongoing discard-pile *state* staying hidden per
-        // docs/loaf-open-questions.md Q3, which is about getAllDatas()/live state, not a
-        // one-time game-log announcement at resolution time; that rule is untouched). Emitted
+        // this is distinct from ongoing discard-pile *state* staying hidden, which is about
+        // getAllDatas()/live state, not a one-time game-log announcement at resolution time;
+        // that rule is untouched). Emitted
         // before any reputationChanged notification below so the log reads cause-then-effect --
         // "played 5" precedes "moves +2 on the reputation track" instead of the other way
         // around. No reputation value here: it isn't final yet (round-result delta and any
@@ -75,10 +75,9 @@ class ResolveRound extends GameState
         // writes reputation, so there's no ordering hazard in pulling it earlier. The review
         // *effect's application* (resolveReputationEffect/discard_recycle/etc., in the switch
         // below) still runs later, after $currentReputations is queried post-loop, per rulebook
-        // step ordering (docs/loaf-phase2-plan.md §3.1/§7) -- only the notification order moved
-        // up, not the effect's own resolution order. Also still needed ahead of the
-        // played->discard bulk move further down, since the swap-effect branch needs to know
-        // the effect before that move runs (docs/loaf-phase4-plan.md §4).
+        // step ordering -- only the notification order moved up, not the effect's own
+        // resolution order. Also still needed ahead of the played->discard bulk move further
+        // down, since the swap-effect branch needs to know the effect before that move runs.
         $reviewCardId = (int) $this->game->bga->globals->get(GLOBAL_CURRENT_REVIEW_CARD_ID);
         $reviewCardType = $this->game->getUniqueValueFromDb(
             "SELECT `card_type` FROM `round_card` WHERE `card_id` = $reviewCardId"
@@ -100,12 +99,10 @@ class ResolveRound extends GameState
                 'bossPile' => $result->success ? 'happy' : 'angry',
                 // The client's boss-pile counter must increment by this, not always 1 -- a
                 // counts_as_two card is worth 2 toward EndConditionChecker's weighted trigger,
-                // and the displayed count needs to match what actually ends the game
-                // (docs/loaf-remarks.md's Phase 4 entry -- confirmed live the counter under-
-                // reported by exactly 1 when this was still hardcoded).
+                // and the displayed count needs to match what actually ends the game.
                 'weight' => $reviewEffect['counts_as_two'] ? 2 : 1,
                 // So the client can move the actual card (not just bump a counter) from the
-                // pending-review display into the correct boss pile -- docs/loaf-phase5-plan.md §7.
+                // pending-review display into the correct boss pile.
                 'reviewCardId' => $reviewCardId,
                 'reviewCardType' => $reviewCardType,
             ]
@@ -137,19 +134,18 @@ class ResolveRound extends GameState
 
         // Unlike RoundStart's 'reviewCardRevealedSuccess'/'reviewCardRevealedFail'
         // (speculative -- describe both sides before either has happened), this describes
-        // only the side that actually just resolved --
-        // the round's success/fail above already fixed which one. Reuses the exact same
-        // target/amount wording as the reveal message (ReviewEffectDescription), so a tester
-        // can compare "what was promised" against "what happened" using identical phrasing.
+        // only the side that actually just resolved -- the round's success/fail above already
+        // fixed which one. Reuses the exact same target/amount wording as the reveal message
+        // (ReviewEffectDescription), so a tester can compare "what was promised" against "what
+        // happened" using identical phrasing.
         //
-        // effectMessage() returns a complete, self-contained message -- NOT a fragment to
-        // nest into a separately-written outer template (see ReviewEffectDescription's own
-        // docblock for why the old fragment-based design, confirmed live via
-        // &dummyTranslations, could never actually translate the amount/effect portion:
-        // docs/loaf-remarks.md's "Notification game-log text can't actually be translated for
-        // the amount/effect portion" entry). `target`/`pile` are always clean, static,
-        // already-registered strings -- safe to mark `i18n` so the client translates them
-        // independently per recipient; `amount` is just a formatted number, never translated.
+        // effectMessage() returns a complete, self-contained message -- NOT a fragment to nest
+        // into a separately-written outer template: nesting it as a substituted value inside
+        // another translated template would mean the client's translation lookup runs against
+        // already-substituted text, which was never registered as a dictionary key, so it would
+        // silently never translate. `target`/`pile` are always clean, static, already-registered strings -- safe to mark
+        // `i18n` so the client translates them independently per recipient; `amount` is just a
+        // formatted number, never translated.
         $built = ReviewEffectDescription::effectMessage($reviewEffect, $side, 'reviewEffectApplied');
         $this->game->bga->notify->all(
             'reviewEffectApplied',
@@ -169,8 +165,8 @@ class ResolveRound extends GameState
         // (checked now, against their hand as it stands with nothing yet returned) is excluded
         // from the bulk played->discard move and left with their card still in `location =
         // 'played'`. That's deliberately the *only* signal ResolveAdvancedEffect needs to find
-        // its active players -- no new persisted global required (docs/loaf-phase4-plan.md
-        // §4/§9). Players with no eligible discard use the rulebook's own deterministic
+        // its active players -- no new persisted global required. Players with no eligible
+        // discard use the rulebook's own deterministic
         // fallback ("if they can't, they discard the played card instead"), which is exactly
         // what the ordinary bulk move already does, so they're simply never deferred.
         $needsSwapChoicePlayerIds = [];
@@ -213,11 +209,10 @@ class ResolveRound extends GameState
             // deliberate no-op either way (only relevant for its counts_as_two flag).
         }
 
-        // End condition: the real weighted boss-pile trigger, replacing Phase 1's placeholder
-        // (deck-exhaustion) end condition -- docs/loaf-phase2-plan.md §4/§5. Recomputed fresh
-        // from round_card every time rather than a tracked global, to avoid the
-        // uninitialized-global bug class from Phase 1's live debugging (see
-        // docs/bga-studio-reference.md §5). Every card in review_happy was filed via its own
+        // End condition: the real weighted boss-pile trigger, replacing an earlier placeholder
+        // (deck-exhaustion) end condition. Recomputed fresh from round_card every time rather
+        // than a tracked global, to avoid an uninitialized-global bug class hit during earlier
+        // debugging. Every card in review_happy was filed via its own
         // success side, and every card in review_angry via its own fail side -- that's how
         // it got there -- so the $side argument below is fixed per pile, not per card.
         // Independent of the review effect above: discard/swap/recycle effects never touch a
@@ -327,7 +322,7 @@ class ResolveRound extends GameState
     }
 
     /**
-     * Fully deterministic (docs/Loaf-English-rules.md line 206) -- no interactive state
+     * Fully deterministic -- no interactive state
      * needed, unlike discard_choice/the two swap effects.
      */
     private function resolveDiscardRecycle(array $reviewEffect, array $currentReputations): void
@@ -369,12 +364,9 @@ class ResolveRound extends GameState
 
             // Separate player-scoped notification (not folded into the broadcast one above) so
             // the client can actually render the recycled card in this player's real HandStock
-            // (docs/loaf-phase5-plan.md §9) -- the broadcast notification deliberately omits
-            // `value`, since discard-pile contents are private per docs/loaf-open-questions.md
-            // Q3 and notify->all's payload is visible to every connected client regardless of
-            // whether the message text references it. First use of notify->player() in this
-            // project -- already stubbed in tests/stubs/BgaFrameworkStubs.php but unverified
-            // live, per docs/loaf-phase1-plan.md's "Framework API confidence note".
+            // -- the broadcast notification deliberately omits `value`, since discard-pile
+            // contents are private and notify->all's payload is visible to every connected
+            // client regardless of whether the message text references it.
             $this->game->bga->notify->player(
                 $playerId,
                 'cardRecycledValue',

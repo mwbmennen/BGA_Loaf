@@ -5,14 +5,14 @@ declare(strict_types=1);
 namespace Bga\Games\loaf\Core;
 
 /**
- * Static content for the 24 physical round cards (see docs/loaf-card-data.json). Every card
- * carries both sides even though Phase 1 only reads `order.per_player_average` --
- * review-effect resolution (ReviewEffectResolver) is a later phase, and porting the full data
- * now avoids a second transcription pass. Only the 12 `basic_*` entries are shuffled into the
- * deck at setup; `advanced_*` entries wait for the Phase 4 opt-in table option.
+ * Static content for the 24 physical round cards. Every card carries both sides even though
+ * the order side only reads `order.per_player_average` -- review-effect resolution
+ * (ReviewEffectResolver) needs the other side too, and porting the full data up front avoids a
+ * second transcription pass later. Only the 12 `basic_*` entries are shuffled into the deck at
+ * setup; `advanced_*` entries wait for the advanced-cards opt-in table option.
  *
- * Pure/DB-free (no BGA dependency) so it's reusable outside a live BGA table -- see
- * docs/loaf-implementation-plan.md §2, "Why pure, DB-free matters beyond PHPUnit".
+ * Pure/DB-free (no BGA dependency) so it's reusable outside a live BGA table -- directly
+ * testable under PHPUnit without any framework stubs.
  */
 final class RoundCardData
 {

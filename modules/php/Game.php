@@ -67,7 +67,7 @@ class Game extends \Bga\GameFramework\Table
      */
     public function getGameProgression()
     {
-        // 11 rounds is the most the 12-card basic deck can support (see docs/loaf-phase1-plan.md).
+        // 11 rounds is the most the 12-card basic deck can support.
         $currentRound = (int) $this->bga->globals->get(GLOBAL_CURRENT_ROUND, 0);
 
         return (int) min(100, round(($currentRound / 11) * 100));
@@ -118,20 +118,18 @@ class Game extends \Bga\GameFramework\Table
 
         // `color` (hex, no `#`) is explicitly selected rather than relied on from any automatic
         // framework merge -- same "don't trust an unverified default" discipline as the Deck
-        // row-ordering call in RoundStart.php (docs/loaf-phase1-plan.md's "Framework API
-        // confidence note"): no vendored framework locally to confirm whether `gamedatas.players`
-        // gets `color` for free, so Phase 5's reputation-track token art (docs/loaf-phase5-plan.md
-        // §5, needs each player's color to pick the right token sprite) queries it directly.
+        // row-ordering call in RoundStart.php: no vendored framework locally to confirm whether
+        // `gamedatas.players` gets `color` for free, so the reputation-track token art (needs
+        // each player's color to pick the right token sprite) queries it directly.
         $result['players'] = $this->getCollectionFromDb(
             'SELECT `player_id` AS `id`, `player_score` AS `score`, `player_reputation` AS `reputation`, ' .
                 '`player_fired` AS `fired`, `player_color` AS `color` FROM `player`'
         );
         // getCollectionFromDb returns every column as a PHP string (raw DB driver output, not
         // cast) -- harmless as long as every consumer only ever displays these as text, which
-        // was true before Phase 5's reputation-track token math started doing real arithmetic
+        // was true before the reputation-track token math started doing real arithmetic
         // and strict `=== 0` comparisons on `reputation` client-side. Same root cause, same fix,
-        // as `Game::getPartCounts()`'s documented `(int)` cast bug
-        // (docs/bga-studio-reference.md's "A missed (int) cast on a DB value..." section) --
+        // as this codebase's other documented `(int)` cast bugs --
         // cast every numeric field here at the source rather than defensively in every JS
         // call site that touches `gamedatas.players`.
         foreach ($result['players'] as &$player) {
@@ -143,7 +141,7 @@ class Game extends \Bga\GameFramework\Table
         unset($player);
 
         // Own hand values in full; other players only get a hand count (never values), per
-        // the "discard/hand visible only to owner" rule (docs/loaf-open-questions.md Q3).
+        // the "discard/hand visible only to owner" rule.
         $result['handCount'] = $this->getCollectionFromDb(
             "SELECT `player_id` AS `id`, COUNT(*) AS `count` FROM `work_card` WHERE `location` = 'hand' GROUP BY `player_id`",
             true
@@ -153,16 +151,16 @@ class Game extends \Bga\GameFramework\Table
         // explains why: a strict in_array/=== check silently breaks on "3" !== 3), and as the
         // `players` query's (int) casts above. Matters here specifically because
         // handCardSpriteIndex() in Game.js does `colorIndex * HAND_CARD_SHEET_COLS + value` --
-        // `+` between a number and an uncast numeric-string *concatenates* instead of adding
-        // (docs/bga-studio-reference.md's "A missed (int) cast..." section), corrupting the
-        // sprite lookup for every hand card once §8's HandStock started doing that arithmetic.
+        // `+` between a number and an uncast numeric-string *concatenates* instead of adding,
+        // corrupting the sprite lookup for every hand card once the HandStock started doing
+        // that arithmetic.
         $result['myHand'] = array_map('intval', $this->getObjectListFromDb(
             "SELECT `value` FROM `work_card` WHERE `player_id` = $currentPlayerId AND `location` = 'hand' ORDER BY `value`",
             true
         ));
         // WHO has committed a card this round (not what -- that stays hidden until reveal, same
         // privacy rule as above). Needed so a page refresh mid-round can rebuild the face-down
-        // "committed" card slots (docs/loaf-phase5-plan.md §8) the same way a live
+        // "committed" card slots the same way a live
         // `playerCommitted` notification already does -- same "setup + notification" dual
         // exposure pattern already used for currentReviewCardId/currentOrderCardId above.
         $result['committedPlayerIds'] = array_map('intval', $this->getObjectListFromDb(
@@ -189,12 +187,10 @@ class Game extends \Bga\GameFramework\Table
         // Empty unless this round's committed cards have already been revealed
         // (GLOBAL_CARDS_REVEALED_THIS_ROUND, set in ResolveRound.php right after
         // cardPlayedRevealed fires, reset in RoundStart.php) -- without this, a page refresh
-        // mid-ResolveRound/ResolveAdvancedEffect reconstructed every committed card as a
-        // face-down placeholder unconditionally, even the requesting player's *own* card, even
-        // though it had already been publicly revealed and everyone (including a client that
-        // never refreshed) could already see its real value. Confirmed live: a player's own
-        // committed card stayed stuck face-down after a refresh, mid a swap-effect choice they
-        // needed to actually see the card to make.
+        // mid-ResolveRound/ResolveAdvancedEffect reconstructs every committed card as a
+        // face-down placeholder unconditionally, even the requesting player's *own* already-
+        // publicly-revealed card, leaving it stuck face-down mid a swap-effect choice that
+        // needs the real value visible to make.
         $result['revealedCommittedValues'] = [];
         if ((bool) $this->bga->globals->get(GLOBAL_CARDS_REVEALED_THIS_ROUND, false)) {
             $result['revealedCommittedValues'] = array_map('intval', $this->getCollectionFromDb(
@@ -213,7 +209,7 @@ class Game extends \Bga\GameFramework\Table
         // The order card is re-derived
         // from round_card directly (lowest card_location_arg still in 'deck') rather than a new
         // persisted global, matching this codebase's existing "recompute rather than track
-        // redundant state" discipline (docs/loaf-phase5-plan.md §7).
+        // redundant state" discipline.
         $result['currentReviewCardId'] = (int) $this->bga->globals->get(GLOBAL_CURRENT_REVIEW_CARD_ID);
         $result['currentReviewCardType'] = $this->getUniqueValueFromDb(
             "SELECT `card_type` FROM `round_card` WHERE `card_id` = {$result['currentReviewCardId']}"
@@ -235,15 +231,14 @@ class Game extends \Bga\GameFramework\Table
         // The physical card count (above) and the *weighted* count that actually decides when
         // the game ends (EndConditionChecker -- a counts_as_two card is worth 2) are two
         // different numbers. The client's "X / 5" counter must show the weighted one, or a
-        // counts_as_two card makes the game end while the displayed count still reads below 5
-        // -- confirmed live (docs/loaf-remarks.md's Phase 4 entry).
+        // counts_as_two card makes the game end while the displayed count still reads below 5.
         $result['bossHappyWeight'] = EndConditionChecker::weightedCount(array_column($happyCards, 'type'), 'success');
         $result['bossAngryWeight'] = EndConditionChecker::weightedCount(array_column($angryCards, 'type'), 'fail');
 
         // Plain-text per-card-type explanations for the hover-zoom tooltip (Game.js's
         // setupRoundCardFrontDiv) -- static/table-independent, so it's cheap to send every type
-        // rather than filtering to only the ones currently in play (docs/loaf-remarks.md's Phase
-        // 5 entry: these were card-back-agnostic to begin with, no basic/advanced spoiler risk).
+        // rather than filtering to only the ones currently in play (these are card-back-agnostic
+        // to begin with, no basic/advanced spoiler risk).
         $result['roundCardDescriptions'] = $this->buildRoundCardDescriptions();
 
         return $result;
@@ -252,17 +247,11 @@ class Game extends \Bga\GameFramework\Table
     /**
      * Raw, untranslated {message, args, i18nArgs} triples, sent to the client as-is --
      * Game.js's setupRoundCardFrontDiv() does the actual client-side translation and
-     * placeholder substitution,
-     * the same client-side pattern every notify->all() message in this codebase already uses.
-     *
-     * Replaced a server-side version built on BGA's deprecated per-request translation helper
-     * on 2026-10-20 (see docs/loaf-remarks.md's matching entry): BGA Studio's own code-quality
-     * check flags that helper as deprecated, and its suggested replacement, `clienttranslate()`,
-     * is a pure registration marker with no server-side translation effect at all (confirmed from
-     * BGA's own docs: "transparent... will return the original English string without any
-     * change"). Server-side translation was never going to stay viable either way, so this
-     * moves the tooltip onto the same client-translated path as everything else, rather than
-     * patching around a deprecated mechanism.
+     * placeholder substitution, the same pattern every notify->all() message in this codebase
+     * already uses. Not resolved server-side: BGA's `self::_()`/`_()` translation helper is
+     * deprecated, and its suggested replacement, `clienttranslate()`, is a pure registration
+     * marker with no server-side translation effect at all -- the client-translated path is
+     * the only viable option here, not a workaround.
      *
      * @return array<string, array{
      *     order: array{message: string, args: array<string, string>},
@@ -369,10 +358,10 @@ class Game extends \Bga\GameFramework\Table
         // Shuffle the round cards into the deck: the 12 basic cards always, plus the 12
         // advanced (croissant) cards only if the with_advanced_cards table option is on
         // (default off, matching the rulebook's own "we recommend not using the advanced
-        // effects when playing for the first time" advice -- docs/loaf-phase4-plan.md §0/§6).
+        // effects when playing for the first time" advice).
         //
-        // Framework API confidence note (docs/bga-studio-reference.md §5-style caveat): the
-        // exact key type $options uses for an option id isn't verified locally (no vendored
+        // Framework API confidence note: the exact key type $options uses for an option id
+        // isn't verified locally (no vendored
         // framework) -- checked defensively for both the int and string form rather than
         // guessing one, so a live surprise here doesn't silently default to "off" instead of
         // failing loudly. If neither key is ever present at all on Studio, that's the real
@@ -400,10 +389,9 @@ class Game extends \Bga\GameFramework\Table
         $this->bga->globals->set(GLOBAL_CURRENT_ROUND, 0);
 
         // Init game statistics (stats.json). Real API is $this->bga->tableStats/playerStats,
-        // NOT the flat Table::initStat()-style scaffold comment this replaced -- see
-        // docs/bga-studio-reference.md's "Table::incStat()/setStat() are deprecated" entry.
-        // Wrapped in try/catch per that entry's defensive pattern: a stats hiccup must never
-        // abort game creation.
+        // NOT the flat Table::initStat()-style scaffold comment this replaced -- that's
+        // deprecated and silently broken on the current framework generation. Wrapped in
+        // try/catch: a stats hiccup must never abort game creation.
         try {
             $this->bga->tableStats->init(['rounds_played', 'ending_boss'], 0);
             $this->bga->playerStats->init(['final_score', 'final_hand_value', 'final_reputation', 'reputation_bonus', 'end_game_bonus'], 0);
@@ -448,9 +436,9 @@ class Game extends \Bga\GameFramework\Table
      * mistake still can't fire against a real published table; the constant defaulting to
      * `false` was previously the only thing preventing that.
      *
-     * `getBgaEnvironment()` itself is unverified live against BGA's framework on this project
-     * (see docs/bga-studio-reference.md's "Debug endpoint access" section) -- it's the pattern
-     * BGA's own docs recommend for gating debug-only code, and the sibling Gelati project uses
+     * `getBgaEnvironment()` itself is unverified live against BGA's framework on this project --
+     * it's the pattern BGA's own docs recommend for gating debug-only code, and the sibling
+     * Gelati project uses
      * it the same way for its `debug_goToState()`/`debug_playOneMove()`, but it hasn't been
      * confirmed live in Studio for this project's framework version yet. It's stubbed to
      * return `'studio'` for PHPUnit (tests/stubs/BgaFrameworkStubs.php), so this method can't
