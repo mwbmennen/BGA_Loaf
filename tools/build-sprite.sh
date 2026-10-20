@@ -129,31 +129,18 @@ for f in "${HAND_FILES[@]}"; do
 done
 # quality 85, not the 90 used elsewhere -- at the 2x DISPLAY_W/H tier this sheet's 78 tiles push
 # it over the 4MB BGA limit at 90 (measured ~4.4MB); 85 lands at ~2.8MB with no visible artifacts
-# (compared crops directly), so it's a compression trade, not a resolution one -- doesn't need
-# the same "split into two files" fix the ZOOM_W/H hand sheets already use.
+# (compared crops directly), so it's a compression trade, not a resolution one -- no need to
+# split this one into two files the way the (since-dropped) hand-card zoom sheets did below.
 montage -font "$MONTAGE_FONT" "${HAND_FILES[@]}" -tile 13x6 -geometry "${DISPLAY_W}x${DISPLAY_H}+0+0" -quality 85 "$IMG_DIR/hand-sheet.jpg"
 check_size "$IMG_DIR/hand-sheet.jpg"
 
-# --- Hand-card zoom sheets (fronts only, no backs -- a repeating back pattern has no fine
-# detail worth a hover-zoom). Split 3 colors per sheet (36 tiles each): a single 72-tile sheet
-# measured 6.15MB, over the 4MB limit -- see docs/loaf-phase5-plan.md §4 step 10. ---
-build_hand_zoom_sheet() {
-    local output="$1"; shift
-    local colors=("$@")
-    local files=()
-    for color in "${colors[@]}"; do
-        for n in $(seq -f "%02g" 0 11); do
-            files+=("$WORKER_CARDS_DIR/work_${color}_${n}.jpg")
-        done
-    done
-    for f in "${files[@]}"; do
-        [[ -f "$f" ]] || { echo "  MISSING: $f" >&2; exit 1; }
-    done
-    montage -font "$MONTAGE_FONT" "${files[@]}" -tile 6x6 -geometry "${ZOOM_W}x${ZOOM_H}+0+0" -quality 90 "$output"
-    check_size "$output"
-}
-build_hand_zoom_sheet "$IMG_DIR/zoom-hand-1.jpg" green orange purple
-build_hand_zoom_sheet "$IMG_DIR/zoom-hand-2.jpg" red white yellow
+# Hand-card zoom sheets (a hover-zoom tooltip for hand/work cards, mirroring the round-card
+# one above) were built here and then dropped, 2026-10-20 -- see docs/loaf-remarks.md's
+# matching entry. The asset pipeline shipped (zoom-hand-1.jpg/zoom-hand-2.jpg, split 3 colors
+# per sheet to stay under the 4MB limit, per docs/loaf-phase5-plan.md §4 step 10) but the
+# client-side tooltip wiring in Game.js was never written, leaving ~6.4MB of unused output
+# pushing img/ over the 15MB pre-release guideline for no functional benefit. Deleted both
+# generated files and this function rather than leave a script path producing dead output.
 
 # --- Board background (single image, not a sprite sheet -- resized to 2x the actual on-screen
 # render width (740, matching gameinfos.jsonc's game_interface_width.min / bga-zoom's

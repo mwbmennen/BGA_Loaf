@@ -1,7 +1,7 @@
 /**
  *------
  * BGA framework: Gregory Isabelli & Emmanuel Colin & BoardGameArena
- * loaf implementation : © <Your name here> <Your email address here>
+ * loaf implementation : © Rian Mennen rian.mennen@gmail.com
  *
  * This code has been produced on the BGA studio platform for use on http://boardgamearena.com.
  * See http://en.boardgamearena.com/#!doc/Studio for more information.
@@ -22,8 +22,14 @@
 // zero-padded file-list order, never derived from the card_type/color strings themselves.
 const ROUND_CARD_SPRITE_INDEX = Object.fromEntries(
   [
-    ...Array.from({ length: 12 }, (_, i) => `basic_${String(i + 1).padStart(2, "0")}`),
-    ...Array.from({ length: 12 }, (_, i) => `advanced_${String(i + 1).padStart(2, "0")}`),
+    ...Array.from(
+      { length: 12 },
+      (_, i) => `basic_${String(i + 1).padStart(2, "0")}`,
+    ),
+    ...Array.from(
+      { length: 12 },
+      (_, i) => `advanced_${String(i + 1).padStart(2, "0")}`,
+    ),
   ].map((type, index) => [type, index]),
 );
 const ROUND_CARD_SHEET_COLS = 6;
@@ -66,11 +72,11 @@ function handCardSpriteIndex(color, value) {
 // reattributeColorsBasedOnPreferences) -- the mapping itself never changes, only who has which.
 const PLAYER_COLOR_HEX_TO_NAME = {
   "36A148": "green",
-  "E67524": "orange",
+  E67524: "orange",
   "7A83BE": "purple",
   "961B20": "red",
-  "EEF9FE": "white",
-  "DEB725": "yellow",
+  EEF9FE: "white",
+  DEB725: "yellow",
 };
 const TOKEN_SHEET_COLS = 6;
 
@@ -137,7 +143,12 @@ function reputationTrackPositionPercent(value) {
 // edges, not mid-column), so true board-center remains correct there.
 function reputationTrackVerticalCenterPercent(value) {
   const t = REPUTATION_TRACK;
-  const centerY = value < 0 ? t.negVerticalCenter : value > 0 ? t.posVerticalCenter : t.boardHeight / 2;
+  const centerY =
+    value < 0
+      ? t.negVerticalCenter
+      : value > 0
+        ? t.posVerticalCenter
+        : t.boardHeight / 2;
   return (centerY / t.boardHeight) * 100;
 }
 
@@ -272,15 +283,20 @@ class PlayCards {
     if (!iHaveCommitted) {
       this.bga.statusBar.setTitle(_("${you} must commit a work card"));
       handStock.onCardClick = (card) => this.onCardSelect(card);
-      if (cancelAllowed && this.game.selectedHandCard) this.showCommitButton(this.game.selectedHandCard);
+      if (cancelAllowed && this.game.selectedHandCard)
+        this.showCommitButton(this.game.selectedHandCard);
     } else {
       handStock.onCardClick = null;
-      const allCommitted = this.game.committedPlayerIds.size === Object.keys(this.game.gamedatas.players).length;
+      const allCommitted =
+        this.game.committedPlayerIds.size ===
+        Object.keys(this.game.gamedatas.players).length;
       this.bga.statusBar.setTitle(
         allCommitted
           ? _("Everyone has committed -- resolving...")
           : cancelAllowed
-            ? _("Waiting for other players -- you can still cancel your commitment")
+            ? _(
+                "Waiting for other players -- you can still cancel your commitment",
+              )
             : _("Waiting for other players to commit a work card"),
       );
       // allCommitted here means this player's own commit was the very last one -- the state
@@ -312,7 +328,9 @@ class PlayCards {
     }
     this.clearSelection();
     this.game.selectedHandCard = card;
-    this.game.handCardsManager.getCardElement(card).classList.add("loaf_hand-card-selected-pending-commit");
+    this.game.handCardsManager
+      .getCardElement(card)
+      .classList.add("loaf_hand-card-selected-pending-commit");
     this.showCommitButton(card);
   }
 
@@ -328,9 +346,13 @@ class PlayCards {
 
   showCommitButton(card) {
     this.bga.statusBar.removeActionButtons();
-    this.bga.statusBar.addActionButton(_("Commit ${value}").replace("${value}", card.value), () => this.onCommit(card), {
-      color: "primary",
-    });
+    this.bga.statusBar.addActionButton(
+      _("Commit ${value}").replace("${value}", card.value),
+      () => this.onCommit(card),
+      {
+        color: "primary",
+      },
+    );
   }
 
   // Stashed so notif_playerCommitted (which fires for the acting player too, same as every
@@ -426,20 +448,25 @@ class ResolveAdvancedEffect {
     // same reasoning, just the other place a hand card can become genuinely clickable.
     this.game.handHoverEnabled = true;
     handStock.getCards().forEach((card) => {
-      handCardsManager.getCardElement(card).classList.toggle(
-        "loaf_hand-card-ineligible",
-        !eligibleValues.includes(card.value),
-      );
+      handCardsManager
+        .getCardElement(card)
+        .classList.toggle(
+          "loaf_hand-card-ineligible",
+          !eligibleValues.includes(card.value),
+        );
     });
     handStock.onCardClick = (card) => {
       if (eligibleValues.includes(card.value)) this.onCardClick(card);
     };
 
     if (this.isSwap) {
-      const committedStock = this.game.committedCardStocks[this.bga.players.getCurrentPlayerId()];
+      const committedStock =
+        this.game.committedCardStocks[this.bga.players.getCurrentPlayerId()];
       const [playedCard] = committedStock.getCards();
       if (playedCard && eligibleValues.includes(playedCard.value)) {
-        handCardsManager.getCardElement(playedCard).classList.add("loaf_hand-card-eligible-swap");
+        handCardsManager
+          .getCardElement(playedCard)
+          .classList.add("loaf_hand-card-eligible-swap");
         committedStock.onCardClick = (card) => this.onCardClick(card);
       }
     }
@@ -449,16 +476,25 @@ class ResolveAdvancedEffect {
     const { handStock, handCardsManager, committedCardStocks } = this.game;
     if (!handStock) return;
     this.game.handHoverEnabled = false;
-    handStock.getCards().forEach((card) =>
-      handCardsManager.getCardElement(card).classList.remove("loaf_hand-card-ineligible"),
-    );
+    handStock
+      .getCards()
+      .forEach((card) =>
+        handCardsManager
+          .getCardElement(card)
+          .classList.remove("loaf_hand-card-ineligible"),
+      );
     handStock.onCardClick = null;
 
-    const committedStock = committedCardStocks?.[this.bga.players.getCurrentPlayerId()];
+    const committedStock =
+      committedCardStocks?.[this.bga.players.getCurrentPlayerId()];
     if (committedStock) {
-      committedStock.getCards().forEach((card) =>
-        handCardsManager.getCardElement(card).classList.remove("loaf_hand-card-eligible-swap"),
-      );
+      committedStock
+        .getCards()
+        .forEach((card) =>
+          handCardsManager
+            .getCardElement(card)
+            .classList.remove("loaf_hand-card-eligible-swap"),
+        );
       committedStock.onCardClick = null;
     }
   }
@@ -521,7 +557,10 @@ export class Game {
     this.resolveRound = new ResolveRound(this, bga);
     this.bga.states.register("ResolveRound", this.resolveRound);
     this.resolveAdvancedEffect = new ResolveAdvancedEffect(this, bga);
-    this.bga.states.register("ResolveAdvancedEffect", this.resolveAdvancedEffect);
+    this.bga.states.register(
+      "ResolveAdvancedEffect",
+      this.resolveAdvancedEffect,
+    );
     this.endGame = new EndGame(this, bga);
     this.bga.states.register("EndGame", this.endGame);
 
@@ -692,7 +731,10 @@ export class Game {
       // collide with this same player's *next* round's committed placeholder (same playerId,
       // same computed id, two different cards) -- a monotonic serial can never repeat like
       // that, whichever stock the card ends up in.
-      getId: (card) => (card.committedSerial !== undefined ? `committed_${card.committedSerial}` : `${card.color}_${card.value}`),
+      getId: (card) =>
+        card.committedSerial !== undefined
+          ? `committed_${card.committedSerial}`
+          : `${card.color}_${card.value}`,
       isCardVisible: (card) => card.visible === true,
       setupFrontDiv: (card, div) => this.setupHandCardFrontDiv(card, div),
       setupBackDiv: (card, div) => this.setupHandCardBackDiv(card, div),
@@ -716,14 +758,22 @@ export class Game {
   // (docs/loaf-phase5-plan.md §7), then seeds all four from the initial gamedatas. Must run
   // after the containing HTML (setup(), above) exists -- Stock constructors need a real element.
   setupRoundCardStocks(gamedatas) {
-    this.pendingOrderStock = new this.BgaCards.SlotStock(this.roundCardsManager, document.getElementById("pending-order-card"), {
-      slotsIds: [0],
-      mapCardToSlot: () => 0,
-    });
-    this.pendingReviewStock = new this.BgaCards.SlotStock(this.roundCardsManager, document.getElementById("pending-review-card"), {
-      slotsIds: [0],
-      mapCardToSlot: () => 0,
-    });
+    this.pendingOrderStock = new this.BgaCards.SlotStock(
+      this.roundCardsManager,
+      document.getElementById("pending-order-card"),
+      {
+        slotsIds: [0],
+        mapCardToSlot: () => 0,
+      },
+    );
+    this.pendingReviewStock = new this.BgaCards.SlotStock(
+      this.roundCardsManager,
+      document.getElementById("pending-review-card"),
+      {
+        slotsIds: [0],
+        mapCardToSlot: () => 0,
+      },
+    );
     // Boss piles (docs/loaf-phase5-plan.md §7): a fixed Boss character card (plain img, not a
     // bga-cards card -- it's static flavor art with no game data behind it) anchored at the
     // pile's inner edge, with filed review cards fanned out from it as a SlotStock of
@@ -749,14 +799,22 @@ export class Game {
     // bga-cards'. The library's source also confirms `slots[slotId].dataset.slotId = slotId` --
     // a real per-slot attribute -- so loaf.css targets `[data-slot-id="N"]` instead.
     const slotIds = Array.from({ length: BOSS_PILE_MAX_SLOTS }, (_, i) => i);
-    this.bossHappyStock = new this.BgaCards.SlotStock(this.roundCardsManager, document.getElementById("boss-happy-pile"), {
-      slotsIds: slotIds,
-      mapCardToSlot: (card) => card.pileSlot,
-    });
-    this.bossAngryStock = new this.BgaCards.SlotStock(this.roundCardsManager, document.getElementById("boss-angry-pile"), {
-      slotsIds: slotIds,
-      mapCardToSlot: (card) => card.pileSlot,
-    });
+    this.bossHappyStock = new this.BgaCards.SlotStock(
+      this.roundCardsManager,
+      document.getElementById("boss-happy-pile"),
+      {
+        slotsIds: slotIds,
+        mapCardToSlot: (card) => card.pileSlot,
+      },
+    );
+    this.bossAngryStock = new this.BgaCards.SlotStock(
+      this.roundCardsManager,
+      document.getElementById("boss-angry-pile"),
+      {
+        slotsIds: slotIds,
+        mapCardToSlot: (card) => card.pileSlot,
+      },
+    );
     this.bossHappyNextSlot = 0;
     this.bossAngryNextSlot = 0;
 
@@ -764,10 +822,17 @@ export class Game {
       const bossCardDiv = document.getElementById(`boss-${bossType}-card`);
       bossCardDiv.style.backgroundImage = `url(${this.bga.images.getImgUrl("boss-sheet.jpg")})`;
       bossCardDiv.style.backgroundSize = `${BOSS_SHEET_COLS * 100}% 100%`;
-      bossCardDiv.style.backgroundPositionX = spritePositionPercent(BOSS_SPRITE_INDEX[bossType], BOSS_SHEET_COLS);
+      bossCardDiv.style.backgroundPositionX = spritePositionPercent(
+        BOSS_SPRITE_INDEX[bossType],
+        BOSS_SHEET_COLS,
+      );
     }
 
-    this.pendingOrderStock.addCard({ id: gamedatas.currentOrderCardId, type: gamedatas.currentOrderCardType, side: "order" });
+    this.pendingOrderStock.addCard({
+      id: gamedatas.currentOrderCardId,
+      type: gamedatas.currentOrderCardType,
+      side: "order",
+    });
     this.pendingReviewStock.addCard({
       id: gamedatas.currentReviewCardId,
       type: gamedatas.currentReviewCardType,
@@ -782,10 +847,20 @@ export class Game {
     // assigned sequentially) -- so assigning pileSlot in that same iteration order reconstructs
     // the correct oldest-to-newest fan on a page refresh, not just on a live notification.
     this.bossHappyStock.addCards(
-      Object.values(gamedatas.bossHappy).map((card) => ({ ...card, side: "review", rotation: 1, pileSlot: this.bossHappyNextSlot++ })),
+      Object.values(gamedatas.bossHappy).map((card) => ({
+        ...card,
+        side: "review",
+        rotation: 1,
+        pileSlot: this.bossHappyNextSlot++,
+      })),
     );
     this.bossAngryStock.addCards(
-      Object.values(gamedatas.bossAngry).map((card) => ({ ...card, side: "review", rotation: 1, pileSlot: this.bossAngryNextSlot++ })),
+      Object.values(gamedatas.bossAngry).map((card) => ({
+        ...card,
+        side: "review",
+        rotation: 1,
+        pileSlot: this.bossAngryNextSlot++,
+      })),
     );
   }
 
@@ -799,9 +874,12 @@ export class Game {
   // Phase 5 entry) -- falling back to the first sprite column beats that: wrong color is a
   // visible, debuggable symptom, invisible is not.
   resolvePlayerColorName(player) {
-    const colorName = PLAYER_COLOR_HEX_TO_NAME[String(player.color ?? "").toUpperCase()];
+    const colorName =
+      PLAYER_COLOR_HEX_TO_NAME[String(player.color ?? "").toUpperCase()];
     if (colorName) return colorName;
-    console.warn(`loaf: unrecognized player color "${player.color}" for player ${player.id}, defaulting sprite`);
+    console.warn(
+      `loaf: unrecognized player color "${player.color}" for player ${player.id}, defaulting sprite`,
+    );
     return PLAYER_COLORS[0];
   }
 
@@ -819,13 +897,17 @@ export class Game {
     const laneSpacingPx = 18;
 
     players.forEach((player, laneIndex) => {
-      const verticalOffsetPx = (laneIndex - (players.length - 1) / 2) * laneSpacingPx;
+      const verticalOffsetPx =
+        (laneIndex - (players.length - 1) / 2) * laneSpacingPx;
       const colorName = this.resolvePlayerColorName(player);
       const tokenDiv = document.createElement("div");
       tokenDiv.id = `reputation-token-player-${player.id}`;
       tokenDiv.className = "loaf_reputation-token";
       tokenDiv.title = `${player.name}: ${player.reputation} reputation`;
-      tokenDiv.style.backgroundPositionX = spritePositionPercent(PLAYER_COLORS.indexOf(colorName), TOKEN_SHEET_COLS);
+      tokenDiv.style.backgroundPositionX = spritePositionPercent(
+        PLAYER_COLORS.indexOf(colorName),
+        TOKEN_SHEET_COLS,
+      );
       // Stored on the element so notif_reputationChanged can reapply the same fixed lane when
       // the value (and therefore the vertical center, reputationTrackVerticalCenterPercent)
       // changes later -- the lane itself never changes, only which region's center it's offset
@@ -862,22 +944,35 @@ export class Game {
     // can reference one `var(...)` instead of six near-duplicate color-specific rules. Raw hex
     // from gamedatas (no "#" prefix, per BGA's own storage convention) rather than
     // myColorName, which is a sprite-sheet column name ("green"), not a real CSS color value.
-    document.documentElement.style.setProperty("--loaf-my-player-color", `#${myPlayer.color}`);
+    document.documentElement.style.setProperty(
+      "--loaf-my-player-color",
+      `#${myPlayer.color}`,
+    );
 
-    this.handStock = new this.BgaCards.HandStock(this.handCardsManager, document.getElementById("my-hand"), {
-      sort: (a, b) => a.value - b.value,
-      // 'all' rather than the default 'selectable': fires onCardClick regardless of
-      // selectionMode/selectableCards, so PlayCards.onPlayerActivationChange can gate
-      // clicking purely by assigning/clearing onCardClick itself, never touching
-      // selectionMode -- see that method's own comment for why (avoids bga-cards' own
-      // selected-state visual, which stacks an unwanted extra border on top of this game's
-      // hover-preview style, confirmed live).
-      cardClickEventFilter: "all",
-    });
+    this.handStock = new this.BgaCards.HandStock(
+      this.handCardsManager,
+      document.getElementById("my-hand"),
+      {
+        sort: (a, b) => a.value - b.value,
+        // 'all' rather than the default 'selectable': fires onCardClick regardless of
+        // selectionMode/selectableCards, so PlayCards.onPlayerActivationChange can gate
+        // clicking purely by assigning/clearing onCardClick itself, never touching
+        // selectionMode -- see that method's own comment for why (avoids bga-cards' own
+        // selected-state visual, which stacks an unwanted extra border on top of this game's
+        // hover-preview style, confirmed live).
+        cardClickEventFilter: "all",
+      },
+    );
     // gamedatas.myHand is a flat array of values (Game.php's getObjectListFromDb(..., true)
     // single-column shortcut), not an array of objects -- the same shape PlayCards.php's own
     // getHandValues() already returns server-side.
-    await this.handStock.addCards(gamedatas.myHand.map((value) => ({ color: myColorName, value, visible: true })));
+    await this.handStock.addCards(
+      gamedatas.myHand.map((value) => ({
+        color: myColorName,
+        value,
+        visible: true,
+      })),
+    );
 
     this.committedCardStocks = {};
     Object.values(gamedatas.players).forEach((player) => {
@@ -982,7 +1077,10 @@ export class Game {
   translateTooltipText({ message, args, i18nArgs = [] }) {
     let text = _(message);
     for (const [key, value] of Object.entries(args)) {
-      text = text.replace(`\${${key}}`, i18nArgs.includes(key) ? _(value) : value);
+      text = text.replace(
+        `\${${key}}`,
+        i18nArgs.includes(key) ? _(value) : value,
+      );
     }
     return text;
   }
@@ -1011,7 +1109,10 @@ export class Game {
     const descriptionLines =
       card.side === "order"
         ? [this.translateTooltipText(description.order)]
-        : [this.translateTooltipText(description.fail), this.translateTooltipText(description.success)];
+        : [
+            this.translateTooltipText(description.fail),
+            this.translateTooltipText(description.success),
+          ];
 
     // Match the card's on-board rotation (same `card.rotation` quarter-turns field
     // getCardRotation reads, above) in the zoom image too -- the pending review card displays
@@ -1030,7 +1131,10 @@ export class Game {
     // Review card: text goes below the image (a landscape-rotated image reads better with a
     // full-width caption underneath than a narrow side column). Order card: text stays beside
     // the (portrait, unrotated) image, the original layout.
-    const tooltipLayoutClass = card.side === "review" ? "loaf_card-tooltip--stacked" : "loaf_card-tooltip--side-by-side";
+    const tooltipLayoutClass =
+      card.side === "review"
+        ? "loaf_card-tooltip--stacked"
+        : "loaf_card-tooltip--side-by-side";
 
     this.bga.gameui.addTooltipHtml(
       div.id,
@@ -1053,8 +1157,14 @@ export class Game {
     return {
       sheet: card.side === "order" ? "order-sheet.jpg" : "review-sheet.jpg",
       zoomSheet: card.side === "order" ? "zoom-order.jpg" : "zoom-review.jpg",
-      x: spritePositionPercent(index % ROUND_CARD_SHEET_COLS, ROUND_CARD_SHEET_COLS),
-      y: spritePositionPercent(Math.floor(index / ROUND_CARD_SHEET_COLS), ROUND_CARD_SHEET_ROWS),
+      x: spritePositionPercent(
+        index % ROUND_CARD_SHEET_COLS,
+        ROUND_CARD_SHEET_COLS,
+      ),
+      y: spritePositionPercent(
+        Math.floor(index / ROUND_CARD_SHEET_COLS),
+        ROUND_CARD_SHEET_ROWS,
+      ),
     };
   }
 
@@ -1090,9 +1200,12 @@ export class Game {
         // EndGame, previewed a lift+border for an action that wasn't actually available,
         // confirmed live as misleading. suppressHandHoverPreview is the separate, short-lived
         // reflow-settling guard from the commit-animation fix above; both must allow it.
-        if (this.handHoverEnabled && !this.suppressHandHoverPreview) div.classList.add("loaf_hand-card-hover");
+        if (this.handHoverEnabled && !this.suppressHandHoverPreview)
+          div.classList.add("loaf_hand-card-hover");
       });
-      div.addEventListener("mouseleave", () => div.classList.remove("loaf_hand-card-hover"));
+      div.addEventListener("mouseleave", () =>
+        div.classList.remove("loaf_hand-card-hover"),
+      );
     }
   }
 
@@ -1107,7 +1220,10 @@ export class Game {
     const index = handCardSpriteIndex(color, value);
     div.style.backgroundImage = `url(${this.bga.images.getImgUrl("hand-sheet.jpg")})`;
     div.style.backgroundSize = `${HAND_CARD_SHEET_COLS * 100}% ${HAND_CARD_SHEET_ROWS * 100}%`;
-    div.style.backgroundPositionX = spritePositionPercent(index % HAND_CARD_SHEET_COLS, HAND_CARD_SHEET_COLS);
+    div.style.backgroundPositionX = spritePositionPercent(
+      index % HAND_CARD_SHEET_COLS,
+      HAND_CARD_SHEET_COLS,
+    );
     div.style.backgroundPositionY = spritePositionPercent(
       Math.floor(index / HAND_CARD_SHEET_COLS),
       HAND_CARD_SHEET_ROWS,
@@ -1169,14 +1285,20 @@ export class Game {
   async notif_roundStart(args) {
     await this.pendingOrderStock.removeAll();
     await this.pendingReviewStock.removeAll();
-    await this.pendingOrderStock.addCard({ id: args.orderCardId, type: args.orderCardType, side: "order" });
+    await this.pendingOrderStock.addCard({
+      id: args.orderCardId,
+      type: args.orderCardType,
+      side: "order",
+    });
     await this.pendingReviewStock.addCard({
       id: args.reviewCardId,
       type: args.reviewCardType,
       side: "review",
       rotation: 1, // quarter-turns, not degrees -- bga-cards does rotation * 90deg internally
     });
-    await Promise.all(Object.values(this.committedCardStocks).map((stock) => stock.removeAll()));
+    await Promise.all(
+      Object.values(this.committedCardStocks).map((stock) => stock.removeAll()),
+    );
     // This player's committed card's own value from the round that just ended -- only ever
     // meaningful while it's relevant to a possible swap-effect resolution (notif_cardSwapped),
     // which always finishes before the next roundStart fires. Reset here, alongside every
@@ -1215,7 +1337,9 @@ export class Game {
       // against locally) -- when nothing local set it. A live surprise in `_merge_private`
       // therefore can't regress the normal human-commit path, only leave the zombie case
       // exactly as broken as before.
-      const cardToRemove = this.pendingCommitCard ?? this.handStock.getCards().find((card) => card.value === args.value);
+      const cardToRemove =
+        this.pendingCommitCard ??
+        this.handStock.getCards().find((card) => card.value === args.value);
       if (cardToRemove) {
         // Removing a card reflows the hand's fan layout -- whichever neighboring card slides
         // into the removed card's old screen position ends up under the still-stationary mouse
@@ -1240,7 +1364,9 @@ export class Game {
     await this.committedCardStocks[args.player_id].addCard({
       playerId: args.player_id,
       committedSerial: this.nextCommittedSerial++,
-      color: this.resolvePlayerColorName(this.gamedatas.players[args.player_id]),
+      color: this.resolvePlayerColorName(
+        this.gamedatas.players[args.player_id],
+      ),
       value: null,
       visible: false,
     });
@@ -1295,7 +1421,9 @@ export class Game {
   // readout (setupPlayerPanelReputation, above) in sync -- two independent displays driven by
   // the same notification, same as every other dual-display pattern in this codebase.
   async notif_reputationChanged(args) {
-    const token = document.getElementById(`reputation-token-player-${args.player_id}`);
+    const token = document.getElementById(
+      `reputation-token-player-${args.player_id}`,
+    );
     if (token) {
       token.style.left = `${reputationTrackPositionPercent(args.reputation)}%`;
       // Vertical center depends on which region (negative/zero/positive) the value is in
@@ -1303,10 +1431,15 @@ export class Game {
       // player over/away from 0 needs `top` recomputed too, not just `left` -- the lane offset
       // itself (dataset.laneOffsetPx, set once at setup) stays fixed.
       token.style.top = `calc(${reputationTrackVerticalCenterPercent(args.reputation)}% + ${token.dataset.laneOffsetPx}px)`;
-      token.title = token.title.replace(/-?\d+ reputation$/, `${args.reputation} reputation`);
+      token.title = token.title.replace(
+        /-?\d+ reputation$/,
+        `${args.reputation} reputation`,
+      );
     }
 
-    const panelSpan = document.getElementById(`reputation-panel-player-${args.player_id}`);
+    const panelSpan = document.getElementById(
+      `reputation-panel-player-${args.player_id}`,
+    );
     if (panelSpan) {
       panelSpan.textContent = args.reputation;
     }
@@ -1332,10 +1465,18 @@ export class Game {
     // setupRoundCardStocks), appended to -- new cards always join the fan at its outermost,
     // newest slot (docs/loaf-phase5-plan.md §7). `rotation: 1` matches every other filed card
     // in this pile (same reasoning as setupRoundCardStocks' initial seeding).
-    const targetStock = args.bossPile === "happy" ? this.bossHappyStock : this.bossAngryStock;
-    const nextSlotCounterKey = args.bossPile === "happy" ? "bossHappyNextSlot" : "bossAngryNextSlot";
+    const targetStock =
+      args.bossPile === "happy" ? this.bossHappyStock : this.bossAngryStock;
+    const nextSlotCounterKey =
+      args.bossPile === "happy" ? "bossHappyNextSlot" : "bossAngryNextSlot";
     await targetStock.addCard(
-      { id: args.reviewCardId, type: args.reviewCardType, side: "review", rotation: 1, pileSlot: this[nextSlotCounterKey]++ },
+      {
+        id: args.reviewCardId,
+        type: args.reviewCardType,
+        side: "review",
+        rotation: 1,
+        pileSlot: this[nextSlotCounterKey]++,
+      },
       { fromStock: this.pendingReviewStock },
     );
   }
@@ -1360,7 +1501,9 @@ export class Game {
     this.handCardsManager.updateCardInformations({
       committedSerial: placeholder.committedSerial,
       playerId: args.player_id,
-      color: this.resolvePlayerColorName(this.gamedatas.players[args.player_id]),
+      color: this.resolvePlayerColorName(
+        this.gamedatas.players[args.player_id],
+      ),
       value: args.value,
       visible: true,
     });
@@ -1389,8 +1532,14 @@ export class Game {
   // ever delivered to the one player it recycled a card for, so no `args.player_id` check is
   // needed here the way every other cross-player notification handler in this file has.
   async notif_cardRecycledValue(args) {
-    const myColorName = this.resolvePlayerColorName(this.gamedatas.players[this.bga.players.getCurrentPlayerId()]);
-    await this.handStock.addCard({ color: myColorName, value: args.value, visible: true });
+    const myColorName = this.resolvePlayerColorName(
+      this.gamedatas.players[this.bga.players.getCurrentPlayerId()],
+    );
+    await this.handStock.addCard({
+      color: myColorName,
+      value: args.value,
+      visible: true,
+    });
   }
 
   // Matches Game.php's `advancedEffectPending` notification (ResolveAdvancedEffect).
@@ -1410,7 +1559,10 @@ export class Game {
   async notif_playerDiscarded(args) {
     this.adjustHandCount(args.player_id, -1);
 
-    if (args.player_id === this.bga.players.getCurrentPlayerId() && this.pendingAdvancedEffectCard) {
+    if (
+      args.player_id === this.bga.players.getCurrentPlayerId() &&
+      this.pendingAdvancedEffectCard
+    ) {
       await this.handStock.removeCard(this.pendingAdvancedEffectCard);
       this.pendingAdvancedEffectCard = null;
     }
@@ -1452,7 +1604,9 @@ export class Game {
         // discarded card leaving my hand and the played card arriving read as one swap motion.
         await Promise.all([
           this.handStock.removeCard(discardedCard),
-          playedCard ? this.handStock.addCard(playedCard, { fromStock: committedStock }) : Promise.resolve(),
+          playedCard
+            ? this.handStock.addCard(playedCard, { fromStock: committedStock })
+            : Promise.resolve(),
         ]);
       }
     } else if (playedCard) {
@@ -1462,7 +1616,9 @@ export class Game {
       await committedStock.removeCard(playedCard);
     }
 
-    const colorName = this.resolvePlayerColorName(this.gamedatas.players[args.player_id]);
+    const colorName = this.resolvePlayerColorName(
+      this.gamedatas.players[args.player_id],
+    );
     await committedStock.addCard({
       playerId: args.player_id,
       committedSerial: this.nextCommittedSerial++,

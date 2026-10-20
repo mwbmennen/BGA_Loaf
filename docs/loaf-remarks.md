@@ -2061,3 +2061,33 @@ this project (the test stub's `giveExtraTime()` is a no-op): that this actually 
 Studio's check, and that it has the intended effect (more reflection time for a player who
 cancels/recommits mid-round) in a real, non-"fast" speed-profile game. 108/108 PHPUnit tests and
 PHPStan both pass unchanged, but neither exercises real BGA timer behavior.
+
+## Dropped: hand-card hover-zoom feature, to bring `img/` under the pre-release 15MB guideline (2026-10-20)
+
+Surfaced while checking off BGA's pre-release checklist's image-size item: `img/` measured
+18MB, over the checklist's 15MB guideline. The two biggest files, `zoom-hand-1.jpg`/
+`zoom-hand-2.jpg` (6.4MB combined, over a third of the whole budget), turned out to be
+unreferenced anywhere in `Game.js` -- confirmed by grepping every `getImgUrl(...)` call site,
+which only ever resolve to `hand-sheet.jpg`/`boss-sheet.jpg`/`zoom-order.jpg`/`zoom-review.jpg`.
+
+**Not accidental cruft -- a real feature that was built and then never finished.**
+`tools/build-sprite.sh` has (had) a dedicated `build_hand_zoom_sheet()` function generating
+these two files, split 3 player-colors per sheet specifically to stay under BGA's 4MB-per-file
+limit (a combined 72-tile sheet measured 6.15MB). `docs/loaf-phase5-plan.md` §4 step 10 even
+documents the intended client-side lookup in detail: a `color` → which-sheet +
+index-within-sheet mapping, mirroring the round-card zoom tooltip's own sprite-index lookup.
+The asset pipeline shipped and the design was written down -- the one piece that never
+happened was the actual `Game.js` tooltip wiring (`setupRoundCardFrontDiv` has an
+`addTooltipHtml` hover-zoom call; the equivalent for hand cards, `setupHandCardFrontDiv`, never
+got one).
+
+**Decision (discussed with the user): drop the feature rather than finish it**, given the image
+budget pressure and that round cards already get the equivalent treatment. Deleted both image
+files and `build_hand_zoom_sheet()`/its two call sites from `tools/build-sprite.sh` (left a
+dated comment there explaining why, so a future sprite rebuild doesn't regenerate the same dead
+output). `img/` is now ~12MB, comfortably under the 15MB guideline, with margin to spare.
+
+**If this feature is ever wanted later**: the design is still fully preserved in
+`docs/loaf-phase5-plan.md` §4 step 10 and this entry -- re-add `build_hand_zoom_sheet()` (or
+restore it from git history on this commit) and write `Game.js`'s `setupHandCardFrontDiv` zoom
+tooltip following `setupRoundCardFrontDiv`'s existing pattern as the template.
