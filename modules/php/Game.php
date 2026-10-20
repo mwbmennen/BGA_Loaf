@@ -248,10 +248,10 @@ class Game extends \Bga\GameFramework\Table
      * Raw, untranslated {message, args, i18nArgs} triples, sent to the client as-is --
      * Game.js's setupRoundCardFrontDiv() does the actual client-side translation and
      * placeholder substitution, the same pattern every notify->all() message in this codebase
-     * already uses. Not resolved server-side: BGA's `self::_()`/`_()` translation helper is
-     * deprecated, and its suggested replacement, `clienttranslate()`, is a pure registration
-     * marker with no server-side translation effect at all -- the client-translated path is
-     * the only viable option here, not a workaround.
+     * already uses. Not resolved server-side: BGA's deprecated per-request translation helper
+     * is off the table, and its suggested replacement, `clienttranslate()`, is a pure
+     * registration marker with no server-side translation effect at all -- the client-translated
+     * path is the only viable option here, not a workaround.
      *
      * @return array<string, array{
      *     order: array{message: string, args: array<string, string>},
