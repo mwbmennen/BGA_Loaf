@@ -72,6 +72,13 @@ echo "Building sprite sheets..."
 # --- Order-side display sheet (24 tiles: basic_01..12, advanced_01..12, JPEG, 6x4 grid) ---
 # Zero-padded explicit loop, never a glob -- glob order is alphabetical, not guaranteed to match
 # the sprite-index lookup docs/loaf-phase5-plan.md §4 step 7 defines client-side.
+# quality 80, not 90 -- BGA Studio's project check flagged img/ for exceeding a 10MB total
+# (2026-10-20). Measured on zoom-review.jpg before applying everywhere: 90->80 took it from
+# 2.78MB to 1.49MB (46% smaller) with no visible artifacts on this illustrated card art at
+# normal viewing size -- the same compression-not-resolution tradeoff hand-sheet.jpg's own
+# quality 85 already uses, just needed more aggressively here to clear the new 10MB ceiling.
+# Applies to this sheet and the other three below (review-sheet.jpg, zoom-order.jpg,
+# zoom-review.jpg) -- hand-sheet.jpg stays at its existing 85, already addressed separately.
 ORDER_FILES=()
 for n in $(seq -f "%02g" 1 12); do
     ORDER_FILES+=("$ORDER_CARDS_DIR/basic_${n}_order.jpg")
@@ -82,7 +89,7 @@ done
 for f in "${ORDER_FILES[@]}"; do
     [[ -f "$f" ]] || { echo "  MISSING: $f" >&2; exit 1; }
 done
-montage -font "$MONTAGE_FONT" "${ORDER_FILES[@]}" -tile 6x4 -geometry "${DISPLAY_W}x${DISPLAY_H}+0+0" -quality 90 "$IMG_DIR/order-sheet.jpg"
+montage -font "$MONTAGE_FONT" "${ORDER_FILES[@]}" -tile 6x4 -geometry "${DISPLAY_W}x${DISPLAY_H}+0+0" -quality 80 "$IMG_DIR/order-sheet.jpg"
 check_size "$IMG_DIR/order-sheet.jpg"
 
 # --- Review-side display sheet (24 tiles, JPEG, 6x4 grid) ---
@@ -96,15 +103,15 @@ done
 for f in "${REVIEW_FILES[@]}"; do
     [[ -f "$f" ]] || { echo "  MISSING: $f" >&2; exit 1; }
 done
-montage -font "$MONTAGE_FONT" "${REVIEW_FILES[@]}" -tile 6x4 -geometry "${DISPLAY_W}x${DISPLAY_H}+0+0" -quality 90 "$IMG_DIR/review-sheet.jpg"
+montage -font "$MONTAGE_FONT" "${REVIEW_FILES[@]}" -tile 6x4 -geometry "${DISPLAY_W}x${DISPLAY_H}+0+0" -quality 80 "$IMG_DIR/review-sheet.jpg"
 check_size "$IMG_DIR/review-sheet.jpg"
 
 # --- Order-side zoom sheet (same 24 tiles, larger size, feeds the per-card hover tooltip) ---
-montage -font "$MONTAGE_FONT" "${ORDER_FILES[@]}" -tile 6x4 -geometry "${ZOOM_W}x${ZOOM_H}+0+0" -quality 90 "$IMG_DIR/zoom-order.jpg"
+montage -font "$MONTAGE_FONT" "${ORDER_FILES[@]}" -tile 6x4 -geometry "${ZOOM_W}x${ZOOM_H}+0+0" -quality 80 "$IMG_DIR/zoom-order.jpg"
 check_size "$IMG_DIR/zoom-order.jpg"
 
 # --- Review-side zoom sheet ---
-montage -font "$MONTAGE_FONT" "${REVIEW_FILES[@]}" -tile 6x4 -geometry "${ZOOM_W}x${ZOOM_H}+0+0" -quality 90 "$IMG_DIR/zoom-review.jpg"
+montage -font "$MONTAGE_FONT" "${REVIEW_FILES[@]}" -tile 6x4 -geometry "${ZOOM_W}x${ZOOM_H}+0+0" -quality 80 "$IMG_DIR/zoom-review.jpg"
 check_size "$IMG_DIR/zoom-review.jpg"
 
 # --- Player token sheet (6 tiles, PNG for real alpha, 6x1 grid) ---
