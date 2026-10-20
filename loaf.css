@@ -39,6 +39,27 @@
 
 /********* You can start writing your CSS below this line: **********/
 
+/* Dark mode (BGA Studio's pre-release checklist §5): confirmed live via side-by-side
+   screenshots (2026-10-20) that plain text inserted directly into the custom game area --
+   .loaf_section-label (the "Next order card"/"Current review card"/"Angry boss: X / 5"/"Happy
+   boss: X / 5" labels, Game.js's setup()) and .loaf_committed-card-name (player names above
+   each committed card, same method) -- renders black-on-dark-background in dark mode, unlike
+   BGA's own player-panel text (.loaf_panel-reputation/.loaf_panel-hand-count/the "FIRED"
+   marker, all inserted into `this.bga.playerPanels.getElement(...)`), which correctly inverts
+   on its own. The difference: BGA's own framework components (player panels, status bar,
+   action buttons) are theme-aware by the platform's own design; raw content a game inserts
+   directly into its own custom game area is not -- it was only ever "readable" in light mode
+   by coincidence (default black text happens to work on a light background), never because it
+   was actually theme-aware. `html[data-theme="dark"]` is BGA's own confirmed mechanism for
+   targeting dark mode (not `@media (prefers-color-scheme)` -- that reflects OS/browser
+   preference, not BGA's own in-page theme toggle, which can differ). No light-mode rule is
+   added here since the existing default (unset, inherits black) already renders correctly
+   there -- only the dark override is needed. */
+html[data-theme="dark"] .loaf_section-label,
+html[data-theme="dark"] .loaf_committed-card-name {
+  color: #f2f2f2;
+}
+
 /* Pending order/review card display (docs/loaf-phase5-plan.md §7): the current review card
    sits to the right of the current order card, rotated 90deg -- presentation only, no
    game-state meaning. The rotation itself is applied by bga-cards' own getCardRotation

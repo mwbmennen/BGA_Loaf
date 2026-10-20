@@ -562,24 +562,24 @@ export class Game {
       `
             <div id="pending-cards">
                 <div>
-                    <div>${_("Next order card")}</div>
+                    <div class="loaf_section-label">${_("Next order card")}</div>
                     <div id="pending-order-card"></div>
                 </div>
                 <div>
-                    <div>${_("Current review card")}</div>
+                    <div class="loaf_section-label">${_("Current review card")}</div>
                     <div id="pending-review-card"></div>
                 </div>
             </div>
             <div id="boss-piles">
                 <div class="loaf_boss-pile loaf_boss-pile--angry">
-                    <div>${_("Angry boss")}: <span id="boss-angry-count">${bossAngryCount}</span> / 5</div>
+                    <div class="loaf_section-label">${_("Angry boss")}: <span id="boss-angry-count">${bossAngryCount}</span> / 5</div>
                     <div class="loaf_boss-pile-fan">
                         <div id="boss-angry-card" class="loaf_boss-card"></div>
                         <div id="boss-angry-pile"></div>
                     </div>
                 </div>
                 <div class="loaf_boss-pile loaf_boss-pile--happy">
-                    <div>${_("Happy boss")}: <span id="boss-happy-count">${bossHappyCount}</span> / 5</div>
+                    <div class="loaf_section-label">${_("Happy boss")}: <span id="boss-happy-count">${bossHappyCount}</span> / 5</div>
                     <div class="loaf_boss-pile-fan">
                         <div id="boss-happy-card" class="loaf_boss-card"></div>
                         <div id="boss-happy-pile"></div>
