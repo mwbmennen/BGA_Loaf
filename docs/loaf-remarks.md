@@ -2184,3 +2184,26 @@ out and compete against unrelated page elements. **Not yet re-verified live afte
 fix** -- the original diagnosis was confirmed, but a follow-up check that the fix actually
 resolved it (as opposed to just being the theoretically-correct fix) was never logged. Worth a
 live check next time this area of the UI is touched.
+
+## Fixed: spectator view never received live updates (2026-10-30)
+
+User-reported: viewing a table as a spectator, the board never refreshed automatically --
+only a manual page reload showed anything new, and that reload then froze again at whatever
+state was current at reload time. Root cause: `Game.js`'s `setupHandAndCommitStocks` (called
+from `setup()`) read `gamedatas.players[this.bga.players.getCurrentPlayerId()]` to find "my
+own" player, then unconditionally touched `.color` on the result -- fine for a real player,
+but a spectator's `getCurrentPlayerId()` is `0` (confirmed server-side too: `Game.php`'s
+`getAllDatas($currentPlayerId)` queries `WHERE player_id = $currentPlayerId`, i.e. `= 0` for a
+spectator, which is exactly why `myHand` already comes back `[]` for them with no separate
+guard needed there). `gamedatas.players` has no `0` key, so `myPlayer` was `undefined` and
+`.color` threw -- aborting the rest of `setup()`, including `setupNotifications()` and the
+`readyPromise`-resolving `this.markReady()` call right after it. Not just a null-safety nit:
+the thrown exception silently skipped wiring up this viewer's entire notification handling,
+so every live game event from then on had nothing to land on. Confirmed from reading the code
+(this was reported live by the user, not reproduced locally) -- not yet re-verified in an
+actual spectator session after the fix. Fixed by guarding the two "my own player" reads
+(`resolvePlayerColorName(myPlayer)` and the `--loaf-my-player-color` CSS property) behind
+`if (myPlayer)`, leaving the per-player `committedCardStocks` setup (built for every player,
+needed by everyone including spectators) unconditional. See `bga-studio-reference.md`'s new
+"A spectator can silently freeze with no live updates at all..." entry -- this is a generic
+BGA Studio gotcha, not L'Oaf-specific, also queued in `bga-template-upstream-notes.md`.

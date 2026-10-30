@@ -483,6 +483,17 @@ These are already generically worded (no L'Oaf-specific nouns) and live in this 
   with the existing hover-preview style, producing a double lift and an exposed "ghost" border —
   caught live from a user screenshot, not predicted in review. See `loaf-remarks.md`'s "Two-step
   commit/cancel for PlayCards" entry for the full incident.
+- [ ] **A spectator can silently freeze with no live updates at all, if `Game.setup()`
+  throws before `setupNotifications()`/the readiness-promise resolve run.** Already
+  generically worded, ready to copy essentially verbatim. Where: `bga-studio-reference.md`,
+  "A spectator can silently freeze with no live updates at all, if `setup()` throws before
+  `setupNotifications()`/`markReady()` run" — root cause is `this.bga.players.getCurrentPlayerId()`
+  returning `0` for a spectator (no matching row in `gamedatas.players`), so any unguarded "my
+  own player" read in `setup()` throws and aborts the rest of the function, including
+  whatever notification wiring/readiness-promise resolve sits later in the same method. Fix is
+  a plain existence guard around "my own" reads, leaving everyone-sees-this setup
+  unconditional. Concrete instance: L'Oaf's `setupHandAndCommitStocks` — see
+  `loaf-remarks.md`'s matching entry.
 - [ ] **`Deck` is deprecated in favor of `ItemManager` — use the latter for any new
   deck/pile-of-items pattern.** Already generically worded, ready to copy essentially
   verbatim. Where: `bga-studio-reference.md`, "The `Deck` component is deprecated in favor of
