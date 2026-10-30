@@ -942,6 +942,44 @@ possibly a tick later than the hook was originally called.
 
 ---
 
+### A spectator can silently freeze with no live updates at all, if `setup()` throws before `setupNotifications()`/`markReady()` run
+
+**Symptom:** A spectator's board renders once from the initial page load, then never reacts to
+anything again — no state transitions, no card reveals, nothing — until they manually reload the
+page, at which point it freezes again at whatever the state was at that reload. No error visible
+in the UI itself.
+
+**Cause:** `this.bga.players.getCurrentPlayerId()` (client-side JS, not the PHP
+`getCurrentPlayerId()` covered elsewhere in this doc) returns `0` for a spectator, and
+`gamedatas.players` is only ever keyed by real player IDs — so `gamedatas.players[<spectator's
+0>]` is `undefined`. Any line in `Game.setup()` that assumes "the current viewer" is a row in
+`gamedatas.players` (reading a color, a name, anything off that `undefined`) throws a
+`TypeError`. Because `setup()` runs top-to-bottom, that throw aborts everything after it in the
+same function — including, commonly, `setupNotifications()` and the `readyPromise`-resolving
+`this.markReady()` call near the very end (see this doc's `readyPromise` entry just above). The
+spectator's browser console shows the real exception, but nothing in the game UI hints that
+notifications were never wired up at all.
+
+**Fix:** never assume `getCurrentPlayerId()` resolves to a real player — guard every read of
+"my own" player data in `setup()` (and anywhere else reachable by a spectator) behind an
+existence check, and let the rest of `setup()` (anything built for *every* player, not just the
+viewer) run unconditionally regardless:
+
+```js
+const myPlayer = gamedatas.players[this.bga.players.getCurrentPlayerId()]; // undefined for a spectator
+if (myPlayer) {
+  // only "my own hand/color" setup here
+}
+// shared, everyone-sees-this setup (opponents' public state, board, etc.) stays unconditional
+```
+
+Suggested standing check: in any BGA game, grep `Game.js`'s `setup()` for
+`getCurrentPlayerId()` and confirm every use is null-guarded — a spectator must always reach
+`setupNotifications()`/the readiness-promise resolve, even if "my own" UI ends up simply not
+rendered for them.
+
+---
+
 ### Error: Database schema out of sync
 
 **Symptom:** PHP throws an error like `Column 'board_x' not found` or `Table 'board' doesn't exist`.

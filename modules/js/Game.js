@@ -904,18 +904,24 @@ export class Game {
   // activation race that already cost real debugging time earlier in this project (the
   // MULTIPLE_ACTIVE_PLAYER lifecycle saga).
   async setupHandAndCommitStocks(gamedatas) {
+    // Spectators (getCurrentPlayerId() === 0, BGA's convention) have no entry in
+    // gamedatas.players -- myPlayer/myColorName stay null for them, and gamedatas.myHand is
+    // already [] server-side (Game.php's getAllDatas queries WHERE player_id = 0), so the
+    // addCards() map below never actually needs myColorName in that case.
     const myPlayer = gamedatas.players[this.bga.players.getCurrentPlayerId()];
-    const myColorName = this.resolvePlayerColorName(myPlayer);
+    const myColorName = myPlayer ? this.resolvePlayerColorName(myPlayer) : null;
 
     // CSS custom property, not a class-per-color, so loaf.css's hover/eligible-swap rules
     // (which need to work identically regardless of which of the 6 colors this viewer plays)
     // can reference one `var(...)` instead of six near-duplicate color-specific rules. Raw hex
     // from gamedatas (no "#" prefix, per BGA's own storage convention) rather than
     // myColorName, which is a sprite-sheet column name ("green"), not a real CSS color value.
-    document.documentElement.style.setProperty(
-      "--loaf-my-player-color",
-      `#${myPlayer.color}`,
-    );
+    if (myPlayer) {
+      document.documentElement.style.setProperty(
+        "--loaf-my-player-color",
+        `#${myPlayer.color}`,
+      );
+    }
 
     this.handStock = new this.BgaCards.HandStock(
       this.handCardsManager,
